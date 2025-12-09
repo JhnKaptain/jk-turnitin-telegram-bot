@@ -1,6 +1,7 @@
 // bot.js
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
+const http = require("http"); // tiny HTTP server for Render
 
 const botToken = process.env.BOT_TOKEN;
 
@@ -39,8 +40,8 @@ This bot generates Turnitin plagiarism and AI reports.
 3️⃣ Wait for confirmation and then receive your report.
 
 💰 Pricing
-• Price / check: 70 KES
-• Recheck: 70 KES
+• Price / check: 60 KES
+• Recheck: 50 KES
 • No bargaining, please 😊
 `;
 
@@ -246,7 +247,7 @@ bot.on("message", async (ctx) => {
   // Ignore /start (already handled)
   if (ctx.message.text && ctx.message.text.startsWith("/start")) return;
 
-  // If it's a document, we've already handled in the document handler
+  // If it's a document, that is handled in the document handler
   if (ctx.message.document) return;
 
   const text = ctx.message.text || "";
@@ -327,12 +328,24 @@ bot.on("message", async (ctx) => {
   }
 });
 
-// Start the bot
+// 🚀 Start the Telegram bot
 bot.launch().then(() => {
   console.log(
     "🤖 @KaptainTurnitinBot is running with keyboard + auto file + auto payment replies..."
   );
 });
+
+// 🌐 Tiny HTTP server for Render Web Service (so a port is open)
+const PORT = process.env.PORT || 3000;
+
+http
+  .createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("JK Turnitin Telegram bot is running.\n");
+  })
+  .listen(PORT, () => {
+    console.log(`🌐 HTTP server listening on port ${PORT}`);
+  });
 
 // Graceful shutdown
 process.once("SIGINT", () => bot.stop("SIGINT"));
