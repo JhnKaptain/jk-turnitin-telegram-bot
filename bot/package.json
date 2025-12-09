@@ -1,0 +1,21 @@
+{
+  "name": "john-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram Turnitin-style bot for John Wanjala",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "telegraf",
+    "turnitin"
+  ],
+  "author": "John Wanjala",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3"
+  }
+}
