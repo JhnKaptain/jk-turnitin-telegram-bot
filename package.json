@@ -1,21 +1,16 @@
 {
   "name": "jk-turnitin-telegram-bot",
   "version": "1.0.0",
-  "description": "JK Turnitin AI & Plagiarism Telegram bot",
+  "description": "JK Turnitin Telegram bot",
   "main": "bot.js",
-  "type": "commonjs",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [
-    "telegram",
-    "bot",
-    "telegraf",
-    "turnitin",
-    "plagiarism"
-  ],
-  "author": "John Makokha Wanjala",
+  "keywords": [],
+  "author": "",
   "license": "ISC",
+  "type": "commonjs",
   "dependencies": {
     "dotenv": "^17.2.3",
     "telegraf": "^4.16.3"
