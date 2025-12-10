@@ -1,7 +1,7 @@
-// bot.js
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const http = require("http"); // tiny HTTP server for Render
+const moment = require("moment");
 
 const botToken = process.env.BOT_TOKEN;
 
@@ -24,6 +24,19 @@ const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
 const KEY_HELP = "❓ Help";
 
+// Time check function to determine inactivity period (12 AM - 5:59 AM EAT = 9 PM - 2:59 AM UTC)
+function isBotInactivePeriod() {
+  const currentTime = moment.utc().format("HH:mm"); // Current time in UTC (24-hour format)
+  return currentTime >= "21:00" && currentTime < "03:00"; // 9 PM to 3 AM UTC
+}
+
+// Notify users during inactive periods
+async function notifyInactivePeriod(ctx) {
+  await ctx.reply("The bot is temporarily inactive. I’ll be back at 6 AM EAT.");
+  bot.stop();
+}
+
+// Bot's welcome message
 const WELCOME_MESSAGE = `
 Turnitin Reports Bot – JK
 
@@ -40,54 +53,18 @@ This bot generates Turnitin plagiarism and AI reports.
 3️⃣ Wait for confirmation and then receive your report.
 
 💰 Pricing
-• Price / check: 60 KES
+• Price / check: 70 KES
 • Recheck: 50 KES
 • No bargaining, please 😊
 `;
 
-// Simple helper to detect payment-looking text that mentions your name
-function looksLikePaymentText(text) {
-  if (!text) return false;
-  const t = text.toLowerCase();
-
-  const hasName =
-    t.includes("john makokha wanjala") ||
-    t.includes("makokha") ||
-    t.includes("john wanjala");
-
-  const hasPaymentWords =
-    t.includes("mpesa") ||
-    t.includes("paid") ||
-    t.includes("payment") ||
-    t.includes("confirmed") ||
-    t.includes("sent to") ||
-    t.includes("ksh") ||
-    t.includes("amount");
-
-  return hasName && hasPaymentWords;
-}
-
-// Function to check if the current time is within active hours (6 AM to 11:59 PM) and inactive (12 AM to 5:59 AM)
-function isBotActive() {
-  const now = new Date();
-
-  // Convert the current time to Kenya's timezone (UTC +3)
-  const kenyanTime = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Africa/Nairobi', // Kenya time zone
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-  }).format(now);
-
-  const hour = new Date(`1970-01-01T${kenyanTime}Z`).getHours();
-
-  // Active hours: From 6 AM to 11:59 PM
-  return hour >= 6 && hour < 24;  // 6 AM to 11:59 PM
-}
-
-// /start
 bot.start(async (ctx) => {
   const user = ctx.from;
+
+  if (isBotInactivePeriod()) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
 
   if (user.id === ADMIN_ID) {
     await ctx.reply(
@@ -160,6 +137,29 @@ bot.command("reply", async (ctx) => {
   }
 });
 
+// /file <userId> Optional caption   (prepare to send a file)
+bot.command("file", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  const text = ctx.message.text || "";
+  const parts = text.split(" ");
+
+  if (parts.length < 2) {
+    await ctx.reply("Usage: /file <userId> Optional caption");
+    return;
+  }
+
+  const userId = parts[1];
+  const caption = parts.slice(2).join(" ");
+
+  pendingFileTargets[ADMIN_ID] = { userId, caption };
+
+  await ctx.reply(
+    `✅ Got it. The *next document* you send will be delivered to user ${userId}.`,
+    { parse_mode: "Markdown" }
+  );
+});
+
 // Handle documents (files)
 bot.on("document", async (ctx) => {
   const user = ctx.from;
@@ -218,19 +218,12 @@ bot.on("document", async (ctx) => {
   }
 
   // 🔔 Auto-reply to user about payment
-  if (!isBotActive()) {
-    await ctx.reply(
-      "⚠️ The bot is currently inactive and will resume at 6 AM. Please try again later."
-    );
-    return; // Stops further processing
-  }
-
   try {
     await ctx.reply(
       "📄 I’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "💰 Price per check: *60 KES* (recheck *50 KES*)\n" +
+        "💰 Price per check: *70 KES* (recheck *50 KES*)\n" +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
       { parse_mode: "Markdown" }
     );
@@ -239,102 +232,9 @@ bot.on("document", async (ctx) => {
   }
 });
 
-// Catch all other messages (text/photos/etc.)
-bot.on("message", async (ctx) => {
-  const user = ctx.from;
-
-  // Admin messages (other than document) handled by /reply and /file
-  if (user.id === ADMIN_ID) return;
-
-  // Ignore /start (already handled)
-  if (ctx.message.text && ctx.message.text.startsWith("/start")) return;
-
-  // If it's a document, that is handled in the document handler
-  if (ctx.message.document) return;
-
-  const text = ctx.message.text || "";
-  const caption = ctx.message.caption || "";
-
-  console.log("📨 New message from user:", user.id);
-
-  // Handle keyboard buttons / helper texts
-  if (text === KEY_SEND_DOC) {
-    await ctx.reply(
-      "📄 *How to send your document:*\n\n" +
-        "1️⃣ Tap the *📎 (attachment)* or *+* icon in Telegram.\n" +
-        "2️⃣ Choose *File* (not Gallery/Photo).\n" +
-        "3️⃣ Select your DOC/PDF and send.\n\n" +
-        "Once I receive it, I’ll ask for your Mpesa payment.",
-      { parse_mode: "Markdown" }
-    );
-    return;
-  }
-
-  if (text === KEY_SEND_MPESA) {
-    await ctx.reply(
-      "🧾 *How to send your Mpesa payment:*\n\n" +
-        "1️⃣ Pay via *Lipa Na Mpesa Till Number 6164915*.\n" +
-        "2️⃣ Copy the Mpesa *SMS text* or take a *screenshot*.\n" +
-        "3️⃣ Paste the text here, or send the screenshot (you can add a caption if you like).\n\n" +
-        "Once I detect the payment, I’ll confirm and start processing your report.",
-      { parse_mode: "Markdown" }
-    );
-    return;
-  }
-
-  if (text === KEY_HELP) {
-    await ctx.reply(
-      "❓ *Quick help:*\n\n" +
-        "1️⃣ Tap *📄 Send Document* to see how to upload your file.\n" +
-        "2️⃣ Tap *🧾 Send Mpesa Text / Screenshot* to see how to send your payment.\n" +
-        "3️⃣ After both are received, your Turnitin AI & Plag report will be processed and sent here.",
-      { parse_mode: "Markdown" }
-    );
-    return;
-  }
-
-  // ---- Auto-detect payment text or caption ----
-  try {
-    const paymentCandidate = text || caption;
-
-    if (looksLikePaymentText(paymentCandidate)) {
-      await ctx.reply(
-        "✅ I’ve received your payment details.\n\n" +
-          "Your file will now be *queued for processing*.\n" +
-          "You’ll receive your Turnitin AI & Plag report here once it’s ready.\n\n" +
-          "If I need anything else, I’ll let you know.",
-        { parse_mode: "Markdown" }
-      );
-    }
-  } catch (err) {
-    console.error("Error sending auto payment-confirmed reply:", err.message);
-  }
-  // ---------------------------------------------
-
-  // Forward everything (except keyboard commands) to admin
-  try {
-    await bot.telegram.sendMessage(
-      ADMIN_ID,
-      `📨 New message from user:\n` +
-        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
-        `Username: @${user.username || "N/A"}\n` +
-        `User ID: ${user.id}`
-    );
-    await bot.telegram.forwardMessage(
-      ADMIN_ID,
-      ctx.chat.id,
-      ctx.message.message_id
-    );
-  } catch (err) {
-    console.error("Error forwarding message to admin:", err.message);
-  }
-});
-
 // 🚀 Start the Telegram bot
 bot.launch().then(() => {
-  console.log(
-    "🤖 @KaptainTurnitinBot is running with keyboard + auto file + auto payment replies..."
-  );
+  console.log("🤖 @KaptainTurnitinBot is running with keyboard + auto file + auto payment replies...");
 });
 
 // 🌐 Tiny HTTP server for Render Web Service (so a port is open)
