@@ -228,7 +228,7 @@ bot.on("document", async (ctx) => {
       "📄 I’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "💰 Price per check: *70 KES* (same for recheck)\n" +
+        "💰 Price per check: *60 KES* (recheck *50 KES*)\n" +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
       { parse_mode: "Markdown" }
     );
