@@ -1,6 +1,6 @@
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
-const http = require("http"); // tiny HTTP server for Render
+const express = require("express");  // Express for handling webhook
 const moment = require("moment");
 
 const botToken = process.env.BOT_TOKEN;
@@ -41,9 +41,6 @@ const webhookUrl = "https://jk-turnitin-telegram-bot-1.onrender.com";
 
 // Set webhook
 bot.telegram.setWebhook(webhookUrl + "/webhook");
-
-// Webhook route
-bot.webhookCallback("/webhook");
 
 // Bot's welcome message
 const WELCOME_MESSAGE = `
@@ -100,7 +97,7 @@ bot.start(async (ctx) => {
     parse_mode: "Markdown",
     reply_markup: {
       keyboard: [
-        [{ text: KEY_SEND_DOC }],
+        [{ text: KEY_SEND_DOC }], 
         [{ text: KEY_SEND_MPESA }],
         [{ text: KEY_HELP }]
       ],
@@ -242,22 +239,16 @@ bot.on("document", async (ctx) => {
   }
 });
 
-// 🚀 Start the Telegram bot via webhook
-bot.launch().then(() => {
-  console.log("🤖 @KaptainTurnitinBot is running with webhook enabled...");
+// Setup Express server to handle webhook
+const app = express();
+
+// Webhook route
+app.use(bot.webhookCallback("/webhook"));
+
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`Webhook server is listening on port ${port}`);
 });
-
-// 🌐 Tiny HTTP server for Render Web Service (so a port is open)
-const PORT = process.env.PORT || 3000;
-
-http
-  .createServer((req, res) => {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("JK Turnitin Telegram bot is running.\n");
-  })
-  .listen(PORT, () => {
-    console.log(`🌐 HTTP server listening on port ${PORT}`);
-  });
 
 // Graceful shutdown
 process.once("SIGINT", () => bot.stop("SIGINT"));
