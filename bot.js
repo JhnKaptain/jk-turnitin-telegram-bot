@@ -67,6 +67,24 @@ function looksLikePaymentText(text) {
   return hasName && hasPaymentWords;
 }
 
+// Function to check if the current time is within active hours (6 AM to 11:59 PM) and inactive (12 AM to 5:59 AM)
+function isBotActive() {
+  const now = new Date();
+
+  // Convert the current time to Kenya's timezone (UTC +3)
+  const kenyanTime = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Nairobi', // Kenya time zone
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  }).format(now);
+
+  const hour = new Date(`1970-01-01T${kenyanTime}Z`).getHours();
+
+  // Active hours: From 6 AM to 11:59 PM
+  return hour >= 6 && hour < 24;  // 6 AM to 11:59 PM
+}
+
 // /start
 bot.start(async (ctx) => {
   const user = ctx.from;
@@ -95,7 +113,7 @@ bot.start(async (ctx) => {
     parse_mode: "Markdown",
     reply_markup: {
       keyboard: [
-        [{ text: KEY_SEND_DOC }],
+        [{ text: KEY_SEND_DOC }], 
         [{ text: KEY_SEND_MPESA }],
         [{ text: KEY_HELP }]
       ],
@@ -140,29 +158,6 @@ bot.command("reply", async (ctx) => {
     console.error("Error sending reply:", err.message);
     await ctx.reply("❌ Failed to send message: " + err.message);
   }
-});
-
-// /file <userId> Optional caption   (prepare to send a file)
-bot.command("file", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return;
-
-  const text = ctx.message.text || "";
-  const parts = text.split(" ");
-
-  if (parts.length < 2) {
-    await ctx.reply("Usage: /file <userId> Optional caption");
-    return;
-  }
-
-  const userId = parts[1];
-  const caption = parts.slice(2).join(" ");
-
-  pendingFileTargets[ADMIN_ID] = { userId, caption };
-
-  await ctx.reply(
-    `✅ Got it. The *next document* you send will be delivered to user ${userId}.`,
-    { parse_mode: "Markdown" }
-  );
 });
 
 // Handle documents (files)
@@ -223,6 +218,13 @@ bot.on("document", async (ctx) => {
   }
 
   // 🔔 Auto-reply to user about payment
+  if (!isBotActive()) {
+    await ctx.reply(
+      "⚠️ The bot is currently inactive and will resume at 6 AM. Please try again later."
+    );
+    return; // Stops further processing
+  }
+
   try {
     await ctx.reply(
       "📄 I’ve received your file.\n\n" +
