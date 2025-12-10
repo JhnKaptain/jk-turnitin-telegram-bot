@@ -36,6 +36,15 @@ async function notifyInactivePeriod(ctx) {
   bot.stop();
 }
 
+// Webhook URL: Replace with your Render app URL
+const webhookUrl = "https://jk-turnitin-telegram-bot-1.onrender.com";
+
+// Set webhook
+bot.telegram.setWebhook(webhookUrl + "/webhook");
+
+// Webhook route
+bot.webhookCallback("/webhook");
+
 // Bot's welcome message
 const WELCOME_MESSAGE = `
 Turnitin Reports Bot – JK
@@ -58,6 +67,7 @@ This bot generates Turnitin plagiarism and AI reports.
 • No bargaining, please 😊
 `;
 
+// Start command
 bot.start(async (ctx) => {
   const user = ctx.from;
 
@@ -90,7 +100,7 @@ bot.start(async (ctx) => {
     parse_mode: "Markdown",
     reply_markup: {
       keyboard: [
-        [{ text: KEY_SEND_DOC }], 
+        [{ text: KEY_SEND_DOC }],
         [{ text: KEY_SEND_MPESA }],
         [{ text: KEY_HELP }]
       ],
@@ -232,9 +242,9 @@ bot.on("document", async (ctx) => {
   }
 });
 
-// 🚀 Start the Telegram bot
+// 🚀 Start the Telegram bot via webhook
 bot.launch().then(() => {
-  console.log("🤖 @KaptainTurnitinBot is running with keyboard + auto file + auto payment replies...");
+  console.log("🤖 @KaptainTurnitinBot is running with webhook enabled...");
 });
 
 // 🌐 Tiny HTTP server for Render Web Service (so a port is open)
