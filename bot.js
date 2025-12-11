@@ -38,6 +38,20 @@ async function notifyInactivePeriod(ctx) {
   );
 }
 
+// Detect if text looks like an M-PESA payment message to you
+function isLikelyMpesaPayment(text) {
+  const t = text.toLowerCase();
+
+  // Flexible: "confirmed", "paid to", your name or till number
+  const hasConfirmed = t.includes("confirmed");
+  const hasPaidTo = t.includes("paid to");
+  const hasYourName =
+    t.includes("john") && (t.includes("makokha") || t.includes("wanjala"));
+  const hasTillNumber = t.includes("6164915");
+
+  return hasPaidTo && (hasYourName || hasTillNumber) && hasConfirmed;
+}
+
 // Webhook URL: Replace with your Render app URL
 const webhookUrl = "https://jk-turnitin-telegram-bot-1.onrender.com";
 
@@ -271,7 +285,7 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // Auto-reply to user about payment
+  // Ask user to send payment
   try {
     await ctx.reply(
       "📄 I’ve received your file.\n\n" +
@@ -283,6 +297,114 @@ bot.on("document", async (ctx) => {
     );
   } catch (err) {
     console.error("Error sending auto file-received reply to user:", err.message);
+  }
+});
+
+/* ---------- PHOTO HANDLER (M-PESA SCREENSHOTS) ---------- */
+
+bot.on("photo", async (ctx) => {
+  const user = ctx.from;
+
+  if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
+
+  // Ignore admin photos for now
+  if (user.id === ADMIN_ID) return;
+
+  console.log("🖼️ Photo from user (likely payment screenshot):", user.id);
+
+  try {
+    await bot.telegram.sendMessage(
+      ADMIN_ID,
+      `🖼️ Payment screenshot from user:\n` +
+        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
+        `Username: @${user.username || "N/A"}\n` +
+        `User ID: ${user.id}`
+    );
+
+    await bot.telegram.forwardMessage(
+      ADMIN_ID,
+      ctx.chat.id,
+      ctx.message.message_id
+    );
+  } catch (err) {
+    console.error("Error forwarding photo to admin:", err.message);
+  }
+
+  // Short confirmation to user
+  try {
+    await ctx.reply(
+      "✅ I’ve received your payment screenshot.\n\n" +
+        "Your file will now be queued for processing.\n" +
+        "You’ll receive your Turnitin AI & Plag report here once it’s ready.\n\n" +
+        "If I need anything else, I’ll let you know."
+    );
+  } catch (err) {
+    console.error("Error sending payment screenshot confirmation:", err.message);
+  }
+});
+
+/* ---------- TEXT HANDLER (M-PESA SMS + CHAT) ---------- */
+
+bot.on("text", async (ctx) => {
+  const user = ctx.from;
+  const text = ctx.message.text || "";
+
+  // Let command handlers (/start, /reply, /file) handle commands
+  if (text.startsWith("/")) return;
+
+  if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
+
+  // Ignore admin free text; admin uses /reply and /file
+  if (user.id === ADMIN_ID) return;
+
+  const paymentLike = isLikelyMpesaPayment(text);
+
+  // 🔔 Always forward client messages to admin
+  try {
+    const label = paymentLike ? "💰 Payment text" : "💬 Message";
+    await bot.telegram.sendMessage(
+      ADMIN_ID,
+      `${label} from user:\n` +
+        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
+        `Username: @${user.username || "N/A"}\n` +
+        `User ID: ${user.id}\n\n` +
+        text
+    );
+  } catch (err) {
+    console.error("Error forwarding text to admin:", err.message);
+  }
+
+  // ✅ User-facing replies
+  if (paymentLike) {
+    // Payment confirmation
+    try {
+      await ctx.reply(
+        "✅ I’ve received your payment details.\n\n" +
+          "Your file will now be queued for processing.\n" +
+          "You’ll receive your Turnitin AI & Plag report here once it’s ready.\n\n" +
+          "If I need anything else, I’ll let you know."
+      );
+    } catch (err) {
+      console.error("Error sending payment confirmation to user:", err.message);
+    }
+  } else {
+    // Normal conversation message
+    try {
+      await ctx.reply(
+        "💬 Thanks for your message.\n\n" +
+          "I’ll review it and get back to you here.\n" +
+          "Remember to send your *document* and *Mpesa payment* if you haven’t yet.",
+        { parse_mode: "Markdown" }
+      );
+    } catch (err) {
+      console.error("Error sending generic text reply to user:", err.message);
+    }
   }
 });
 
