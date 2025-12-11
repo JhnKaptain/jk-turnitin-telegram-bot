@@ -24,11 +24,12 @@ const KEY_HELP = "❓ Help";
 
 /**
  * Inactive period:
- * 00:00–05:59 EAT  =  21:00–02:59 UTC
+ * 01:00–05:59 EAT  =  22:00–02:59 UTC
+ * (Active: 06:00–00:59 EAT)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time
-  return currentTime >= "21:00" || currentTime < "03:00";
+  return currentTime >= "22:00" || currentTime < "03:00";
 }
 
 // Reply when user writes during inactive hours (but do NOT stop bot)
@@ -180,8 +181,7 @@ bot.command("reply", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
   const text = ctx.message.text || "";
-  the_parts = text.split(" ");
-  const parts = the_parts; // keep simple
+  const parts = text.split(" ");
 
   if (parts.length < 3) {
     await ctx.reply("Usage: /reply <userId> <message>");
