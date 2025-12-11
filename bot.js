@@ -14,7 +14,8 @@ const ADMIN_ID = 6569201830; // johnkappy
 
 const bot = new Telegraf(botToken);
 
-// Remember which user the next admin file should go to
+// Remember which user the next admin file(s) should go to
+// key = admin id, value = { userId, caption, remaining }
 const pendingFileTargets = {};
 
 // Button labels
@@ -77,7 +78,7 @@ This bot generates Turnitin plagiarism and AI reports.
 
 💰 Pricing
 • Price / check: 70 KES
-• Recheck: 50 KES
+• Recheck: 60 KES
 • No bargaining, please 😊
 `;
 
@@ -96,13 +97,14 @@ bot.start(async (ctx) => {
       "👋 Admin mode is ready.\n\n" +
         "📩 *Reply with text as the bot:*\n" +
         "`/reply <userId> <your message>`\n\n" +
-        "📁 *Send a file as the bot:*\n" +
+        "📁 *Send file(s) as the bot:*\n" +
         "1. Send this command:\n" +
-        "`/file <userId> Optional caption`\n" +
-        "2. Then upload/send the document in the *next* message.\n\n" +
+        "`/file <userId> Optional caption`  → next 1 document\n" +
+        "`/file2 <userId> Optional caption` → next 2 documents\n" +
+        "2. Then upload/send the document(s) in the *next* message(s).\n\n" +
         "Example:\n" +
-        "`/file 7488919090 Here is your Turnitin report ✅`\n" +
-        "Then attach the DOC/PDF.",
+        "`/file2 7488919090 Here are your Turnitin reports ✅`\n" +
+        "Then attach the two DOC/PDF files.",
       { parse_mode: "Markdown" }
     );
     return;
@@ -159,7 +161,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   await ctx.reply(
     "🧾 Please send your *Mpesa payment* text or screenshot.\n\n" +
       "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-      "💰 Price / check: *70 KES*  |  Recheck: *50 KES*",
+      "💰 Price / check: *70 KES*  |  Recheck: *60 KES*",
     { parse_mode: "Markdown" }
   );
 });
@@ -200,7 +202,7 @@ bot.command("reply", async (ctx) => {
   }
 });
 
-// /file <userId> Optional caption
+// /file <userId> Optional caption  → next 1 document goes to that user
 bot.command("file", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -215,10 +217,33 @@ bot.command("file", async (ctx) => {
   const userId = parts[1];
   const caption = parts.slice(2).join(" ");
 
-  pendingFileTargets[ADMIN_ID] = { userId, caption };
+  pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 1 };
 
   await ctx.reply(
     `✅ Got it. The *next document* you send will be delivered to user ${userId}.`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// /file2 <userId> Optional caption  → next 2 documents go to that user
+bot.command("file2", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  const text = ctx.message.text || "";
+  const parts = text.split(" ");
+
+  if (parts.length < 2) {
+    await ctx.reply("Usage: /file2 <userId> Optional caption");
+    return;
+  }
+
+  const userId = parts[1];
+  const caption = parts.slice(2).join(" ");
+
+  pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 2 };
+
+  await ctx.reply(
+    `✅ Got it. The *next 2 documents* you send will be delivered to user ${userId}.`,
     { parse_mode: "Markdown" }
   );
 });
@@ -234,29 +259,41 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  // ADMIN sending a file to a user
+  // ADMIN sending file(s) to a user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
 
     if (!target) {
       await ctx.reply(
         "To send this file to a user, first run:\n" +
-          "`/file <userId> Optional caption`",
+          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`",
         { parse_mode: "Markdown" }
       );
       return;
     }
 
-    delete pendingFileTargets[ADMIN_ID];
-
     const { userId, caption } = target;
     const doc = ctx.message.document;
+    const remainingBefore = target.remaining || 1;
+    const remainingAfter = remainingBefore - 1;
 
     try {
       await bot.telegram.sendDocument(userId, doc.file_id, {
         caption: caption || undefined
       });
-      await ctx.reply(`✅ File sent to user ${userId}`);
+
+      // Update or clear the target
+      if (remainingAfter <= 0) {
+        delete pendingFileTargets[ADMIN_ID];
+      } else {
+        target.remaining = remainingAfter;
+      }
+
+      const extra =
+        remainingAfter > 0
+          ? ` (${remainingAfter} file(s) remaining for this command)`
+          : "";
+      await ctx.reply(`✅ File sent to user ${userId}${extra}`);
     } catch (err) {
       console.error("Error sending file to user:", err.message);
       await ctx.reply("❌ Failed to send file: " + err.message);
@@ -292,7 +329,7 @@ bot.on("document", async (ctx) => {
       "📄 I’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "💰 Price per check: *70 KES* (recheck *50 KES*)\n" +
+        "💰 Price per check: *70 KES* (recheck *60 KES*)\n" +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
       { parse_mode: "Markdown" }
     );
@@ -352,7 +389,7 @@ bot.on("text", async (ctx) => {
   const user = ctx.from;
   const text = ctx.message.text || "";
 
-  // Let command handlers (/start, /reply, /file) handle commands
+  // Let command handlers (/start, /reply, /file, /file2) handle commands
   if (text.startsWith("/")) return;
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
@@ -360,7 +397,7 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // Ignore admin free text; admin uses /reply and /file
+  // Ignore admin free text; admin uses /reply and file commands
   if (user.id === ADMIN_ID) return;
 
   const paymentLike = isLikelyMpesaPayment(text);
