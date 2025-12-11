@@ -1,10 +1,9 @@
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
-const express = require("express");  // Express for handling webhook
+const express = require("express");
 const moment = require("moment");
 
 const botToken = process.env.BOT_TOKEN;
-
 if (!botToken) {
   console.error("❌ BOT_TOKEN is missing in .env file");
   process.exit(1);
@@ -16,7 +15,6 @@ const ADMIN_ID = 6569201830; // johnkappy
 const bot = new Telegraf(botToken);
 
 // Remember which user the next admin file should go to
-// key = admin id (or chat id), value = { userId, caption }
 const pendingFileTargets = {};
 
 // Button labels
@@ -24,22 +22,26 @@ const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
 const KEY_HELP = "❓ Help";
 
-// Time check function to determine inactivity period (12 AM - 5:59 AM EAT = 9 PM - 2:59 AM UTC)
+/**
+ * Inactive period:
+ * 00:00–05:59 EAT  =  21:00–02:59 UTC
+ */
 function isBotInactivePeriod() {
-  const currentTime = moment.utc().format("HH:mm"); // Current time in UTC (24-hour format)
-  return currentTime >= "21:00" && currentTime < "03:00"; // 9 PM to 3 AM UTC
+  const currentTime = moment.utc().format("HH:mm"); // UTC time
+  return currentTime >= "21:00" || currentTime < "03:00";
 }
 
-// Notify users during inactive periods
+// Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
-  await ctx.reply("The bot is temporarily inactive. I’ll be back at 6 AM EAT.");
-  bot.stop();
+  await ctx.reply(
+    "⏳ The bot is inactive now. I’ll start processing files again at 6:00 AM EAT."
+  );
 }
 
 // Webhook URL: Replace with your Render app URL
 const webhookUrl = "https://jk-turnitin-telegram-bot-1.onrender.com";
 
-// Set webhook
+// Set webhook (no polling)
 bot.telegram.setWebhook(webhookUrl + "/webhook");
 
 // Bot's welcome message
@@ -64,11 +66,12 @@ This bot generates Turnitin plagiarism and AI reports.
 • No bargaining, please 😊
 `;
 
-// Start command
+// /start
 bot.start(async (ctx) => {
   const user = ctx.from;
 
-  if (isBotInactivePeriod()) {
+  // Users are blocked during inactive period, admin is not
+  if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
     await notifyInactivePeriod(ctx);
     return;
   }
@@ -97,7 +100,7 @@ bot.start(async (ctx) => {
     parse_mode: "Markdown",
     reply_markup: {
       keyboard: [
-        [{ text: KEY_SEND_DOC }], 
+        [{ text: KEY_SEND_DOC }],
         [{ text: KEY_SEND_MPESA }],
         [{ text: KEY_HELP }]
       ],
@@ -120,7 +123,45 @@ bot.start(async (ctx) => {
   }
 });
 
-// /reply <userId> <message>  (text replies)
+/* ---------- BUTTON HANDLERS ---------- */
+
+bot.hears(KEY_SEND_DOC, async (ctx) => {
+  if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
+  await ctx.reply(
+    "📄 Please send your document here as a *file* (not a photo or text).",
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.hears(KEY_SEND_MPESA, async (ctx) => {
+  if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
+  await ctx.reply(
+    "🧾 Please send your *Mpesa payment* text or screenshot.\n\n" +
+      "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
+      "💰 Price / check: *70 KES*  |  Recheck: *50 KES*",
+    { parse_mode: "Markdown" }
+  );
+});
+
+bot.hears(KEY_HELP, async (ctx) => {
+  await ctx.reply(
+    "❓ How to use this bot:\n\n" +
+      "1️⃣ Tap *Send Document* and upload your DOC/PDF as a file.\n" +
+      "2️⃣ Tap *Send Mpesa Text / Screenshot* and send your payment.\n" +
+      "3️⃣ Wait for confirmation and your Turnitin report.",
+    { parse_mode: "Markdown" }
+  );
+});
+
+/* ---------- ADMIN COMMANDS ---------- */
+
+// /reply <userId> <message>
 bot.command("reply", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -144,7 +185,7 @@ bot.command("reply", async (ctx) => {
   }
 });
 
-// /file <userId> Optional caption   (prepare to send a file)
+// /file <userId> Optional caption
 bot.command("file", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -167,11 +208,18 @@ bot.command("file", async (ctx) => {
   );
 });
 
-// Handle documents (files)
+/* ---------- DOCUMENT HANDLER ---------- */
+
 bot.on("document", async (ctx) => {
   const user = ctx.from;
 
-  // ADMIN sending a file
+  // For normal users, respect inactive period
+  if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
+
+  // ADMIN sending a file to a user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
 
@@ -184,7 +232,6 @@ bot.on("document", async (ctx) => {
       return;
     }
 
-    // Use and clear the pending target
     delete pendingFileTargets[ADMIN_ID];
 
     const { userId, caption } = target;
@@ -203,11 +250,10 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  // USER sending a file -> forward to admin + auto "file received, make payment" reply
+  // USER sending a file -> forward to admin + auto reply
   console.log("📄 Document from user:", user.id);
 
   try {
-    // Notify admin
     await bot.telegram.sendMessage(
       ADMIN_ID,
       `📨 Document from user:\n` +
@@ -215,6 +261,7 @@ bot.on("document", async (ctx) => {
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}`
     );
+
     await bot.telegram.forwardMessage(
       ADMIN_ID,
       ctx.chat.id,
@@ -224,7 +271,7 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // 🔔 Auto-reply to user about payment
+  // Auto-reply to user about payment
   try {
     await ctx.reply(
       "📄 I’ve received your file.\n\n" +
@@ -239,10 +286,10 @@ bot.on("document", async (ctx) => {
   }
 });
 
-// Setup Express server to handle webhook
-const app = express();
+/* ---------- EXPRESS WEBHOOK SERVER ---------- */
 
-// Webhook route
+const app = express();
+app.use(express.json()); // so Telegraf sees req.body
 app.use(bot.webhookCallback("/webhook"));
 
 const port = process.env.PORT || 3000;
