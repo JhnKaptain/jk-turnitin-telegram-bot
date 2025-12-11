@@ -180,7 +180,8 @@ bot.command("reply", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
   const text = ctx.message.text || "";
-  const parts = text.split(" ");
+  the_parts = text.split(" ");
+  const parts = the_parts; // keep simple
 
   if (parts.length < 3) {
     await ctx.reply("Usage: /reply <userId> <message>");
@@ -333,13 +334,12 @@ bot.on("photo", async (ctx) => {
     console.error("Error forwarding photo to admin:", err.message);
   }
 
-  // Short confirmation to user
+  // Short confirmation ONLY for payment screenshots
   try {
     await ctx.reply(
       "✅ I’ve received your payment screenshot.\n\n" +
-        "Your file will now be queued for processing.\n" +
-        "You’ll receive your Turnitin AI & Plag report here once it’s ready.\n\n" +
-        "If I need anything else, I’ll let you know."
+        "Your payment will be confirmed and your file has been queued for processing.\n" +
+        "You’ll receive your Turnitin AI & Plag report here once it’s ready."
     );
   } catch (err) {
     console.error("Error sending payment screenshot confirmation:", err.message);
@@ -380,32 +380,19 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // ✅ User-facing replies
+  // ✅ Only auto-reply on Mpesa payment-like texts
   if (paymentLike) {
-    // Payment confirmation
     try {
       await ctx.reply(
         "✅ I’ve received your payment details.\n\n" +
-          "Your file will now be queued for processing.\n" +
-          "You’ll receive your Turnitin AI & Plag report here once it’s ready.\n\n" +
-          "If I need anything else, I’ll let you know."
+          "Your payment will be confirmed and your file has been queued for processing.\n" +
+          "You’ll receive your Turnitin AI & Plag report here once it’s ready."
       );
     } catch (err) {
       console.error("Error sending payment confirmation to user:", err.message);
     }
-  } else {
-    // Normal conversation message
-    try {
-      await ctx.reply(
-        "💬 Thanks for your message.\n\n" +
-          "I’ll review it and get back to you here.\n" +
-          "Remember to send your *document* and *Mpesa payment* if you haven’t yet.",
-        { parse_mode: "Markdown" }
-      );
-    } catch (err) {
-      console.error("Error sending generic text reply to user:", err.message);
-    }
   }
+  // For non-payment messages: no auto-reply. Admin will respond via /reply.
 });
 
 /* ---------- EXPRESS WEBHOOK SERVER ---------- */
