@@ -36,8 +36,8 @@ function isBotInactivePeriod() {
 // Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
   await ctx.reply(
-    "⏳ The bot is inactive now. I’ll start processing files again at 6:00 AM EAT.\n" +
-      "If urgent, you can WhatsApp me on 0701730921."
+    "⏳ The bot is inactive now. We’ll start processing files again at 6:00 AM EAT.\n" +
+      "If urgent, WhatsApp Us on 0701730921."
   );
 }
 
@@ -327,7 +327,7 @@ bot.on("document", async (ctx) => {
   // Ask user to send payment + mention GPTZero
   try {
     await ctx.reply(
-      "📄 I’ve received your file.\n\n" +
+      "📄 We’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
         "💰 Price per check: *70 KES* (recheck *60 KES*)\n" +
@@ -376,7 +376,7 @@ bot.on("photo", async (ctx) => {
   // Short confirmation ONLY for payment screenshots
   try {
     await ctx.reply(
-      "✅ I’ve received your payment screenshot.\n\n" +
+      "✅ We’ve received your payment screenshot.\n\n" +
         "Your payment will be confirmed and your file has been queued for processing.\n" +
         "You’ll receive your Turnitin AI & Plag report here once it’s ready."
     );
@@ -423,7 +423,7 @@ bot.on("text", async (ctx) => {
   if (paymentLike) {
     try {
       await ctx.reply(
-        "✅ I’ve received your payment details.\n\n" +
+        "✅ We’ve received your payment details.\n\n" +
           "Your payment will be confirmed and your file has been queued for processing.\n" +
           "You’ll receive your Turnitin AI & Plag report here once it’s ready."
       );
