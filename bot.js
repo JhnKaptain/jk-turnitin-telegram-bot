@@ -36,7 +36,8 @@ function isBotInactivePeriod() {
 // Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
   await ctx.reply(
-    "⏳ The bot is inactive now. I’ll start processing files again at 6:00 AM EAT."
+    "⏳ The bot is inactive now. I’ll start processing files again at 6:00 AM EAT.\n" +
+      "If urgent, you can WhatsApp me on 0701730921."
   );
 }
 
@@ -323,13 +324,14 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // Ask user to send payment
+  // Ask user to send payment + mention GPTZero
   try {
     await ctx.reply(
       "📄 I’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
         "💰 Price per check: *70 KES* (recheck *60 KES*)\n" +
+        "🧠 *GPTZero AI report* also available on request at *40 KES*.\n" +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
       { parse_mode: "Markdown" }
     );
