@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config(); 
 const { Telegraf } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
@@ -25,12 +25,12 @@ const KEY_HELP = "❓ Help";
 
 /**
  * Inactive period:
- * 01:00–05:59 EAT  =  22:00–02:59 UTC
- * (Active: 06:00–00:59 EAT)
+ * 02:00–05:59 EAT  ≈  23:00–02:59 UTC
+ * (Active: 06:00–01:59 EAT)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time
-  return currentTime >= "19:00" || currentTime < "03:00";
+  return currentTime >= "23:00" || currentTime < "03:00";
 }
 
 // Reply when user writes during inactive hours (but do NOT stop bot)
@@ -78,8 +78,8 @@ This bot generates Turnitin plagiarism and AI reports.
 3️⃣ Wait for confirmation and then receive your report.
 
 💰 Pricing
-• Price / check: 70 KES
-• Recheck: 60 KES
+• Price / check: 80 KES
+• Recheck: 80 KES
 • No bargaining, please 😊
 `;
 
@@ -162,7 +162,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   await ctx.reply(
     "🧾 Please send your *Mpesa payment* text or screenshot.\n\n" +
       "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-      "💰 Price / check: *70 KES*  |  Recheck: *60 KES*",
+      "💰 Price / check: *80 KES*  |  Recheck: *80 KES*",
     { parse_mode: "Markdown" }
   );
 });
@@ -292,7 +292,7 @@ bot.on("document", async (ctx) => {
 
       const extra =
         remainingAfter > 0
-          ? ` (${remainingAfter} file(s) remaining for this command)`
+          ? ` (${remainingAfter} file(s) remaining for this command)`  
           : "";
       await ctx.reply(`✅ File sent to user ${userId}${extra}`);
     } catch (err) {
@@ -330,7 +330,7 @@ bot.on("document", async (ctx) => {
       "📄 We’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "💰 Price per check: *70 KES* (recheck *60 KES*)\n" +
+        "💰 Price per check: *80 KES* (recheck *80 KES*)\n" +
         "🧠 *GPTZero AI report* also available on request at *40 KES*.\n" +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
       { parse_mode: "Markdown" }
