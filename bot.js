@@ -26,7 +26,7 @@ const KEY_HELP = "❓ Help";
 /**
  * Inactive period:
  * 03:30–05:59 EAT  ≈  00:30–02:59 UTC
- * (Active: 06:00–01:59 EAT)
+ * (Active: 06:00–02:29 EAT)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time
