@@ -25,7 +25,7 @@ const KEY_HELP = "❓ Help";
 
 /**
  * Inactive period:
- * 02:00–05:59 EAT  ≈  23:00–02:59 UTC
+ * 03:30–05:59 EAT  ≈  00:30–02:59 UTC
  * (Active: 06:00–01:59 EAT)
  */
 function isBotInactivePeriod() {
