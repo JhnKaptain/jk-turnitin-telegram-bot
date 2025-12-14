@@ -31,7 +31,7 @@ const KEY_HELP = "❓ Help";
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 20:00–23:59 UTC (11:00 pm–2:59 am EAT)
+  // Inactive from 20:00–23:59 UTC
   return currentTime >= "20:00";
 }
 
@@ -40,7 +40,7 @@ async function notifyInactivePeriod(ctx) {
   await ctx.reply(
     "⏳ Turnitin checks are paused right now.\n" +
       "We’ll resume Turnitin reports at *3:00 AM EAT*.\n\n" +
-      "🧠 In the meantime, *GPTZero AI & Plagiarism reports* are still available at *40 KES*.\n" +
+      "🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *40 KES*.\n" +
       "If urgent, WhatsApp us on *0701730921*."
   );
 }
@@ -153,10 +153,10 @@ bot.hears(KEY_SEND_DOC, async (ctx) => {
     return;
   }
   await ctx.reply(
-    "📄 To send your document:\n\n" +
-      "1️⃣ Tap the *📎 attachment* icon.\n" +
-      "2️⃣ Choose *File* → select your DOC/PDF.\n" +
-      "3️⃣ Send it here (please *do not* send as a photo or plain text).",
+    "📄 *How to send your document:*\n\n" +
+      "1️⃣ Tap the *📎 attachment* icon in Telegram.\n" +
+      "2️⃣ Choose *File* → select your DOC/PDF from your phone or PC.\n" +
+      "3️⃣ Send it here as a *file* (please do *not* send as a photo or plain text).",
     { parse_mode: "Markdown" }
   );
 });
@@ -167,7 +167,11 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
     return;
   }
   await ctx.reply(
-    "🧾 Please send your *Mpesa payment* text or screenshot.\n\n" +
+    "🧾 *How to send your Mpesa payment:*\n\n" +
+      "1️⃣ After paying, open your *Mpesa SMS*.\n" +
+      "2️⃣ Either:\n" +
+      "   • *Forward* the payment SMS here, or\n" +
+      "   • Take a *screenshot* and send it here as a photo.\n\n" +
       "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
       "💰 Price / check: *80 KES*  |  Recheck: *80 KES*",
     { parse_mode: "Markdown" }
@@ -177,10 +181,16 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
 bot.hears(KEY_HELP, async (ctx) => {
   await ctx.reply(
     "❓ *How to use this bot:*\n\n" +
-      "1️⃣ Tap *Send Document* and upload your DOC/PDF as a *file* (via the 📎 icon → File → Document).\n" +
-      "2️⃣ Tap *Send Mpesa Text / Screenshot* and send your payment message or screenshot.\n" +
-      "3️⃣ Wait for confirmation and your Turnitin report.\n\n" +
-      "💬 For any questions, just type your message here — we’ll reply from the admin side.",
+      "📄 *Sending documents:*\n" +
+      "• Tap *Send Document*.\n" +
+      "• Tap the *📎 attachment* icon → *File* → choose your DOC/PDF → send.\n\n" +
+      "🧾 *Sending Mpesa details:*\n" +
+      "• Tap *Send Mpesa Text / Screenshot*.\n" +
+      "• Forward the Mpesa SMS *or* send a clear screenshot of the payment.\n\n" +
+      "💬 *Chat & questions:*\n" +
+      "• Just type your message here normally.\n" +
+      "• The admin will reply using the bot.\n\n" +
+      "After payment is confirmed, your Turnitin report (and optional GPTZero AI report) will be processed and sent here.",
     { parse_mode: "Markdown" }
   );
 });
