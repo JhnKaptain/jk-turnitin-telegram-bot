@@ -38,8 +38,8 @@ function isBotInactivePeriod() {
 // Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
   await ctx.reply(
-    "⏳ The bot is inactive now. We’ll start processing files again at 6:00 AM EAT.\n" +
-      "If urgent, WhatsApp Us on 0701730921."
+    "⏳ The bot is inactive now. We’ll start processing Turnitin Reports again at 3:30 AM EAT.\n" +
+      "Only *GPTZero AI report and Plag Reports * available Now @ *40 KES. If urgent, WhatsApp Us on 0701730921."
   );
 }
 
