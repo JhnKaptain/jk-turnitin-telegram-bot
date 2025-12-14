@@ -31,15 +31,17 @@ const KEY_HELP = "❓ Help";
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 20:00–23:59 UTC
+  // Inactive from 20:00–23:59 UTC (11:00 pm–2:59 am EAT)
   return currentTime >= "20:00";
 }
 
 // Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
   await ctx.reply(
-    "⏳ The bot is inactive now. We’ll start processing Turnitin Reports again at 3:30 AM EAT.\n" +
-      "Only *GPTZero AI report and Plag Reports * available Now @ *40 KES. If urgent, WhatsApp Us on 0701730921."
+    "⏳ Turnitin checks are paused right now.\n" +
+      "We’ll resume Turnitin reports at *3:00 AM EAT*.\n\n" +
+      "🧠 In the meantime, *GPTZero AI & Plagiarism reports* are still available at *40 KES*.\n" +
+      "If urgent, WhatsApp us on *0701730921*."
   );
 }
 
@@ -151,7 +153,10 @@ bot.hears(KEY_SEND_DOC, async (ctx) => {
     return;
   }
   await ctx.reply(
-    "📄 Please send your document here as a *file* (not a photo or text).",
+    "📄 To send your document:\n\n" +
+      "1️⃣ Tap the *📎 attachment* icon.\n" +
+      "2️⃣ Choose *File* → select your DOC/PDF.\n" +
+      "3️⃣ Send it here (please *do not* send as a photo or plain text).",
     { parse_mode: "Markdown" }
   );
 });
@@ -171,10 +176,11 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
 
 bot.hears(KEY_HELP, async (ctx) => {
   await ctx.reply(
-    "❓ How to use this bot:\n\n" +
-      "1️⃣ Tap *Send Document* and upload your DOC/PDF as a file.\n" +
-      "2️⃣ Tap *Send Mpesa Text / Screenshot* and send your payment.\n" +
-      "3️⃣ Wait for confirmation and your Turnitin report.",
+    "❓ *How to use this bot:*\n\n" +
+      "1️⃣ Tap *Send Document* and upload your DOC/PDF as a *file* (via the 📎 icon → File → Document).\n" +
+      "2️⃣ Tap *Send Mpesa Text / Screenshot* and send your payment message or screenshot.\n" +
+      "3️⃣ Wait for confirmation and your Turnitin report.\n\n" +
+      "💬 For any questions, just type your message here — we’ll reply from the admin side.",
     { parse_mode: "Markdown" }
   );
 });
