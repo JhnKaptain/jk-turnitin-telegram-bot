@@ -6,6 +6,7 @@ const moment = require("moment");
 const botToken = process.env.BOT_TOKEN;
 if (!botToken) {
   console.error("❌ BOT_TOKEN is missing in .env file");
+  console.error("Make sure BOT_TOKEN is set in your .env file.");
   process.exit(1);
 }
 
@@ -25,12 +26,13 @@ const KEY_HELP = "❓ Help";
 
 /**
  * Inactive period:
- * 01:00–05:59 EAT  =  23:00–02:59 UTC (as per your current code)
- * (Active: 06:00–00:59 EAT)
+ * 03:30–06:00 EAT  =  00:30–03:00 UTC
+ * (Active: 06:00–03:29 EAT)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time
-  return currentTime >= "23:00" || currentTime < "03:00";
+  // Inactive from 00:30 (inclusive) to 03:00 (exclusive) UTC
+  return currentTime >= "00:30" && currentTime < "03:00";
 }
 
 // Reply when user writes during inactive hours (but do NOT stop bot)
@@ -63,11 +65,11 @@ bot.telegram.setWebhook(webhookUrl + "/webhook");
 
 // Bot's welcome message
 const WELCOME_MESSAGE = `
-Gptzero Reports Bot – JK
+Turnitin Reports Bot – JK
 
 What can this bot do?
 
-Turnitin is currently down – we’re only offering *Gptzero AI* and plagiarism reports.
+This bot generates Turnitin plagiarism and AI reports.
 
 ✅ Name: John Wanjala
 ✅ Lipa Na Mpesa Till Number: 6164915
@@ -77,9 +79,9 @@ Turnitin is currently down – we’re only offering *Gptzero AI* and plagiarism
 2️⃣ Send your Mpesa payment text or screenshot.
 3️⃣ Wait for confirmation and then receive your report.
 
-💰 Pricing (Gptzero AI & Plag reports)
-• Per check: 40 KES
-• Recheck: 40 KES
+💰 Pricing
+• Price / check: 100 KES
+• Recheck: 100 KES
 • No bargaining, please 😊
 `;
 
@@ -104,7 +106,7 @@ bot.start(async (ctx) => {
         "`/file2 <userId> Optional caption` → next 2 documents\n" +
         "2. Then upload/send the document(s) in the *next* message(s).\n\n" +
         "Example:\n" +
-        "`/file2 7488919090 Here are your Gptzero reports ✅`\n" +
+        "`/file2 7488919090 Here are your Turnitin reports ✅`\n" +
         "Then attach the two DOC/PDF files.",
       { parse_mode: "Markdown" }
     );
@@ -149,8 +151,7 @@ bot.hears(KEY_SEND_DOC, async (ctx) => {
     return;
   }
   await ctx.reply(
-    "📄 Please send your document here as a *file* (not a photo or text).\n\n" +
-      "On Telegram: tap the 📎 icon → *File* → choose your DOC/PDF.",
+    "📄 Please send your document here as a *file* (not a photo or text).",
     { parse_mode: "Markdown" }
   );
 });
@@ -163,7 +164,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   await ctx.reply(
     "🧾 Please send your *Mpesa payment* text or screenshot.\n\n" +
       "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-      "💰 Gptzero AI & Plag report: *40 KES* per check  |  Recheck: *40 KES*",
+      "💰 Price / check: *100 KES*  |  Recheck: *100 KES*",
     { parse_mode: "Markdown" }
   );
 });
@@ -171,9 +172,9 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
 bot.hears(KEY_HELP, async (ctx) => {
   await ctx.reply(
     "❓ How to use this bot:\n\n" +
-      "1️⃣ Tap *Send Document* and upload your DOC/PDF as a file (📎 → *File*).\n" +
+      "1️⃣ Tap *Send Document* and upload your DOC/PDF as a file.\n" +
       "2️⃣ Tap *Send Mpesa Text / Screenshot* and send your payment.\n" +
-      "3️⃣ Wait for confirmation and your Gptzero AI & Plag report.",
+      "3️⃣ Wait for confirmation and your Turnitin report.",
     { parse_mode: "Markdown" }
   );
 });
@@ -325,15 +326,15 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // Ask user to send payment (Gptzero-only notice)
+  // Ask user to send payment + mention GPTZero
   try {
     await ctx.reply(
       "📄 We’ve received your file.\n\n" +
-        "🚧 Turnitin is currently down – we’re only offering *Gptzero AI* and plagiarism reports.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "💰 Gptzero AI & Plag report: *40 KES* per check (recheck *40 KES*)\n" +
-        "Once payment is confirmed, your Gptzero AI & Plag report will be processed.",
+        "💰 Price per check: *100 KES* (recheck *100 KES*)\n" +
+        "🧠 *GPTZero AI report* also available on request at *40 KES*.\n" +
+        "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
       { parse_mode: "Markdown" }
     );
   } catch (err) {
@@ -379,7 +380,7 @@ bot.on("photo", async (ctx) => {
     await ctx.reply(
       "✅ We’ve received your payment screenshot.\n\n" +
         "Your payment will be confirmed and your file has been queued for processing.\n" +
-        "You’ll receive your Gptzero AI & Plag report here once it’s ready."
+        "You’ll receive your Turnitin AI & Plag report here once it’s ready."
     );
   } catch (err) {
     console.error("Error sending payment screenshot confirmation:", err.message);
@@ -426,7 +427,7 @@ bot.on("text", async (ctx) => {
       await ctx.reply(
         "✅ We’ve received your payment details.\n\n" +
           "Your payment will be confirmed and your file has been queued for processing.\n" +
-          "You’ll receive your Gptzero AI & Plag report here once it’s ready."
+          "You’ll receive your Turnitin AI & Plag report here once it’s ready."
       );
     } catch (err) {
       console.error("Error sending payment confirmation to user:", err.message);
