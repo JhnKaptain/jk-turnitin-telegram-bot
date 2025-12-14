@@ -80,7 +80,7 @@ This bot generates Turnitin plagiarism and AI reports.
 3️⃣ Wait for confirmation and then receive your report.
 
 💰 Pricing
-• Price / check: 100 KES
+• Price / check: 80 KES
 • Recheck: 80 KES
 • No bargaining, please 😊
 `;
@@ -164,7 +164,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   await ctx.reply(
     "🧾 Please send your *Mpesa payment* text or screenshot.\n\n" +
       "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-      "💰 Price / check: *100 KES*  |  Recheck: *80 KES*",
+      "💰 Price / check: *80 KES*  |  Recheck: *80 KES*",
     { parse_mode: "Markdown" }
   );
 });
@@ -332,7 +332,7 @@ bot.on("document", async (ctx) => {
       "📄 We’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "💰 Price per check: *100 KES* (recheck *80 KES*)\n" +
+        "💰 Price per check: *80 KES* (recheck *80 KES*)\n" +
         "🧠 *GPTZero AI report* also available on request at *40 KES*.\n" +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
       { parse_mode: "Markdown" }
