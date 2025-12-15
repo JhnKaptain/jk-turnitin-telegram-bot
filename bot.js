@@ -26,20 +26,20 @@ const KEY_HELP = "❓ Help";
 
 /**
  * Inactive period:
- * 23:00–02:59 EAT  =  20:00–23:59 UTC
- * (Active: 03:00–22:59 EAT)
+ * 12:30–05:59 EAT  =  21:30–02:59 UTC
+ * (Active: 06:00–00:29 EAT)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 20:00–23:59 UTC
-  return currentTime >= "20:00";
+  // Inactive from 21:30–23:59 UTC OR 00:00–02:59 UTC
+  return currentTime >= "21:30" || currentTime < "03:00";
 }
 
 // Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
   await ctx.reply(
     "⏳ Turnitin checks are paused right now.\n" +
-      "We’ll resume Turnitin reports at *3:00 AM EAT*.\n\n" +
+      "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
       "🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *40 KES*.\n" +
       "If urgent, WhatsApp us on *0701730921*."
   );
