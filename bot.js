@@ -38,9 +38,8 @@ function isBotInactivePeriod() {
 // Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
   await ctx.reply(
-    "⏳ Turnitin checks are paused right now.\n" +
-      "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
-      "🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *40 KES*.\n" +
+    "⏳ We’re offline for now.\n" +
+      "We’ll resume *GPTZero AI & Plagiarism reports* at *6:00 AM EAT*.\n\n" +
       "If urgent, WhatsApp us on *0701730921*."
   );
 }
@@ -67,11 +66,11 @@ bot.telegram.setWebhook(webhookUrl + "/webhook");
 
 // Bot's welcome message
 const WELCOME_MESSAGE = `
-Turnitin Reports Bot – JK
+GPTZero Reports Bot – JK
 
 What can this bot do?
 
-This bot generates Turnitin plagiarism and AI reports.
+This bot generates GPTZero AI detection and plagiarism reports.
 
 ✅ Name: John Wanjala
 ✅ Lipa Na Mpesa Till Number: 6164915
@@ -82,8 +81,8 @@ This bot generates Turnitin plagiarism and AI reports.
 3️⃣ Wait for confirmation and then receive your report.
 
 💰 Pricing
-• Price / check: 80 KES
-• Recheck: 80 KES
+• Price / check: 40 KES
+• Recheck: 40 KES
 • No bargaining, please 😊
 `;
 
@@ -108,7 +107,7 @@ bot.start(async (ctx) => {
         "`/file2 <userId> Optional caption` → next 2 documents\n" +
         "2. Then upload/send the document(s) in the *next* message(s).\n\n" +
         "Example:\n" +
-        "`/file2 7488919090 Here are your Turnitin reports ✅`\n" +
+        "`/file2 7488919090 Here are your GPTZero reports ✅`\n" +
         "Then attach the two DOC/PDF files.",
       { parse_mode: "Markdown" }
     );
@@ -173,7 +172,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
       "   • *Forward* the payment SMS here, or\n" +
       "   • Take a *screenshot* and send it here as a photo.\n\n" +
       "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-      "💰 Price / check: *80 KES*  |  Recheck: *80 KES*",
+      "💰 Price / check: *40 KES*  |  Recheck: *40 KES*",
     { parse_mode: "Markdown" }
   );
 });
@@ -190,7 +189,7 @@ bot.hears(KEY_HELP, async (ctx) => {
       "💬 *Chat & questions:*\n" +
       "• Just type your message here normally.\n" +
       "• The admin will reply using the bot.\n\n" +
-      "After payment is confirmed, your Turnitin report (and optional GPTZero AI report) will be processed and sent here.",
+      "After payment is confirmed, your *GPTZero AI & Plagiarism report* will be processed and sent here.",
     { parse_mode: "Markdown" }
   );
 });
@@ -342,15 +341,14 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // Ask user to send payment + mention GPTZero
+  // Ask user to send payment
   try {
     await ctx.reply(
       "📄 We’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "💰 Price per check: *80 KES* (recheck *80 KES*)\n" +
-        "🧠 *GPTZero AI report* also available on request at *40 KES*.\n" +
-        "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
+        "💰 Price per check: *40 KES* (recheck *40 KES*)\n" +
+        "Once payment is confirmed, your *GPTZero AI & Plagiarism report* will be processed.",
       { parse_mode: "Markdown" }
     );
   } catch (err) {
@@ -396,7 +394,7 @@ bot.on("photo", async (ctx) => {
     await ctx.reply(
       "✅ We’ve received your payment screenshot.\n\n" +
         "Your payment will be confirmed and your file has been queued for processing.\n" +
-        "You’ll receive your Turnitin AI & Plag report here once it’s ready."
+        "You’ll receive your *GPTZero AI & Plagiarism report* here once it’s ready."
     );
   } catch (err) {
     console.error("Error sending payment screenshot confirmation:", err.message);
@@ -443,7 +441,7 @@ bot.on("text", async (ctx) => {
       await ctx.reply(
         "✅ We’ve received your payment details.\n\n" +
           "Your payment will be confirmed and your file has been queued for processing.\n" +
-          "You’ll receive your Turnitin AI & Plag report here once it’s ready."
+          "You’ll receive your *GPTZero AI & Plagiarism report* here once it’s ready."
       );
     } catch (err) {
       console.error("Error sending payment confirmation to user:", err.message);
