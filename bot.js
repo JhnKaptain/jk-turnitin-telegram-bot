@@ -13,6 +13,13 @@ if (!botToken) {
 // ⭐ Your Telegram numeric ID from @userinfobot
 const ADMIN_ID = 6569201830; // johnkappy
 
+// 💰 Pricing constants
+const CHECK_PRICE_KES = 100;
+const RECHECK_PRICE_KES = 80;
+const GPTZERO_PRICE_KES = 40;
+// Minimum payment to auto-accept as valid (based on recheck price)
+const MIN_PAYMENT_KES = RECHECK_PRICE_KES;
+
 const bot = new Telegraf(botToken);
 
 // Remember which user the next admin file(s) should go to
@@ -40,40 +47,38 @@ async function notifyInactivePeriod(ctx) {
   await ctx.reply(
     "⏳ Turnitin checks are paused right now.\n" +
       "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
-      "🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *40 KES*.\n" +
-      "If urgent, WhatsApp us on *0701730921*."
+      `🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *${GPTZERO_PRICE_KES} KES*.\n` +
+      "If urgent, WhatsApp us on *0701730921*.",
+    { parse_mode: "Markdown" }
   );
 }
 
-// Detect if text looks like an M-PESA payment message to you
-function isLikelyMpesaPayment(text) {
-  const t = text.toLowerCase();
+// 🔍 Parse an M-PESA payment SMS: detect if it's to you and extract amount
+function parseMpesaPayment(text) {
+  const lower = text.toLowerCase();
 
-  // Flexible: "confirmed", "paid to", your name or till number
-  const hasConfirmed = t.includes("confirmed");
-  const hasPaidTo = t.includes("paid to");
+  const hasConfirmed = lower.includes("confirmed");
+  const hasPaidTo = lower.includes("paid to");
   const hasYourName =
-    t.includes("john") && (t.includes("makokha") || t.includes("wanjala"));
-  const hasTillNumber = t.includes("6164915");
+    lower.includes("john") &&
+    (lower.includes("makokha") || lower.includes("wanjala"));
+  const hasTillNumber = lower.includes("6164915");
 
-  return hasPaidTo && (hasYourName || hasTillNumber) && hasConfirmed;
-}
+  const isPaymentToYou = hasConfirmed && hasPaidTo && (hasYourName || hasTillNumber);
 
-/**
- * Try to extract the payment amount from an M-PESA SMS.
- * We specifically look for: "Confirmed. Ksh 100.00 paid to ..."
- * and grab the amount between "Confirmed." and "paid to".
- */
-function parseMpesaAmount(text) {
-  // Example: "TLGLN14EOK Confirmed. Ksh 100.00 paid to JOHN Makokha WANJALA..."
-  const regex = /Confirmed\.\s*Ksh\s*([\d,]+(?:\.\d+)?)\s*paid to/i;
-  const match = text.match(regex);
-  if (!match) return null;
+  // Extract the amount right after "Confirmed. Ksh ..."
+  // Example: "TLGLN14EOK Confirmed. Ksh 100.00 paid to JOHN Makokha..."
+  let amount = null;
+  const amountMatch = text.match(/confirmed\.\s*ksh\s*([\d,]+(?:\.\d+)?)/i);
+  if (amountMatch) {
+    const amountStr = amountMatch[1].replace(/,/g, "");
+    const parsed = parseFloat(amountStr);
+    if (!isNaN(parsed)) {
+      amount = parsed;
+    }
+  }
 
-  const raw = match[1].replace(/,/g, ""); // remove thousand separators
-  const amount = parseFloat(raw);
-  if (Number.isNaN(amount)) return null;
-  return amount;
+  return { isPaymentToYou, amount };
 }
 
 // Webhook URL: Replace with your Render app URL
@@ -99,8 +104,8 @@ This bot generates Turnitin plagiarism and AI reports.
 3️⃣ Wait for confirmation and then receive your report.
 
 💰 Pricing
-• Price / check: 100 KES
-• Recheck: 80 KES
+• Price / check: ${CHECK_PRICE_KES} KES
+• Recheck: ${RECHECK_PRICE_KES} KES
 • No bargaining, please 😊
 `;
 
@@ -190,7 +195,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
       "   • *Forward* the payment SMS here, or\n" +
       "   • Take a *screenshot* and send it here as a photo.\n\n" +
       "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-      "💰 Price / check: *100 KES*  |  Recheck: *80 KES*",
+      `💰 Price / check: *${CHECK_PRICE_KES} KES*  |  Recheck: *${RECHECK_PRICE_KES} KES*`,
     { parse_mode: "Markdown" }
   );
 });
@@ -365,8 +370,8 @@ bot.on("document", async (ctx) => {
       "📄 We’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "💰 Price per check: *100 KES* (recheck *80 KES*)\n" +
-        "🧠 *GPTZero AI report* also available on request at *40 KES*.\n" +
+        `💰 Price per check: *${CHECK_PRICE_KES} KES* (recheck *${RECHECK_PRICE_KES} KES*)\n` +
+        `🧠 *GPTZero AI report* also available on request at *${GPTZERO_PRICE_KES} KES*.\n` +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
       { parse_mode: "Markdown" }
     );
@@ -375,7 +380,7 @@ bot.on("document", async (ctx) => {
   }
 });
 
-/* ---------- PHOTO HANDLER (SCREENSHOTS) ---------- */
+/* ---------- PHOTO HANDLER (M-PESA SCREENSHOTS) ---------- */
 
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
@@ -390,7 +395,6 @@ bot.on("photo", async (ctx) => {
 
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
-  // Always forward screenshot to admin for manual review
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -409,7 +413,7 @@ bot.on("photo", async (ctx) => {
     console.error("Error forwarding photo to admin:", err.message);
   }
 
-  // Neutral confirmation (we don't assume it's valid payment)
+  // Neutral confirmation for ANY screenshot (no automatic "payment received")
   try {
     await ctx.reply(
       "🖼️ We’ve received your screenshot.\n\n" +
@@ -438,52 +442,54 @@ bot.on("text", async (ctx) => {
   // Ignore admin free text; admin uses /reply and file commands
   if (user.id === ADMIN_ID) return;
 
-  const paymentLike = isLikelyMpesaPayment(text);
-  const MIN_PAYMENT = 80; // baseline using recheck price
-  const amount = paymentLike ? parseMpesaAmount(text) : null;
+  const { isPaymentToYou, amount } = parseMpesaPayment(text);
+
+  // Decide label for admin message
+  let label = "💬 Message";
+  let underpayment = false;
+
+  if (isPaymentToYou) {
+    if (amount != null && amount < MIN_PAYMENT_KES) {
+      label = "⚠️ Possible underpayment";
+      underpayment = true;
+    } else {
+      label = "💰 Payment text";
+    }
+  }
 
   // 🔔 Always forward client messages to admin
   try {
-    const label = paymentLike ? "💰 Payment text" : "💬 Message";
-    const amountInfo =
-      paymentLike && amount !== null ? `\nDetected amount: Ksh ${amount}` : "";
     await bot.telegram.sendMessage(
       ADMIN_ID,
       `${label} from user:\n` +
         `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
         `Username: @${user.username || "N/A"}\n` +
-        `User ID: ${user.id}${amountInfo}\n\n` +
+        `User ID: ${user.id}\n\n` +
         text
     );
   } catch (err) {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // ✅ Only auto-reply on Mpesa payment-like texts
-  if (paymentLike) {
-    // If we successfully parsed an amount and it's below the minimum, warn about underpayment
-    if (amount !== null && amount + 0.001 < MIN_PAYMENT) {
-      try {
-        await ctx.reply(
-          `⚠️ I’ve received your payment message, but it looks like the amount is *Ksh ${amount}*, which is less than the minimum *Ksh ${MIN_PAYMENT}*.\n\n` +
-            `For a full check, please top up to at least *Ksh ${MIN_PAYMENT}* and send the new Mpesa message or screenshot here.`
-        );
-      } catch (err) {
-        console.error("Error sending underpayment warning to user:", err.message);
-      }
-      return;
-    }
-
-    // Normal payment confirmation
+  // ✅ Auto-replies only for messages that look like payment to you
+  if (isPaymentToYou) {
     try {
-      await ctx.reply(
-        "✅ We’ve received your payment details.\n\n" +
-          "Your payment will be confirmed and your file has been queued for processing.\n" +
-          "Reports usually take *2–8 minutes* depending on the queue.\n" +
-          "You’ll receive your Turnitin AI & Plag report here once it’s ready."
-      );
+      if (underpayment) {
+        await ctx.reply(
+          `⚠️ We’ve received your M-PESA message, but it looks like the amount is less than *${MIN_PAYMENT_KES} KES*, which is the minimum fee per report.\n\n` +
+            "If this was a top-up or you made multiple payments, please reply here and confirm.\n" +
+            "Otherwise, kindly send the remaining balance so we can proceed with your report."
+        );
+      } else {
+        await ctx.reply(
+          "✅ We’ve received your payment details.\n\n" +
+            "Your payment will be confirmed and your file has been queued for processing.\n" +
+            "Reports usually take *2–8 minutes* depending on the queue.\n" +
+            "You’ll receive your Turnitin AI & Plag report here once it’s ready."
+        );
+      }
     } catch (err) {
-      console.error("Error sending payment confirmation to user:", err.message);
+      console.error("Error sending payment-related auto-reply to user:", err.message);
     }
   }
   // For non-payment messages: no auto-reply. Admin will respond via /reply.
