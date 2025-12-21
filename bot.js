@@ -24,6 +24,10 @@ const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
 const KEY_HELP = "❓ Help";
 
+// Pricing baseline for auto-detecting payments in text
+// (we base the minimum valid amount on the recheck price)
+const MIN_PAYMENT_AMOUNT = 80; // KES
+
 /**
  * Inactive period:
  * 02:00–05:59 EAT  =  23:00–02:59 UTC
@@ -41,22 +45,49 @@ async function notifyInactivePeriod(ctx) {
     "⏳ Turnitin checks are paused right now.\n" +
       "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
       "🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *40 KES*.\n" +
-      "If urgent, WhatsApp us on *0701730921*."
+      "If urgent, WhatsApp us on *0701730921*.",
+    { parse_mode: "Markdown" }
   );
 }
 
-// Detect if text looks like an M-PESA payment message to you
-function isLikelyMpesaPayment(text) {
+// Try to extract the first numeric amount from the Mpesa text
+function extractAmount(text) {
+  // Handles things like: "Ksh100.00", "KES 100", "100.00", "100"
+  const regex = /(ksh|kes)?\s*([0-9]+(?:\.[0-9]+)?)/i;
+  const match = text.match(regex);
+  if (!match) return null;
+
+  const amount = parseFloat(match[2]);
+  return isNaN(amount) ? null : amount;
+}
+
+// Analyse Mpesa-like text: is it a payment? underpaid? what amount?
+function analyzeMpesaPayment(text) {
   const t = text.toLowerCase();
 
-  // Flexible: "confirmed", "paid to", your name or till number
+  // Basic Mpesa pattern: confirmed + paid to + your details
   const hasConfirmed = t.includes("confirmed");
   const hasPaidTo = t.includes("paid to");
   const hasYourName =
     t.includes("john") && (t.includes("makokha") || t.includes("wanjala"));
   const hasTillNumber = t.includes("6164915");
 
-  return hasPaidTo && (hasYourName || hasTillNumber) && hasConfirmed;
+  const looksLikePayment =
+    hasConfirmed && hasPaidTo && (hasYourName || hasTillNumber);
+
+  if (!looksLikePayment) {
+    return { looksLikePayment: false, underpaid: false, amount: null };
+  }
+
+  const amount = extractAmount(text);
+
+  // If we cannot see an amount, we treat it as valid (to avoid missing legit payments)
+  if (amount === null) {
+    return { looksLikePayment: true, underpaid: false, amount: null };
+  }
+
+  const underpaid = amount < MIN_PAYMENT_AMOUNT;
+  return { looksLikePayment: true, underpaid, amount };
 }
 
 // Webhook URL: Replace with your Render app URL
@@ -358,7 +389,7 @@ bot.on("document", async (ctx) => {
   }
 });
 
-/* ---------- PHOTO HANDLER (SCREENSHOTS) ---------- */
+/* ---------- PHOTO HANDLER (M-PESA SCREENSHOTS) ---------- */
 
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
@@ -371,7 +402,7 @@ bot.on("photo", async (ctx) => {
   // Ignore admin photos for now
   if (user.id === ADMIN_ID) return;
 
-  console.log("🖼️ Photo from user (screenshot):", user.id);
+  console.log("🖼️ Photo from user (likely payment screenshot):", user.id);
 
   try {
     await bot.telegram.sendMessage(
@@ -391,15 +422,15 @@ bot.on("photo", async (ctx) => {
     console.error("Error forwarding photo to admin:", err.message);
   }
 
-  // Neutral confirmation for ALL screenshots
+  // Generic confirmation for ANY screenshot (no OCR)
   try {
     await ctx.reply(
       "🖼️ We’ve received your screenshot.\n\n" +
-        "If it is a payment screenshot, your details will be reviewed and confirmed shortly.\n" +
+        "If it is a payment screenshot, it will be reviewed and confirmed shortly.\n" +
         "Once payment is confirmed, your file will be queued for processing and you’ll receive your Turnitin AI & Plag report here."
     );
   } catch (err) {
-    console.error("Error sending screenshot confirmation to user:", err.message);
+    console.error("Error sending payment screenshot confirmation:", err.message);
   }
 });
 
@@ -420,10 +451,19 @@ bot.on("text", async (ctx) => {
   // Ignore admin free text; admin uses /reply and file commands
   if (user.id === ADMIN_ID) return;
 
-  const paymentLike = isLikelyMpesaPayment(text);
+  const mpesaInfo = analyzeMpesaPayment(text);
+  const paymentLike = mpesaInfo.looksLikePayment;
 
   // 🔔 Always forward client messages to admin
   try {
+    let extraInfo = "";
+    if (mpesaInfo.amount !== null) {
+      extraInfo += `\nDetected amount: ${mpesaInfo.amount}`;
+    }
+    if (mpesaInfo.underpaid) {
+      extraInfo += `\n⚠️ Possible underpayment (below ${MIN_PAYMENT_AMOUNT} KES baseline).`;
+    }
+
     const label = paymentLike ? "💰 Payment text" : "💬 Message";
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -431,21 +471,34 @@ bot.on("text", async (ctx) => {
         `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}\n\n` +
-        text
+        text +
+        extraInfo
     );
   } catch (err) {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // ✅ Only auto-reply on Mpesa payment-like texts
+  // ✅ Auto-reply only for Mpesa-like texts
   if (paymentLike) {
     try {
-      await ctx.reply(
-        "✅ We’ve received your payment details.\n\n" +
-          "Your payment will be confirmed and your file has been queued for processing.\n" +
-          "Reports usually take *2–8 minutes* depending on the queue.\n" +
-          "You’ll receive your Turnitin AI & Plag report here once it’s ready."
-      );
+      if (mpesaInfo.underpaid) {
+        // Underpayment auto-response
+        await ctx.reply(
+          "⚠️ We’ve received your payment message, but it looks like the amount is *below 80 KES*.\n\n" +
+            "Please top up to at least *80 KES* to activate your Turnitin report.\n" +
+            "If you have already completed the full payment, kindly resend the Mpesa text or contact us here.",
+          { parse_mode: "Markdown" }
+        );
+      } else {
+        // Normal payment confirmation
+        await ctx.reply(
+          "✅ We’ve received your payment details.\n\n" +
+            "Your payment will be confirmed and your file has been queued for processing.\n" +
+            "Reports usually take *2–8 minutes* depending on the queue.\n" +
+            "You’ll receive your Turnitin AI & Plag report here once it’s ready.",
+          { parse_mode: "Markdown" }
+        );
+      }
     } catch (err) {
       console.error("Error sending payment confirmation to user:", err.message);
     }
