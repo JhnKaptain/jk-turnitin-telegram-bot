@@ -26,13 +26,13 @@ const KEY_HELP = "❓ Help";
 
 /**
  * Inactive period:
- * 12:30–05:59 EAT  =  21:30–02:59 UTC
- * (Active: 06:00–00:29 EAT)
+ * 02:00–05:59 EAT  =  23:00–02:59 UTC
+ * (Active: 06:00–01:59 EAT)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 21:30–23:59 UTC OR 00:00–02:59 UTC
-  return currentTime >= "21:30" || currentTime < "03:00";
+  // Inactive from 23:00–02:59 UTC (02:00–05:59 EAT)
+  return currentTime >= "23:00" || currentTime < "03:00";
 }
 
 // Reply when user writes during inactive hours (but do NOT stop bot)
@@ -83,7 +83,7 @@ This bot generates Turnitin plagiarism and AI reports.
 
 💰 Pricing
 • Price / check: 100 KES
-• Recheck: 100 KES
+• Recheck: 80 KES
 • No bargaining, please 😊
 `;
 
@@ -173,7 +173,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
       "   • *Forward* the payment SMS here, or\n" +
       "   • Take a *screenshot* and send it here as a photo.\n\n" +
       "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-      "💰 Price / check: *100 KES*  |  Recheck: *100 KES*",
+      "💰 Price / check: *100 KES*  |  Recheck: *80 KES*",
     { parse_mode: "Markdown" }
   );
 });
@@ -348,7 +348,7 @@ bot.on("document", async (ctx) => {
       "📄 We’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "💰 Price per check: *100 KES* (recheck *100 KES*)\n" +
+        "💰 Price per check: *100 KES* (recheck *80 KES*)\n" +
         "🧠 *GPTZero AI report* also available on request at *40 KES*.\n" +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
       { parse_mode: "Markdown" }
