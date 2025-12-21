@@ -49,14 +49,36 @@ async function notifyInactivePeriod(ctx) {
 function isLikelyMpesaPayment(text) {
   const t = text.toLowerCase();
 
-  // Flexible: "confirmed", "paid to", your name or till number
+  // Must look like an Mpesa confirmation
   const hasConfirmed = t.includes("confirmed");
   const hasPaidTo = t.includes("paid to");
-  const hasYourName =
-    t.includes("john") && (t.includes("makokha") || t.includes("wanjala"));
+
+  // Prefer full-name match; fall back to partial name + till number
+  const hasFullName = t.includes("paid to john makokha wanjala") ||
+    (t.includes("john") && t.includes("makokha") && t.includes("wanjala"));
   const hasTillNumber = t.includes("6164915");
 
-  return hasPaidTo && (hasYourName || hasTillNumber) && hasConfirmed;
+  const passesRecipient = hasPaidTo && (hasFullName || hasTillNumber);
+
+  if (!hasConfirmed || !passesRecipient) {
+    return false;
+  }
+
+  // Try to detect amount like "Ksh 100" / "KES 100" etc
+  const amountMatch = text.match(/(?:ksh|kes)\s*([0-9][0-9,]*(?:\.\d+)?)/i);
+  if (amountMatch) {
+    const raw = amountMatch[1].replace(/,/g, "");
+    const amount = parseFloat(raw);
+    // Require at least 80 KES (lowest price: recheck 80, check 100)
+    if (!isNaN(amount) && amount < 80) {
+      return false; // underpayment
+    }
+    // Amount is OK
+    return true;
+  }
+
+  // If we cannot find an amount, fall back to name/till + confirmed
+  return true;
 }
 
 // Webhook URL: Replace with your Render app URL
@@ -391,16 +413,30 @@ bot.on("photo", async (ctx) => {
     console.error("Error forwarding photo to admin:", err.message);
   }
 
-  // Short confirmation ONLY for payment screenshots
+  // Check caption for Mpesa-like text (stricter detection)
+  const caption = ctx.message.caption || "";
+  const paymentLike = caption && isLikelyMpesaPayment(caption);
+
   try {
-    await ctx.reply(
-      "✅ We’ve received your payment screenshot.\n\n" +
-        "Your payment will be confirmed and your file has been queued for processing.\n" +
-        "Reports usually take *2–8 minutes* depending on the queue.\n" +
-        "You’ll receive your Turnitin AI & Plag report here once it’s ready."
-    );
+    if (paymentLike) {
+      // Caption looks like a valid Mpesa payment
+      await ctx.reply(
+        "✅ We’ve received your payment screenshot.\n\n" +
+          "Your payment will be confirmed and your file has been queued for processing.\n" +
+          "Reports usually take *2–8 minutes* depending on the queue.\n" +
+          "You’ll receive your Turnitin AI & Plag report here once it’s ready.",
+        { parse_mode: "Markdown" }
+      );
+    } else {
+      // Neutral message – no automatic “payment received”
+      await ctx.reply(
+        "🖼️ We’ve received your screenshot.\n\n" +
+          "If it is a payment screenshot, it will be reviewed and confirmed shortly.\n" +
+          "Once payment is confirmed, your file will be queued for processing and you’ll receive your Turnitin AI & Plag report here."
+      );
+    }
   } catch (err) {
-    console.error("Error sending payment screenshot confirmation:", err.message);
+    console.error("Error sending screenshot confirmation to user:", err.message);
   }
 });
 
