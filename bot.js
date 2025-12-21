@@ -33,13 +33,13 @@ const KEY_HELP = "❓ Help";
 
 /**
  * Inactive period:
- * 02:00–05:59 EAT  =  23:00–02:59 UTC
- * (Active: 06:00–01:59 EAT)
+ * 02:30–05:59 EAT  =  23:30–02:59 UTC
+ * (Active: 06:00–02:29 EAT)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 23:00–02:59 UTC (02:00–05:59 EAT)
-  return currentTime >= "23:00" || currentTime < "03:00";
+  // Inactive from 23:30–23:59 UTC OR 00:00–02:59 UTC
+  return currentTime >= "23:30" || currentTime < "03:00";
 }
 
 // Reply when user writes during inactive hours (but do NOT stop bot)
