@@ -17,8 +17,8 @@ const ADMIN_ID = 6569201830; // johnkappy
 const CHECK_PRICE_KES = 100;
 const RECHECK_PRICE_KES = 80;
 const GPTZERO_PRICE_KES = 40;
-// Minimum payment to auto-accept as valid (based on recheck price)
-const MIN_PAYMENT_KES = RECHECK_PRICE_KES;
+// Minimum payment to auto-accept as valid (based on standard check price)
+const MIN_PAYMENT_KES = CHECK_PRICE_KES;
 
 const bot = new Telegraf(botToken);
 
@@ -97,6 +97,8 @@ This bot generates Turnitin plagiarism and AI reports.
 
 ✅ Name: John Wanjala
 ✅ Lipa Na Mpesa Till Number: 6164915
+📱 If you cannot use the till, you may *Send Money* to 0741924396 (John Wanjala).
+   Please use this option *only if the till option fails*.
 
 📌 Instructions:
 1️⃣ Send your document here as a file (not as a photo).
@@ -195,6 +197,8 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
       "   • *Forward* the payment SMS here, or\n" +
       "   • Take a *screenshot* and send it here as a photo.\n\n" +
       "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
+      "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala).\n" +
+      "   Please use this option *only if the till option fails*.\n\n" +
       `💰 Price / check: *${CHECK_PRICE_KES} KES*  |  Recheck: *${RECHECK_PRICE_KES} KES*`,
     { parse_mode: "Markdown" }
   );
@@ -208,7 +212,9 @@ bot.hears(KEY_HELP, async (ctx) => {
       "• Tap the *📎 attachment* icon → *File* → choose your DOC/PDF → send.\n\n" +
       "🧾 *Sending Mpesa details:*\n" +
       "• Tap *Send Mpesa Text / Screenshot*.\n" +
-      "• Forward the Mpesa SMS *or* send a clear screenshot of the payment.\n\n" +
+      "• Forward the Mpesa SMS *or* send a clear screenshot of the payment.\n" +
+      "• Preferred: *Till 6164915*.\n" +
+      "• If you cannot pay via till, you may *Send Money* to *0741924396* (John Wanjala) as a backup option only.\n\n" +
       "💬 *Chat & questions:*\n" +
       "• Just type your message here normally.\n" +
       "• The admin will reply using the bot.\n\n" +
@@ -370,6 +376,8 @@ bot.on("document", async (ctx) => {
       "📄 We’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
+        "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala) as a backup.\n" +
+        "   Please use this option *only if the till option fails*.\n\n" +
         `💰 Price per check: *${CHECK_PRICE_KES} KES* (recheck *${RECHECK_PRICE_KES} KES*)\n` +
         `🧠 *GPTZero AI report* also available on request at *${GPTZERO_PRICE_KES} KES*.\n` +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
@@ -476,8 +484,8 @@ bot.on("text", async (ctx) => {
     try {
       if (underpayment) {
         await ctx.reply(
-          `⚠️ We’ve received your M-PESA message, but it looks like the amount is less than *${MIN_PAYMENT_KES} KES*, which is the minimum fee per report.\n\n` +
-            "If this was a top-up or you made multiple payments, please reply here and confirm.\n" +
+          `⚠️ We’ve received your M-PESA message, but it looks like the amount is less than *${CHECK_PRICE_KES} KES*, which is the standard fee per new report.\n\n` +
+            `If this payment is for a *recheck* (currently *${RECHECK_PRICE_KES} KES*) or part of a *top-up* for multiple reports, please reply here and confirm.\n` +
             "Otherwise, kindly send the remaining balance so we can proceed with your report."
         );
       } else {
