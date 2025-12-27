@@ -14,11 +14,11 @@ if (!botToken) {
 const ADMIN_ID = 6569201830; // johnkappy
 
 // 💰 Pricing constants
-const CHECK_PRICE_KES = 100;
-const RECHECK_PRICE_KES = 80;
+const CHECK_PRICE_KES = 80;
+const RECHECK_PRICE_KES = 70;
 const GPTZERO_PRICE_KES = 40;
-// Minimum payment to auto-accept as valid (based on standard check price)
-const MIN_PAYMENT_KES = CHECK_PRICE_KES;
+// Minimum payment to auto-accept as valid (baseline 80 KES)
+const MIN_PAYMENT_KES = 80;
 
 const bot = new Telegraf(botToken);
 
@@ -89,13 +89,12 @@ bot.telegram.setWebhook(webhookUrl + "/webhook");
 
 // Bot's welcome message
 const WELCOME_MESSAGE = `
-Turnitin Reports Bot – JK
+JK Turnitin Reports Bot 
 
 What can this bot do?
 
 This bot generates Turnitin plagiarism and AI reports.
 
-✅ Name: John Wanjala
 ✅ Lipa Na Mpesa Till Number: 6164915
 📱 If you cannot use the till, you may *Send Money* to 0741924396 (John Wanjala).
    Please use this option *only if the till option fails*.
@@ -108,7 +107,7 @@ This bot generates Turnitin plagiarism and AI reports.
 💰 Pricing
 • Price / check: ${CHECK_PRICE_KES} KES
 • Recheck: ${RECHECK_PRICE_KES} KES
-• No bargaining, please 😊
+• No bargaining.
 `;
 
 // /start
@@ -128,12 +127,12 @@ bot.start(async (ctx) => {
         "`/reply <userId> <your message>`\n\n" +
         "📁 *Send file(s) as the bot:*\n" +
         "1. Send this command:\n" +
-        "`/file <userId> Optional caption`  → next 1 document\n" +
-        "`/file2 <userId> Optional caption` → next 2 documents\n" +
-        "2. Then upload/send the document(s) in the *next* message(s).\n\n" +
+        "`/file <userId> Optional caption`  → next 1 document or photo\n" +
+        "`/file2 <userId> Optional caption` → next 2 documents or photos\n" +
+        "2. Then upload/send the document(s) or photo(s) in the *next* message(s).\n\n" +
         "Example:\n" +
         "`/file2 7488919090 Here are your Turnitin reports ✅`\n" +
-        "Then attach the two DOC/PDF files.",
+        "Then attach the two DOC/PDF files or screenshots.",
       { parse_mode: "Markdown" }
     );
     return;
@@ -249,7 +248,7 @@ bot.command("reply", async (ctx) => {
   }
 });
 
-// /file <userId> Optional caption  → next 1 document goes to that user
+// /file <userId> Optional caption  → next 1 document or photo goes to that user
 bot.command("file", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -267,12 +266,12 @@ bot.command("file", async (ctx) => {
   pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 1 };
 
   await ctx.reply(
-    `✅ Got it. The *next document* you send will be delivered to user ${userId}.`,
+    `✅ Got it. The *next document or photo* you send will be delivered to user ${userId}.`,
     { parse_mode: "Markdown" }
   );
 });
 
-// /file2 <userId> Optional caption  → next 2 documents go to that user
+// /file2 <userId> Optional caption  → next 2 documents or photos go to that user
 bot.command("file2", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -290,7 +289,7 @@ bot.command("file2", async (ctx) => {
   pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 2 };
 
   await ctx.reply(
-    `✅ Got it. The *next 2 documents* you send will be delivered to user ${userId}.`,
+    `✅ Got it. The *next 2 documents or photos* you send will be delivered to user ${userId}.`,
     { parse_mode: "Markdown" }
   );
 });
@@ -388,7 +387,7 @@ bot.on("document", async (ctx) => {
   }
 });
 
-/* ---------- PHOTO HANDLER (M-PESA SCREENSHOTS) ---------- */
+/* ---------- PHOTO HANDLER (USER SCREENSHOTS + ADMIN SENDING PHOTOS) ---------- */
 
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
@@ -398,9 +397,51 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // Ignore admin photos for now
-  if (user.id === ADMIN_ID) return;
+  // ADMIN sending photo(s) to a user (same targeting as /file and /file2)
+  if (user.id === ADMIN_ID) {
+    const target = pendingFileTargets[ADMIN_ID];
 
+    if (!target) {
+      await ctx.reply(
+        "To send this photo to a user, first run:\n" +
+          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`",
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+
+    const { userId, caption } = target;
+    const photos = ctx.message.photo || [];
+    // Use the highest resolution photo (last in the array)
+    const largestPhoto = photos[photos.length - 1];
+    const remainingBefore = target.remaining || 1;
+    const remainingAfter = remainingBefore - 1;
+
+    try {
+      await bot.telegram.sendPhoto(userId, largestPhoto.file_id, {
+        caption: caption || undefined
+      });
+
+      if (remainingAfter <= 0) {
+        delete pendingFileTargets[ADMIN_ID];
+      } else {
+        target.remaining = remainingAfter;
+      }
+
+      const extra =
+        remainingAfter > 0
+          ? ` (${remainingAfter} file(s) remaining for this command)`
+          : "";
+      await ctx.reply(`✅ Photo sent to user ${userId}${extra}`);
+    } catch (err) {
+      console.error("Error sending photo to user:", err.message);
+      await ctx.reply("❌ Failed to send photo: " + err.message);
+    }
+
+    return;
+  }
+
+  // USER photos (likely payment screenshots) -> forward to admin + neutral reply
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   try {
@@ -492,7 +533,7 @@ bot.on("text", async (ctx) => {
         await ctx.reply(
           "✅ We’ve received your payment details.\n\n" +
             "Your payment will be confirmed and your file has been queued for processing.\n" +
-            "Reports usually take *2–8 minutes* depending on the queue.\n" +
+            "Reports usually take *2–5 minutes* depending on the queue.\n" +
             "You’ll receive your Turnitin AI & Plag report here once it’s ready."
         );
       }
