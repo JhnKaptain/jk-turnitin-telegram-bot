@@ -64,7 +64,8 @@ function parseMpesaPayment(text) {
     (lower.includes("makokha") || lower.includes("wanjala"));
   const hasTillNumber = lower.includes("6164915");
 
-  const isPaymentToYou = hasConfirmed && hasPaidTo && (hasYourName || hasTillNumber);
+  const isPaymentToYou =
+    hasConfirmed && hasPaidTo && (hasYourName || hasTillNumber);
 
   // Extract the amount right after "Confirmed. Ksh ..."
   // Example: "TLGLN14EOK Confirmed. Ksh 100.00 paid to JOHN Makokha..."
@@ -383,7 +384,10 @@ bot.on("document", async (ctx) => {
       { parse_mode: "Markdown" }
     );
   } catch (err) {
-    console.error("Error sending auto file-received reply to user:", err.message);
+    console.error(
+      "Error sending auto file-received reply to user:",
+      err.message
+    );
   }
 });
 
@@ -470,7 +474,10 @@ bot.on("photo", async (ctx) => {
         "Once payment is confirmed, your file will be queued for processing and you’ll receive your Turnitin AI & Plag report here."
     );
   } catch (err) {
-    console.error("Error sending screenshot confirmation to user:", err.message);
+    console.error(
+      "Error sending screenshot confirmation to user:",
+      err.message
+    );
   }
 });
 
@@ -532,13 +539,16 @@ bot.on("text", async (ctx) => {
       } else {
         await ctx.reply(
           "✅ We’ve received your payment details.\n\n" +
-            "Your payment will be confirmed and your file has been queued for processing.\n" +
-            "Reports usually take *2–5 minutes* depending on the queue.\n" +
-            "You’ll receive your Turnitin AI & Plag report here once it’s ready."
+            "Your file has been queued for processing. Reports usually take *2–5 minutes* depending on the queue.\n\n" +
+            "ℹ️ Official Turnitin hides the exact AI % and does not show AI highlights when the AI score is below *20%*.\n" +
+            'If your AI report only shows "*% detected as AI" (without a number), you may need to add more AI-like text to push the score above *20%* and request a *paid recheck* to see AI highlights.'
         );
       }
     } catch (err) {
-      console.error("Error sending payment-related auto-reply to user:", err.message);
+      console.error(
+        "Error sending payment-related auto-reply to user:",
+        err.message
+      );
     }
   }
   // For non-payment messages: no auto-reply. Admin will respond via /reply.
