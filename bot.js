@@ -26,6 +26,11 @@ const bot = new Telegraf(botToken);
 // key = admin id, value = { userId, caption, remaining }
 const pendingFileTargets = {};
 
+// ✅ Track underpayment follow-up state so “recheck/top up” works even if user replies with ONLY that word
+// key = user id, value = timestamp (ms)
+const pendingUnderpaymentFollowup = {};
+const UNDERPAYMENT_FOLLOWUP_TTL_MINUTES = 180; // auto-expire after 3 hours
+
 // Button labels
 const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
@@ -55,6 +60,16 @@ function mainKeyboard() {
   };
 }
 
+// ✅ Safe Markdown reply (prevents Telegram Markdown parse errors from killing the reply)
+async function replyMarkdownSafe(ctx, message, extra = {}) {
+  try {
+    await ctx.reply(message, { parse_mode: "Markdown", ...extra });
+  } catch (err) {
+    // fallback without parse_mode
+    await ctx.reply(message, { ...extra });
+  }
+}
+
 // 🔄 Auto-update bot name to show ONLINE / OFFLINE in Telegram
 let lastOnlineStatus = null; // "ONLINE" or "OFFLINE"
 
@@ -78,41 +93,74 @@ async function updateBotNameForCurrentStatus() {
 
 // Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
-  await ctx.reply(
+  await replyMarkdownSafe(
+    ctx,
     "⏳ Turnitin checks are paused right now.\n" +
       "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
       `🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *${GPTZERO_PRICE_KES} KES*.\n` +
       "If urgent, WhatsApp us on *0701730921*.",
-    { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+    { reply_markup: mainKeyboard() }
   );
 }
 
-// 🔍 Parse an M-PESA payment SMS: detect if it's to you and extract amount
-function parseMpesaPayment(text) {
-  const lower = text.toLowerCase();
+function isUnderpaymentFollowupActive(userId) {
+  const ts = pendingUnderpaymentFollowup[userId];
+  if (!ts) return false;
 
+  const ageMinutes = (Date.now() - ts) / 60000;
+  if (ageMinutes > UNDERPAYMENT_FOLLOWUP_TTL_MINUTES) {
+    delete pendingUnderpaymentFollowup[userId];
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 🔍 Parse an M-PESA payment SMS: detect if it's to you and extract amount.
+ * FIX: supports both "paid to" (till) AND "sent to" (send money), plus phone number.
+ */
+function parseMpesaPayment(text) {
+  const t = text || "";
+  const lower = t.toLowerCase();
+
+  // Must look like an M-PESA confirmation
   const hasConfirmed = lower.includes("confirmed");
-  const hasPaidTo = lower.includes("paid to");
+
+  // Accept common variants (till vs send money)
+  const hasPaidOrSent =
+    lower.includes("paid to") ||
+    lower.includes("sent to") ||
+    lower.includes("you have sent") ||
+    lower.includes("you have paid");
+
+  // Recipient identifiers
   const hasYourName =
     lower.includes("john") &&
     (lower.includes("makokha") || lower.includes("wanjala"));
+
   const hasTillNumber = lower.includes("6164915");
+  const hasYourPhone =
+    lower.includes("0741924396") || lower.includes("741924396"); // with/without leading 0
 
   const isPaymentToYou =
-    hasConfirmed && hasPaidTo && (hasYourName || hasTillNumber);
+    hasConfirmed && hasPaidOrSent && (hasYourName || hasTillNumber || hasYourPhone);
 
-  // Extract the amount right after "Confirmed. Ksh ..."
+  // Amount extraction (more tolerant)
   let amount = null;
-  const amountMatch = text.match(/confirmed\.\s*ksh\s*([\d,]+(?:\.\d+)?)/i);
+  const amountMatch =
+    t.match(/confirmed\.?\s*ksh\s*([\d,]+(?:\.\d+)?)/i) ||
+    t.match(/\bksh\s*([\d,]+(?:\.\d+)?)/i);
+
   if (amountMatch) {
     const amountStr = amountMatch[1].replace(/,/g, "");
     const parsed = parseFloat(amountStr);
-    if (!isNaN(parsed)) {
-      amount = parsed;
-    }
+    if (!isNaN(parsed)) amount = parsed;
   }
 
-  return { isPaymentToYou, amount };
+  // Helpful to know if it’s an M-PESA-ish SMS even if recipient didn’t match
+  const looksLikeMpesa = hasConfirmed && amount != null;
+
+  return { isPaymentToYou, amount, looksLikeMpesa };
 }
 
 // Webhook URL: Replace with your Render app URL
@@ -159,7 +207,8 @@ bot.start(async (ctx) => {
   }
 
   if (user.id === ADMIN_ID) {
-    await ctx.reply(
+    await replyMarkdownSafe(
+      ctx,
       "👋 Admin mode is ready.\n\n" +
         "📩 *Reply with text as the bot:*\n" +
         "`/reply <userId> <your message>`\n\n" +
@@ -170,8 +219,7 @@ bot.start(async (ctx) => {
         "2. Then upload/send the document(s) or photo(s) in the *next* message(s).\n\n" +
         "Example:\n" +
         "`/file2 7488919090 Here are your Turnitin reports ✅`\n" +
-        "Then attach the two DOC/PDF files or screenshots.",
-      { parse_mode: "Markdown" }
+        "Then attach the two DOC/PDF files or screenshots."
     );
     return;
   }
@@ -179,10 +227,7 @@ bot.start(async (ctx) => {
   console.log("🔔 New user started the bot:", user.username || user.first_name);
 
   // Show welcome + custom keyboard (Help removed, Cancel added)
-  await ctx.reply(WELCOME_MESSAGE, {
-    parse_mode: "Markdown",
-    reply_markup: mainKeyboard()
-  });
+  await replyMarkdownSafe(ctx, WELCOME_MESSAGE, { reply_markup: mainKeyboard() });
 
   // Notify admin
   try {
@@ -205,12 +250,13 @@ bot.hears(KEY_SEND_DOC, async (ctx) => {
     await notifyInactivePeriod(ctx);
     return;
   }
-  await ctx.reply(
+  await replyMarkdownSafe(
+    ctx,
     "📄 *How to send your document:*\n\n" +
       "1️⃣ Tap the *📎 attachment* icon in Telegram.\n" +
       "2️⃣ Choose *File* → select your DOC/PDF from your phone or PC.\n" +
       "3️⃣ Send it here as a *file* (please do *not* send as a photo or plain text).",
-    { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+    { reply_markup: mainKeyboard() }
   );
 });
 
@@ -219,7 +265,8 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
     await notifyInactivePeriod(ctx);
     return;
   }
-  await ctx.reply(
+  await replyMarkdownSafe(
+    ctx,
     "🧾 *How to send your Mpesa payment:*\n\n" +
       "1️⃣ After paying, open your *Mpesa SMS*.\n" +
       "2️⃣ Either:\n" +
@@ -229,7 +276,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
       "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala).\n" +
       "   Please use this option *only if the till option fails*.\n\n" +
       `💰 Price / check: *${CHECK_PRICE_KES} KES*  |  Recheck: *${RECHECK_PRICE_KES} KES*`,
-    { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+    { reply_markup: mainKeyboard() }
   );
 });
 
@@ -239,6 +286,10 @@ bot.hears(KEY_CANCEL, async (ctx) => {
     await notifyInactivePeriod(ctx);
     return;
   }
+
+  // clear any pending “underpayment follow-up”
+  delete pendingUnderpaymentFollowup[ctx.from.id];
+
   await ctx.reply(
     "❌ Current submission cancelled.\n\n" +
       "You can start a fresh submission anytime by sending a new document and payment details.",
@@ -289,9 +340,9 @@ bot.command("file", async (ctx) => {
 
   pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 1 };
 
-  await ctx.reply(
-    `✅ Got it. The *next document or photo* you send will be delivered to user ${userId}.`,
-    { parse_mode: "Markdown" }
+  await replyMarkdownSafe(
+    ctx,
+    `✅ Got it. The *next document or photo* you send will be delivered to user ${userId}.`
   );
 });
 
@@ -312,9 +363,9 @@ bot.command("file2", async (ctx) => {
 
   pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 2 };
 
-  await ctx.reply(
-    `✅ Got it. The *next 2 documents or photos* you send will be delivered to user ${userId}.`,
-    { parse_mode: "Markdown" }
+  await replyMarkdownSafe(
+    ctx,
+    `✅ Got it. The *next 2 documents or photos* you send will be delivered to user ${userId}.`
   );
 });
 
@@ -334,10 +385,10 @@ bot.on("document", async (ctx) => {
     const target = pendingFileTargets[ADMIN_ID];
 
     if (!target) {
-      await ctx.reply(
+      await replyMarkdownSafe(
+        ctx,
         "To send this file to a user, first run:\n" +
-          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`",
-        { parse_mode: "Markdown" }
+          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
       );
       return;
     }
@@ -386,9 +437,10 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // Ask user to send payment + mention GPTZero (kept same as your working flow)
+  // Ask user to send payment + mention GPTZero (kept same flow/wording)
   try {
-    await ctx.reply(
+    await replyMarkdownSafe(
+      ctx,
       "📄 We’ve received your file.\n\n" +
         "Now please send your *Mpesa payment* text or screenshot.\n\n" +
         "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
@@ -397,7 +449,7 @@ bot.on("document", async (ctx) => {
         `💰 Price per check: *${CHECK_PRICE_KES} KES* (recheck *${RECHECK_PRICE_KES} KES*)\n` +
         `🧠 *GPTZero AI report* also available on request at *${GPTZERO_PRICE_KES} KES*.\n` +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
-      { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+      { reply_markup: mainKeyboard() }
     );
   } catch (err) {
     console.error("Error sending auto file-received reply to user:", err.message);
@@ -414,15 +466,15 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // ADMIN sending photo(s) to a user (same targeting as /file and /file2)
+  // ADMIN sending photo(s) to a user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
 
     if (!target) {
-      await ctx.reply(
+      await replyMarkdownSafe(
+        ctx,
         "To send this photo to a user, first run:\n" +
-          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`",
-        { parse_mode: "Markdown" }
+          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
       );
       return;
     }
@@ -455,7 +507,7 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // USER photos (likely payment screenshots) -> forward to admin + neutral reply
+  // USER photos -> forward to admin + neutral reply
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   try {
@@ -501,7 +553,12 @@ bot.on("text", async (ctx) => {
   // Ignore admin free text
   if (user.id === ADMIN_ID) return;
 
-  const { isPaymentToYou, amount } = parseMpesaPayment(text);
+  const lowered = text.toLowerCase();
+  const mentionsRecheck = lowered.includes("recheck");
+  const mentionsTopUp = lowered.includes("top up") || lowered.includes("top-up");
+
+  // Parse payment
+  const { isPaymentToYou, amount, looksLikeMpesa } = parseMpesaPayment(text);
 
   // Decide label for admin message
   let label = "💬 Message";
@@ -514,6 +571,8 @@ bot.on("text", async (ctx) => {
     } else {
       label = "💰 Payment text";
     }
+  } else if (looksLikeMpesa) {
+    label = "⚠️ M-PESA text (recipient not matched)";
   }
 
   // Always forward client messages to admin
@@ -530,51 +589,103 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // Auto-replies only for messages that look like payment to you
+  // ✅ NEW: If user previously got the underpayment alert and now replies ONLY “recheck” or “top up”
+  // This makes the recheck/top-up autoresponses work even without being inside the M-PESA SMS.
+  if (!looksLikeMpesa && isUnderpaymentFollowupActive(user.id) && (mentionsRecheck || mentionsTopUp)) {
+    try {
+      if (mentionsRecheck) {
+        await replyMarkdownSafe(
+          ctx,
+          "✅ Recheck noted.\n\n" +
+            "Your payment and previous report will be reviewed. Rechecks are valid within *24 hours* of the last check.\n" +
+            "Your file will be queued and the updated report sent here in *2–5 minutes* depending on the queue.",
+          { reply_markup: mainKeyboard() }
+        );
+      } else {
+        await replyMarkdownSafe(
+          ctx,
+          "✅ Top-up noted.\n\n" +
+            "Your payments and files will be reconciled and queued together.\n" +
+            "You’ll receive your report(s) here in *2–5 minutes* depending on the queue.",
+          { reply_markup: mainKeyboard() }
+        );
+      }
+    } catch (err) {
+      console.error("Error sending recheck/top-up follow-up reply:", err);
+    } finally {
+      delete pendingUnderpaymentFollowup[user.id];
+    }
+    return;
+  }
+
+  // ✅ Auto-replies for payments to you
   if (isPaymentToYou) {
     try {
-      const lowered = text.toLowerCase();
-      const mentionsRecheck = lowered.includes("recheck");
-      const mentionsTopUp = lowered.includes("top up") || lowered.includes("top-up");
-
       if (underpayment) {
+        // Keep the follow-up “armed” so the next “recheck/top up” message works
+        pendingUnderpaymentFollowup[user.id] = Date.now();
+
+        // If the underpayment message itself includes “recheck/top up”, respond immediately
         if (mentionsRecheck) {
-          await ctx.reply(
+          await replyMarkdownSafe(
+            ctx,
             "✅ Recheck noted.\n\n" +
               "Your payment and previous report will be reviewed. Rechecks are valid within *24 hours* of the last check.\n" +
               "Your file will be queued and the updated report sent here in *2–5 minutes* depending on the queue.",
-            { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+            { reply_markup: mainKeyboard() }
           );
+          delete pendingUnderpaymentFollowup[user.id];
         } else if (mentionsTopUp) {
-          await ctx.reply(
+          await replyMarkdownSafe(
+            ctx,
             "✅ Top-up noted.\n\n" +
               "Your payments and files will be reconciled and queued together.\n" +
               "You’ll receive your report(s) here in *2–5 minutes* depending on the queue.",
-            { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+            { reply_markup: mainKeyboard() }
           );
+          delete pendingUnderpaymentFollowup[user.id];
         } else {
-          await ctx.reply(
+          await replyMarkdownSafe(
+            ctx,
             `⚠️ We’ve received your M-PESA message, but it looks like the amount is less than *${CHECK_PRICE_KES} KES*, which is the standard fee per new report.\n\n` +
               `If this payment is for a *recheck* (currently *${RECHECK_PRICE_KES} KES*) or part of a *top-up* for multiple reports, please reply here and confirm.\n` +
               "Otherwise, kindly send the remaining balance so we can proceed with your report.",
-            { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+            { reply_markup: mainKeyboard() }
           );
         }
       } else {
-        // ✅ FIXED: Markdown-safe full payment reply (this was failing before)
-        await ctx.reply(
+        // Payment OK: clear any pending follow-up
+        delete pendingUnderpaymentFollowup[user.id];
+
+        await replyMarkdownSafe(
+          ctx,
           "✅ We’ve received your payment details.\n\n" +
             "Your file has been queued for processing. Reports usually take *2–5 minutes* depending on the queue.\n\n" +
             "ℹ️ Official Turnitin hides the exact AI % and does not show AI highlights when the AI score is below *20%*.\n" +
             'If your AI report only shows "% detected as AI" (without a number), you may need to add more AI-like text to push the score above *20%* and request a *paid recheck* to see AI highlights.',
-          { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+          { reply_markup: mainKeyboard() }
         );
       }
     } catch (err) {
-      // Log exact Telegram error so you can see it in Render logs
       console.error("Error sending payment-related auto-reply to user:", err);
     }
+    return;
   }
+
+  // ✅ Fallback: if it looks like M-PESA but recipient didn’t match, still respond (so 80+ won’t be “silent”)
+  if (looksLikeMpesa && !isPaymentToYou) {
+    try {
+      await ctx.reply(
+        "✅ We’ve received your M-PESA message.\n\n" +
+          "If you paid to the correct till/number, we’ll confirm shortly.\n" +
+          "If possible, please forward the full SMS (showing the recipient) or send a screenshot for faster confirmation.",
+        { reply_markup: mainKeyboard() }
+      );
+    } catch (err) {
+      console.error("Error sending fallback mpesa auto-reply:", err);
+    }
+  }
+
   // For non-payment messages: no auto-reply.
 });
 
