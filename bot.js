@@ -30,6 +30,7 @@ const pendingFileTargets = {};
 const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
 const KEY_HELP = "❓ Help";
+const KEY_CANCEL = "❌ Cancel Submission";
 
 /**
  * Inactive period:
@@ -148,7 +149,8 @@ bot.start(async (ctx) => {
       keyboard: [
         [{ text: KEY_SEND_DOC }],
         [{ text: KEY_SEND_MPESA }],
-        [{ text: KEY_HELP }]
+        [{ text: KEY_HELP }],
+        [{ text: KEY_CANCEL }]
       ],
       resize_keyboard: true,
       one_time_keyboard: false
@@ -220,6 +222,27 @@ bot.hears(KEY_HELP, async (ctx) => {
       "• The admin will reply using the bot.\n\n" +
       "After payment is confirmed, your Turnitin report (and optional GPTZero AI report) will be processed and sent here.",
     { parse_mode: "Markdown" }
+  );
+});
+
+bot.hears(KEY_CANCEL, async (ctx) => {
+  const user = ctx.from;
+
+  // Notify admin of cancellation
+  try {
+    await bot.telegram.sendMessage(
+      ADMIN_ID,
+      `❌ Submission cancelled by user:\n` +
+        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
+        `Username: @${user.username || "N/A"}\n` +
+        `User ID: ${user.id}`
+    );
+  } catch (err) {
+    console.error("Error notifying admin about cancellation:", err.message);
+  }
+
+  await ctx.reply(
+    "❌ Your current submission has been marked as cancelled.\nYou can send a new file and payment details any time."
   );
 });
 
@@ -550,8 +573,24 @@ bot.on("text", async (ctx) => {
         err.message
       );
     }
+  } else {
+    // Extra short autoresponses when user clarifies "recheck" or "top up"
+    const lowerText = text.toLowerCase();
+    try {
+      if (lowerText.includes("recheck")) {
+        await ctx.reply(
+          "✅ Noted as a recheck. We’ll confirm payment, ensure the earlier Turnitin report was done within the last 24 hours, and then process your recheck."
+        );
+      } else if (lowerText.includes("top up") || lowerText.includes("topup")) {
+        await ctx.reply(
+          "✅ Noted as a top up. We’ll confirm payment and queue your additional report for processing."
+        );
+      }
+    } catch (err) {
+      console.error("Error sending recheck/top up auto-reply:", err.message);
+    }
   }
-  // For non-payment messages: no auto-reply. Admin will respond via /reply.
+  // For other non-payment messages: no extra auto-reply. Admin will respond via /reply.
 });
 
 /* ---------- EXPRESS WEBHOOK SERVER ---------- */
