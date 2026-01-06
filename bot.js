@@ -26,7 +26,10 @@ const bot = new Telegraf(botToken);
 // key = admin id, value = { userId, caption, remaining }
 const pendingFileTargets = {};
 
-// Button labels
+// Track users who need to clarify underpayment (recheck/top-up)
+const awaitingUnderpaymentClarification = {}; // userId -> { ts }
+
+/* ---------- BUTTON LABELS ---------- */
 const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
 const KEY_CANCEL = "❌ Cancel / New submission";
@@ -166,7 +169,7 @@ bot.start(async (ctx) => {
 
   console.log("🔔 New user started the bot:", user.username || user.first_name);
 
-  // Show welcome + custom keyboard (NO Help button, added Cancel)
+  // Show welcome + custom keyboard (Help removed)
   await ctx.reply(WELCOME_MESSAGE, {
     parse_mode: "Markdown",
     reply_markup: {
@@ -229,16 +232,18 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   );
 });
 
-// NEW: Cancel button handler
+// Cancel button handler (also clears pending underpayment state)
 bot.hears(KEY_CANCEL, async (ctx) => {
   if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) {
     await notifyInactivePeriod(ctx);
     return;
   }
 
+  delete awaitingUnderpaymentClarification[ctx.from.id];
+
   await ctx.reply(
-    "❌ Current submission cancelled.\n\n" +
-      "You can start a fresh submission anytime by sending a new document and payment details."
+    "❌ Submission cancelled.\n" +
+      "Send a new document to start again."
   );
 });
 
@@ -348,7 +353,6 @@ bot.on("document", async (ctx) => {
         caption: caption || undefined
       });
 
-      // Update or clear the target
       if (remainingAfter <= 0) {
         delete pendingFileTargets[ADMIN_ID];
       } else {
@@ -356,9 +360,7 @@ bot.on("document", async (ctx) => {
       }
 
       const extra =
-        remainingAfter > 0
-          ? ` (${remainingAfter} file(s) remaining for this command)`:
-          "";
+        remainingAfter > 0 ? ` (${remainingAfter} file(s) remaining for this command)` : "";
       await ctx.reply(`✅ File sent to user ${userId}${extra}`);
     } catch (err) {
       console.error("Error sending file to user:", err.message);
@@ -380,11 +382,7 @@ bot.on("document", async (ctx) => {
         `User ID: ${user.id}`
     );
 
-    await bot.telegram.forwardMessage(
-      ADMIN_ID,
-      ctx.chat.id,
-      ctx.message.message_id
-    );
+    await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding document to admin:", err.message);
   }
@@ -403,10 +401,7 @@ bot.on("document", async (ctx) => {
       { parse_mode: "Markdown" }
     );
   } catch (err) {
-    console.error(
-      "Error sending auto file-received reply to user:",
-      err.message
-    );
+    console.error("Error sending auto file-received reply to user:", err.message);
   }
 });
 
@@ -435,7 +430,6 @@ bot.on("photo", async (ctx) => {
 
     const { userId, caption } = target;
     const photos = ctx.message.photo || [];
-    // Use the highest resolution photo (last in the array)
     const largestPhoto = photos[photos.length - 1];
     const remainingBefore = target.remaining || 1;
     const remainingAfter = remainingBefore - 1;
@@ -452,9 +446,7 @@ bot.on("photo", async (ctx) => {
       }
 
       const extra =
-        remainingAfter > 0
-          ? ` (${remainingAfter} file(s) remaining for this command)`:
-          "";
+        remainingAfter > 0 ? ` (${remainingAfter} file(s) remaining for this command)` : "";
       await ctx.reply(`✅ Photo sent to user ${userId}${extra}`);
     } catch (err) {
       console.error("Error sending photo to user:", err.message);
@@ -476,16 +468,11 @@ bot.on("photo", async (ctx) => {
         `User ID: ${user.id}`
     );
 
-    await bot.telegram.forwardMessage(
-      ADMIN_ID,
-      ctx.chat.id,
-      ctx.message.message_id
-    );
+    await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding photo to admin:", err.message);
   }
 
-  // Neutral confirmation for ANY screenshot (no automatic "payment received")
   try {
     await ctx.reply(
       "🖼️ We’ve received your screenshot.\n\n" +
@@ -493,10 +480,7 @@ bot.on("photo", async (ctx) => {
         "Once payment is confirmed, your file will be queued for processing and you’ll receive your Turnitin AI & Plag report here."
     );
   } catch (err) {
-    console.error(
-      "Error sending screenshot confirmation to user:",
-      err.message
-    );
+    console.error("Error sending screenshot confirmation to user:", err.message);
   }
 });
 
@@ -506,7 +490,7 @@ bot.on("text", async (ctx) => {
   const user = ctx.from;
   const text = ctx.message.text || "";
 
-  // Let command handlers (/start, /reply, /file, /file2) handle commands
+  // Let command handlers handle commands
   if (text.startsWith("/")) return;
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
@@ -516,6 +500,46 @@ bot.on("text", async (ctx) => {
 
   // Ignore admin free text; admin uses /reply and file commands
   if (user.id === ADMIN_ID) return;
+
+  const trimmedLower = text.trim().toLowerCase();
+  const isJustRecheck = trimmedLower === "recheck";
+  const isJustTopUp =
+    trimmedLower === "top up" || trimmedLower === "top-up" || trimmedLower === "topup";
+
+  // If user previously underpaid and now clarifies with "recheck/top up"
+  if (awaitingUnderpaymentClarification[user.id] && (isJustRecheck || isJustTopUp)) {
+    delete awaitingUnderpaymentClarification[user.id];
+
+    // Forward to admin as normal message
+    try {
+      await bot.telegram.sendMessage(
+        ADMIN_ID,
+        `💬 Clarification from user:\n` +
+          `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
+          `Username: @${user.username || "N/A"}\n` +
+          `User ID: ${user.id}\n\n` +
+          text
+      );
+    } catch (err) {
+      console.error("Error forwarding clarification to admin:", err.message);
+    }
+
+    if (isJustRecheck) {
+      await ctx.reply(
+        "✅ Recheck noted.\n" +
+          "Rechecks apply within *24 hours* of the last check.\n" +
+          "Queued — report in *2–5 minutes*."
+      );
+    } else {
+      await ctx.reply(
+        "✅ Top-up noted.\n" +
+          "Payments will be reconciled and processed.\n" +
+          "Queued — report(s) in *2–5 minutes*."
+      );
+    }
+
+    return;
+  }
 
   const { isPaymentToYou, amount } = parseMpesaPayment(text);
 
@@ -532,7 +556,7 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  // 🔔 Always forward client messages to admin
+  // Always forward client messages to admin
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -546,56 +570,35 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // ✅ Auto-replies only for messages that look like payment to you
+  // Auto-replies for payments
   if (isPaymentToYou) {
     try {
-      const lowered = text.toLowerCase();
-      const mentionsRecheck = lowered.includes("recheck");
-      const mentionsTopUp =
-        lowered.includes("top up") || lowered.includes("top-up");
-
       if (underpayment) {
-        if (mentionsRecheck) {
-          await ctx.reply(
-            "✅ Recheck noted.\n\n" +
-              "Your payment and previous report will be reviewed. Rechecks are valid within *24 hours* of the last check.\n" +
-              "Your file will be queued and the updated report sent here in *2–5 minutes* depending on the queue."
-          );
-        } else if (mentionsTopUp) {
-          await ctx.reply(
-            "✅ Top-up noted.\n\n" +
-              "Your payments and files will be reconciled and queued together.\n" +
-              "You’ll receive your report(s) here in *2–5 minutes* depending on the queue."
-          );
-        } else {
-          await ctx.reply(
-            `⚠️ We’ve received your M-PESA message, but it looks like the amount is less than *${CHECK_PRICE_KES} KES*, which is the standard fee per new report.\n\n` +
-              `If this payment is for a *recheck* (currently *${RECHECK_PRICE_KES} KES*) or part of a *top-up* for multiple reports, please reply here and confirm.\n` +
-              "Otherwise, kindly send the remaining balance so we can proceed with your report."
-          );
-        }
+        // Set pending clarification state (so next "recheck/top up" works)
+        awaitingUnderpaymentClarification[user.id] = { ts: Date.now() };
+
+        await ctx.reply(
+          `⚠️ Payment received, but amount is below *${CHECK_PRICE_KES} KES*.\n` +
+            `Reply with *recheck* (within 24hrs) or *top up* to confirm.`
+        );
       } else {
         await ctx.reply(
-          "✅ We’ve received your payment details.\n\n" +
-            "Your file has been queued for processing. Reports usually take *2–5 minutes* depending on the queue.\n\n" +
-            "ℹ️ Official Turnitin hides the exact AI % and does not show AI highlights when the AI score is below *20%*.\n" +
-            'If your AI report only shows "*% detected as AI" (without a number), you may need to add more AI-like text to push the score above *20%* and request a *paid recheck* to see AI highlights.'
+          "✅ Payment received.\n\n" +
+            "Queued — report in *2–5 minutes*.\n\n" +
+            "ℹ️ Turnitin may hide AI % and AI highlights when AI is below *20%*.\n" +
+            'If it shows "*% detected as AI*", add more AI-like text and request a *paid recheck* to view highlights.'
         );
       }
     } catch (err) {
-      console.error(
-        "Error sending payment-related auto-reply to user:",
-        err.message
-      );
+      console.error("Error sending payment-related auto-reply to user:", err.message);
     }
   }
-  // For non-payment messages: no auto-reply. Admin will respond via /reply.
 });
 
 /* ---------- EXPRESS WEBHOOK SERVER ---------- */
 
 const app = express();
-app.use(express.json()); // so Telegraf sees req.body
+app.use(express.json());
 app.use(bot.webhookCallback("/webhook"));
 
 const port = process.env.PORT || 3000;
