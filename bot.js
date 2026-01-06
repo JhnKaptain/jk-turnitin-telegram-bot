@@ -30,7 +30,6 @@ const pendingFileTargets = {};
 const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
 const KEY_HELP = "❓ Help";
-const KEY_CANCEL = "❌ Cancel Submission";
 
 /**
  * Inactive period:
@@ -41,6 +40,27 @@ function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
   // Inactive from 23:30–23:59 UTC OR 00:00–02:59 UTC
   return currentTime >= "23:30" || currentTime < "03:00";
+}
+
+// 🔄 Auto-update bot name to show ONLINE / OFFLINE in Telegram
+let lastOnlineStatus = null; // "ONLINE" or "OFFLINE"
+
+async function updateBotNameForCurrentStatus() {
+  const inactive = isBotInactivePeriod();
+  const desiredStatus = inactive ? "OFFLINE" : "ONLINE";
+
+  if (lastOnlineStatus === desiredStatus) return; // no change needed
+
+  const baseName = "JK Turnitin Reports";
+  const newName = `${baseName} (${desiredStatus})`;
+
+  try {
+    await bot.telegram.setMyName(newName);
+    lastOnlineStatus = desiredStatus;
+    console.log(`✅ Bot name updated to: ${newName}`);
+  } catch (err) {
+    console.error("Error updating bot name:", err.message);
+  }
 }
 
 // Reply when user writes during inactive hours (but do NOT stop bot)
@@ -88,6 +108,10 @@ const webhookUrl = "https://jk-turnitin-telegram-bot-1.onrender.com";
 
 // Set webhook (no polling)
 bot.telegram.setWebhook(webhookUrl + "/webhook");
+
+// Keep bot name in sync with ONLINE/OFFLINE status
+updateBotNameForCurrentStatus();
+setInterval(updateBotNameForCurrentStatus, 10 * 60 * 1000); // every 10 minutes
 
 // Bot's welcome message
 const WELCOME_MESSAGE = `
@@ -149,8 +173,7 @@ bot.start(async (ctx) => {
       keyboard: [
         [{ text: KEY_SEND_DOC }],
         [{ text: KEY_SEND_MPESA }],
-        [{ text: KEY_HELP }],
-        [{ text: KEY_CANCEL }]
+        [{ text: KEY_HELP }]
       ],
       resize_keyboard: true,
       one_time_keyboard: false
@@ -222,27 +245,6 @@ bot.hears(KEY_HELP, async (ctx) => {
       "• The admin will reply using the bot.\n\n" +
       "After payment is confirmed, your Turnitin report (and optional GPTZero AI report) will be processed and sent here.",
     { parse_mode: "Markdown" }
-  );
-});
-
-bot.hears(KEY_CANCEL, async (ctx) => {
-  const user = ctx.from;
-
-  // Notify admin of cancellation
-  try {
-    await bot.telegram.sendMessage(
-      ADMIN_ID,
-      `❌ Submission cancelled by user:\n` +
-        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
-        `Username: @${user.username || "N/A"}\n` +
-        `User ID: ${user.id}`
-    );
-  } catch (err) {
-    console.error("Error notifying admin about cancellation:", err.message);
-  }
-
-  await ctx.reply(
-    "❌ Your current submission has been marked as cancelled.\nYou can send a new file and payment details any time."
   );
 });
 
@@ -361,8 +363,8 @@ bot.on("document", async (ctx) => {
 
       const extra =
         remainingAfter > 0
-          ? ` (${remainingAfter} file(s) remaining for this command)`
-          : "";
+          ? ` (${remainingAfter} file(s) remaining for this command)`:
+          "";
       await ctx.reply(`✅ File sent to user ${userId}${extra}`);
     } catch (err) {
       console.error("Error sending file to user:", err.message);
@@ -457,8 +459,8 @@ bot.on("photo", async (ctx) => {
 
       const extra =
         remainingAfter > 0
-          ? ` (${remainingAfter} file(s) remaining for this command)`
-          : "";
+          ? ` (${remainingAfter} file(s) remaining for this command)`:
+          "";
       await ctx.reply(`✅ Photo sent to user ${userId}${extra}`);
     } catch (err) {
       console.error("Error sending photo to user:", err.message);
@@ -553,12 +555,31 @@ bot.on("text", async (ctx) => {
   // ✅ Auto-replies only for messages that look like payment to you
   if (isPaymentToYou) {
     try {
+      const lowered = text.toLowerCase();
+      const mentionsRecheck = lowered.includes("recheck");
+      const mentionsTopUp =
+        lowered.includes("top up") || lowered.includes("top-up");
+
       if (underpayment) {
-        await ctx.reply(
-          `⚠️ We’ve received your M-PESA message, but it looks like the amount is less than *${CHECK_PRICE_KES} KES*, which is the standard fee per new report.\n\n` +
-            `If this payment is for a *recheck* (currently *${RECHECK_PRICE_KES} KES*) or part of a *top-up* for multiple reports, please reply here and confirm.\n` +
-            "Otherwise, kindly send the remaining balance so we can proceed with your report."
-        );
+        if (mentionsRecheck) {
+          await ctx.reply(
+            "✅ Recheck noted.\n\n" +
+              "Your payment and previous report will be reviewed. Rechecks are valid within *24 hours* of the last check.\n" +
+              "Your file will be queued and the updated report sent here in *2–5 minutes* depending on the queue."
+          );
+        } else if (mentionsTopUp) {
+          await ctx.reply(
+            "✅ Top-up noted.\n\n" +
+              "Your payments and files will be reconciled and queued together.\n" +
+              "You’ll receive your report(s) here in *2–5 minutes* depending on the queue."
+          );
+        } else {
+          await ctx.reply(
+            `⚠️ We’ve received your M-PESA message, but it looks like the amount is less than *${CHECK_PRICE_KES} KES*, which is the standard fee per new report.\n\n` +
+              `If this payment is for a *recheck* (currently *${RECHECK_PRICE_KES} KES*) or part of a *top-up* for multiple reports, please reply here and confirm.\n` +
+              "Otherwise, kindly send the remaining balance so we can proceed with your report."
+          );
+        }
       } else {
         await ctx.reply(
           "✅ We’ve received your payment details.\n\n" +
@@ -573,24 +594,8 @@ bot.on("text", async (ctx) => {
         err.message
       );
     }
-  } else {
-    // Extra short autoresponses when user clarifies "recheck" or "top up"
-    const lowerText = text.toLowerCase();
-    try {
-      if (lowerText.includes("recheck")) {
-        await ctx.reply(
-          "✅ Noted as a recheck. We’ll confirm payment, ensure the earlier Turnitin report was done within the last 24 hours, and then process your recheck. Reports usually take 2–5 minutes depending on the queue."
-        );
-      } else if (lowerText.includes("top up") || lowerText.includes("topup")) {
-        await ctx.reply(
-          "✅ Noted as a top up. We’ll confirm payment and queue your additional report for processing. Reports usually take 2–5 minutes depending on the queue."
-        );
-      }
-    } catch (err) {
-      console.error("Error sending recheck/top up auto-reply:", err.message);
-    }
   }
-  // For other non-payment messages: no extra auto-reply. Admin will respond via /reply.
+  // For non-payment messages: no auto-reply. Admin will respond via /reply.
 });
 
 /* ---------- EXPRESS WEBHOOK SERVER ---------- */
