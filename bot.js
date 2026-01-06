@@ -29,7 +29,7 @@ const pendingFileTargets = {};
 // Button labels
 const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
-const KEY_HELP = "❓ Help";
+const KEY_CANCEL = "❌ Cancel / New submission";
 
 /**
  * Inactive period:
@@ -166,14 +166,14 @@ bot.start(async (ctx) => {
 
   console.log("🔔 New user started the bot:", user.username || user.first_name);
 
-  // Show welcome + custom keyboard
+  // Show welcome + custom keyboard (NO Help button, added Cancel)
   await ctx.reply(WELCOME_MESSAGE, {
     parse_mode: "Markdown",
     reply_markup: {
       keyboard: [
         [{ text: KEY_SEND_DOC }],
         [{ text: KEY_SEND_MPESA }],
-        [{ text: KEY_HELP }]
+        [{ text: KEY_CANCEL }]
       ],
       resize_keyboard: true,
       one_time_keyboard: false
@@ -229,22 +229,16 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   );
 });
 
-bot.hears(KEY_HELP, async (ctx) => {
+// NEW: Cancel button handler
+bot.hears(KEY_CANCEL, async (ctx) => {
+  if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
+
   await ctx.reply(
-    "❓ *How to use this bot:*\n\n" +
-      "📄 *Sending documents:*\n" +
-      "• Tap *Send Document*.\n" +
-      "• Tap the *📎 attachment* icon → *File* → choose your DOC/PDF → send.\n\n" +
-      "🧾 *Sending Mpesa details:*\n" +
-      "• Tap *Send Mpesa Text / Screenshot*.\n" +
-      "• Forward the Mpesa SMS *or* send a clear screenshot of the payment.\n" +
-      "• Preferred: *Till 6164915*.\n" +
-      "• If you cannot pay via till, you may *Send Money* to *0741924396* (John Wanjala) as a backup option only.\n\n" +
-      "💬 *Chat & questions:*\n" +
-      "• Just type your message here normally.\n" +
-      "• The admin will reply using the bot.\n\n" +
-      "After payment is confirmed, your Turnitin report (and optional GPTZero AI report) will be processed and sent here.",
-    { parse_mode: "Markdown" }
+    "❌ Current submission cancelled.\n\n" +
+      "You can start a fresh submission anytime by sending a new document and payment details."
   );
 });
 
