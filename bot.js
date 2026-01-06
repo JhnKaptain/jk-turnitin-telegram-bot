@@ -23,22 +23,28 @@ const MIN_PAYMENT_KES = 80;
 const bot = new Telegraf(botToken);
 
 // Remember which user the next admin file(s) should go to
+// key = admin id, value = { userId, caption, remaining }
 const pendingFileTargets = {};
 
-// Button labels (Help removed, Cancel added)
+// Track users who just sent an UNDERPAYMENT M-PESA message
+// so when they reply "recheck" / "top up" in the NEXT message, the bot responds.
+const pendingUnderpaymentFollowup = {}; // userId => { ts, amount }
+
+/* ---------- BUTTON LABELS ---------- */
+
 const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
-// Keep a short-lived memory that user needs to clarify underpayment with "recheck" or "top up"
-const awaitingUnderpaymentClarification = {}; // userId -> timestamp(ms)
-const UNDERPAYMENT_STATE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+/* ---------- KEYBOARD HELPER ---------- */
 
-const MAIN_KEYBOARD = {
-  keyboard: [[{ text: KEY_SEND_DOC }], [{ text: KEY_SEND_MPESA }], [{ text: KEY_CANCEL }]],
-  resize_keyboard: true,
-  one_time_keyboard: false
-};
+function mainKeyboard() {
+  return {
+    keyboard: [[{ text: KEY_SEND_DOC }], [{ text: KEY_SEND_MPESA }], [{ text: KEY_CANCEL }]],
+    resize_keyboard: true,
+    one_time_keyboard: false
+  };
+}
 
 /**
  * Inactive period:
@@ -46,7 +52,8 @@ const MAIN_KEYBOARD = {
  * (Active: 06:00–02:29 EAT)
  */
 function isBotInactivePeriod() {
-  const currentTime = moment.utc().format("HH:mm"); // UTC time
+  const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
+  // Inactive from 23:30–23:59 UTC OR 00:00–02:59 UTC
   return currentTime >= "23:30" || currentTime < "03:00";
 }
 
@@ -57,7 +64,7 @@ async function updateBotNameForCurrentStatus() {
   const inactive = isBotInactivePeriod();
   const desiredStatus = inactive ? "OFFLINE" : "ONLINE";
 
-  if (lastOnlineStatus === desiredStatus) return;
+  if (lastOnlineStatus === desiredStatus) return; // no change needed
 
   const baseName = "JK Turnitin Reports";
   const newName = `${baseName} (${desiredStatus})`;
@@ -78,7 +85,7 @@ async function notifyInactivePeriod(ctx) {
       "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
       `🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *${GPTZERO_PRICE_KES} KES*.\n` +
       "If urgent, WhatsApp us on *0701730921*.",
-    { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
+    { parse_mode: "Markdown", reply_markup: mainKeyboard() }
   );
 }
 
@@ -87,20 +94,29 @@ function parseMpesaPayment(text) {
   const lower = text.toLowerCase();
 
   const hasConfirmed = lower.includes("confirmed");
-  const hasPaidTo = lower.includes("paid to");
+
+  // IMPORTANT: accept BOTH till style ("paid to") and send money ("sent to")
+  const hasPaidOrSentTo = lower.includes("paid to") || lower.includes("sent to");
+
   const hasYourName =
     lower.includes("john") &&
     (lower.includes("makokha") || lower.includes("wanjala"));
+
   const hasTillNumber = lower.includes("6164915");
 
-  const isPaymentToYou = hasConfirmed && hasPaidTo && (hasYourName || hasTillNumber);
+  const isPaymentToYou =
+    hasConfirmed && hasPaidOrSentTo && (hasYourName || hasTillNumber);
 
+  // Extract the amount right after "Confirmed. Ksh ..."
+  // Example: "TLGLN14EOK Confirmed. Ksh 100.00 paid to JOHN Makokha..."
   let amount = null;
   const amountMatch = text.match(/confirmed\.\s*ksh\s*([\d,]+(?:\.\d+)?)/i);
   if (amountMatch) {
     const amountStr = amountMatch[1].replace(/,/g, "");
     const parsed = parseFloat(amountStr);
-    if (!isNaN(parsed)) amount = parsed;
+    if (!isNaN(parsed)) {
+      amount = parsed;
+    }
   }
 
   return { isPaymentToYou, amount };
@@ -108,11 +124,18 @@ function parseMpesaPayment(text) {
 
 // Webhook URL: Replace with your Render app URL
 const webhookUrl = "https://jk-turnitin-telegram-bot-1.onrender.com";
+
+// Set webhook (no polling)
 bot.telegram.setWebhook(webhookUrl + "/webhook");
 
 // Keep bot name in sync with ONLINE/OFFLINE status
 updateBotNameForCurrentStatus();
 setInterval(updateBotNameForCurrentStatus, 10 * 60 * 1000); // every 10 minutes
+
+// Safety: never crash silently
+process.on("unhandledRejection", (err) => console.error("UnhandledRejection:", err));
+process.on("uncaughtException", (err) => console.error("UncaughtException:", err));
+bot.catch((err, ctx) => console.error("Telegraf error:", err));
 
 // Bot's welcome message
 const WELCOME_MESSAGE = `
@@ -141,6 +164,7 @@ This bot generates Turnitin plagiarism and AI reports.
 bot.start(async (ctx) => {
   const user = ctx.from;
 
+  // Users are blocked during inactive period, admin is not
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
     await notifyInactivePeriod(ctx);
     return;
@@ -166,11 +190,13 @@ bot.start(async (ctx) => {
 
   console.log("🔔 New user started the bot:", user.username || user.first_name);
 
+  // Show welcome + custom keyboard (Help removed)
   await ctx.reply(WELCOME_MESSAGE, {
     parse_mode: "Markdown",
-    reply_markup: MAIN_KEYBOARD
+    reply_markup: mainKeyboard()
   });
 
+  // Notify admin
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -196,7 +222,7 @@ bot.hears(KEY_SEND_DOC, async (ctx) => {
       "1️⃣ Tap the *📎 attachment* icon in Telegram.\n" +
       "2️⃣ Choose *File* → select your DOC/PDF from your phone or PC.\n" +
       "3️⃣ Send it here as a *file* (please do *not* send as a photo or plain text).",
-    { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
+    { parse_mode: "Markdown", reply_markup: mainKeyboard() }
   );
 });
 
@@ -215,23 +241,23 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
       "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala).\n" +
       "   Please use this option *only if the till option fails*.\n\n" +
       `💰 Price / check: *${CHECK_PRICE_KES} KES*  |  Recheck: *${RECHECK_PRICE_KES} KES*`,
-    { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
+    { parse_mode: "Markdown", reply_markup: mainKeyboard() }
   );
 });
 
-// Cancel button handler
 bot.hears(KEY_CANCEL, async (ctx) => {
   if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) {
     await notifyInactivePeriod(ctx);
     return;
   }
 
-  delete awaitingUnderpaymentClarification[ctx.from.id];
+  // Clear any pending underpayment followup state
+  delete pendingUnderpaymentFollowup[ctx.from.id];
 
   await ctx.reply(
     "❌ Current submission cancelled.\n\n" +
       "You can start a fresh submission anytime by sending a new document and payment details.",
-    { reply_markup: MAIN_KEYBOARD }
+    { reply_markup: mainKeyboard() }
   );
 });
 
@@ -261,7 +287,7 @@ bot.command("reply", async (ctx) => {
   }
 });
 
-// /file <userId> Optional caption
+// /file <userId> Optional caption  → next 1 document or photo goes to that user
 bot.command("file", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -284,7 +310,7 @@ bot.command("file", async (ctx) => {
   );
 });
 
-// /file2 <userId> Optional caption
+// /file2 <userId> Optional caption  → next 2 documents or photos go to that user
 bot.command("file2", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -312,6 +338,7 @@ bot.command("file2", async (ctx) => {
 bot.on("document", async (ctx) => {
   const user = ctx.from;
 
+  // For normal users, respect inactive period
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
     await notifyInactivePeriod(ctx);
     return;
@@ -373,6 +400,7 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
+  // Ask user to send payment + mention GPTZero (UNCHANGED MESSAGE)
   try {
     await ctx.reply(
       "📄 We’ve received your file.\n\n" +
@@ -383,14 +411,14 @@ bot.on("document", async (ctx) => {
         `💰 Price per check: *${CHECK_PRICE_KES} KES* (recheck *${RECHECK_PRICE_KES} KES*)\n` +
         `🧠 *GPTZero AI report* also available on request at *${GPTZERO_PRICE_KES} KES*.\n` +
         "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
-      { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
+      { parse_mode: "Markdown", reply_markup: mainKeyboard() }
     );
   } catch (err) {
     console.error("Error sending auto file-received reply to user:", err.message);
   }
 });
 
-/* ---------- PHOTO HANDLER ---------- */
+/* ---------- PHOTO HANDLER (USER SCREENSHOTS + ADMIN SENDING PHOTOS) ---------- */
 
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
@@ -440,6 +468,7 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
+  // USER photos (likely payment screenshots) -> forward to admin + neutral reply
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   try {
@@ -461,19 +490,20 @@ bot.on("photo", async (ctx) => {
       "🖼️ We’ve received your screenshot.\n\n" +
         "If it is a payment screenshot, it will be reviewed and confirmed shortly.\n" +
         "Once payment is confirmed, your file will be queued for processing and you’ll receive your Turnitin AI & Plag report here.",
-      { reply_markup: MAIN_KEYBOARD }
+      { reply_markup: mainKeyboard() }
     );
   } catch (err) {
     console.error("Error sending screenshot confirmation to user:", err.message);
   }
 });
 
-/* ---------- TEXT HANDLER ---------- */
+/* ---------- TEXT HANDLER (M-PESA SMS + CHAT) ---------- */
 
 bot.on("text", async (ctx) => {
   const user = ctx.from;
   const text = ctx.message.text || "";
 
+  // Let command handlers handle commands
   if (text.startsWith("/")) return;
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
@@ -481,42 +511,61 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  // Ignore admin free text
   if (user.id === ADMIN_ID) return;
 
-  // If user previously underpaid, allow plain "recheck" or "top up" as a follow-up message
-  const ts = awaitingUnderpaymentClarification[user.id];
-  if (ts && Date.now() - ts <= UNDERPAYMENT_STATE_TTL_MS) {
-    const loweredOnly = text.trim().toLowerCase();
-    const mentionsRecheck = loweredOnly.includes("recheck");
-    const mentionsTopUp = loweredOnly.includes("top up") || loweredOnly.includes("top-up");
+  const lowered = text.toLowerCase();
+
+  // ✅ Handle follow-up "recheck" / "top up" AFTER an underpayment alert
+  const pending = pendingUnderpaymentFollowup[user.id];
+  if (pending) {
+    const mentionsRecheck = lowered.includes("recheck");
+    const mentionsTopUp = lowered.includes("top up") || lowered.includes("top-up");
+
+    // Forward to admin first (keeps your original behaviour)
+    try {
+      await bot.telegram.sendMessage(
+        ADMIN_ID,
+        `💬 Message from user (underpayment follow-up):\n` +
+          `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
+          `Username: @${user.username || "N/A"}\n` +
+          `User ID: ${user.id}\n\n` +
+          text
+      );
+    } catch (err) {
+      console.error("Error forwarding follow-up text to admin:", err.message);
+    }
 
     if (mentionsRecheck) {
-      delete awaitingUnderpaymentClarification[user.id];
+      delete pendingUnderpaymentFollowup[user.id];
       await ctx.reply(
         "✅ Recheck noted.\n\n" +
           "Your payment and previous report will be reviewed. Rechecks are valid within *24 hours* of the last check.\n" +
           "Your file will be queued and the updated report sent here in *2–5 minutes* depending on the queue.",
-        { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
+        { parse_mode: "Markdown", reply_markup: mainKeyboard() }
       );
       return;
     }
 
     if (mentionsTopUp) {
-      delete awaitingUnderpaymentClarification[user.id];
+      delete pendingUnderpaymentFollowup[user.id];
       await ctx.reply(
         "✅ Top-up noted.\n\n" +
           "Your payments and files will be reconciled and queued together.\n" +
           "You’ll receive your report(s) here in *2–5 minutes* depending on the queue.",
-        { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
+        { parse_mode: "Markdown", reply_markup: mainKeyboard() }
       );
       return;
     }
-  } else if (ts) {
-    delete awaitingUnderpaymentClarification[user.id];
+
+    // If they typed something else, do nothing (admin can reply), keep pending state.
+    return;
   }
 
+  // Normal path: check whether this is an M-PESA payment message
   const { isPaymentToYou, amount } = parseMpesaPayment(text);
 
+  // Decide label for admin message
   let label = "💬 Message";
   let underpayment = false;
 
@@ -543,73 +592,45 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // Auto-replies only for messages that look like payment to you (same as your code)
+  // ✅ Auto-replies only for messages that look like payment to you
   if (isPaymentToYou) {
     try {
-      const lowered = text.toLowerCase();
-      const mentionsRecheck = lowered.includes("recheck");
-      const mentionsTopUp = lowered.includes("top up") || lowered.includes("top-up");
-
       if (underpayment) {
-        // store pending clarification so next plain "recheck/top up" can work
-        awaitingUnderpaymentClarification[user.id] = Date.now();
+        // Set pending follow-up so "recheck/top up" in NEXT message triggers the correct reply
+        pendingUnderpaymentFollowup[user.id] = { ts: Date.now(), amount: amount ?? null };
 
-        if (mentionsRecheck) {
-          await ctx.reply(
-            "✅ Recheck noted.\n\n" +
-              "Your payment and previous report will be reviewed. Rechecks are valid within *24 hours* of the last check.\n" +
-              "Your file will be queued and the updated report sent here in *2–5 minutes* depending on the queue.",
-            { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
-          );
-        } else if (mentionsTopUp) {
-          await ctx.reply(
-            "✅ Top-up noted.\n\n" +
-              "Your payments and files will be reconciled and queued together.\n" +
-              "You’ll receive your report(s) here in *2–5 minutes* depending on the queue.",
-            { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
-          );
-        } else {
-          await ctx.reply(
-            `⚠️ We’ve received your M-PESA message, but it looks like the amount is less than *${CHECK_PRICE_KES} KES*, which is the standard fee per new report.\n\n` +
-              `If this payment is for a *recheck* (currently *${RECHECK_PRICE_KES} KES*) or part of a *top-up* for multiple reports, please reply here and confirm.\n` +
-              "Otherwise, kindly send the remaining balance so we can proceed with your report.",
-            { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
-          );
-        }
+        await ctx.reply(
+          `⚠️ We’ve received your M-PESA message, but it looks like the amount is less than *${CHECK_PRICE_KES} KES*, which is the standard fee per new report.\n\n` +
+            `If this payment is for a *recheck* (currently *${RECHECK_PRICE_KES} KES*) or part of a *top-up* for multiple reports, please reply here and confirm.\n` +
+            "Otherwise, kindly send the remaining balance so we can proceed with your report.",
+          { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+        );
       } else {
         await ctx.reply(
           "✅ We’ve received your payment details.\n\n" +
             "Your file has been queued for processing. Reports usually take *2–5 minutes* depending on the queue.\n\n" +
             "ℹ️ Official Turnitin hides the exact AI % and does not show AI highlights when the AI score is below *20%*.\n" +
             'If your AI report only shows "*% detected as AI" (without a number), you may need to add more AI-like text to push the score above *20%* and request a *paid recheck* to see AI highlights.',
-          { parse_mode: "Markdown", reply_markup: MAIN_KEYBOARD }
+          { parse_mode: "Markdown", reply_markup: mainKeyboard() }
         );
       }
     } catch (err) {
       console.error("Error sending payment-related auto-reply to user:", err.message);
     }
   }
+
+  // For non-payment messages: no auto-reply (same as your original behavior).
 });
 
 /* ---------- EXPRESS WEBHOOK SERVER ---------- */
 
 const app = express();
-app.use(express.json());
+app.use(express.json()); // so Telegraf sees req.body
 app.use(bot.webhookCallback("/webhook"));
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Webhook server is listening on port ${port}`);
-});
-
-// Extra safety so it doesn't “stop running” silently
-bot.catch((err) => console.error("Telegraf error:", err));
-
-process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled Rejection:", reason);
-});
-process.on("uncaughtException", (err) => {
-  console.error("Uncaught Exception:", err);
 });
 
 // Graceful shutdown
