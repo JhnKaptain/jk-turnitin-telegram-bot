@@ -579,11 +579,11 @@ bot.on("text", async (ctx) => {
     try {
       if (lowerText.includes("recheck")) {
         await ctx.reply(
-          "✅ Noted as a recheck. We’ll confirm payment, ensure the earlier Turnitin report was done within the last 24 hours, and then process your recheck."
+          "✅ Noted as a recheck. We’ll confirm payment, ensure the earlier Turnitin report was done within the last 24 hours, and then process your recheck. Reports usually take 2–5 minutes depending on the queue."
         );
       } else if (lowerText.includes("top up") || lowerText.includes("topup")) {
         await ctx.reply(
-          "✅ Noted as a top up. We’ll confirm payment and queue your additional report for processing."
+          "✅ Noted as a top up. We’ll confirm payment and queue your additional report for processing. Reports usually take 2–5 minutes depending on the queue."
         );
       }
     } catch (err) {
