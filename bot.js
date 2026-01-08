@@ -1,8 +1,20 @@
+/**
+ * JK Turnitin Reports Bot — Telegraf + Express Webhook
+ * UPDATED:
+ * ✅ Inactive period now: 03:00–05:59 EAT (instead of 02:30–05:59 EAT)
+ * ✅ CHECK + RECHECK price now both: 100 KES
+ * ✅ MIN_PAYMENT_KES adjusted to 100 (to match new baseline)
+ */
+
 require("dotenv").config();
+
 const { Telegraf } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
 
+// =====================
+// ENV + CONSTANTS
+// =====================
 const botToken = process.env.BOT_TOKEN;
 if (!botToken) {
   console.error("❌ BOT_TOKEN is missing in .env file");
@@ -13,71 +25,78 @@ if (!botToken) {
 // ⭐ Your Telegram numeric ID from @userinfobot
 const ADMIN_ID = 6569201830; // johnkappy
 
-// 💰 Pricing constants
-const CHECK_PRICE_KES = 80;
-const RECHECK_PRICE_KES = 70;
+// 💰 Pricing constants (UPDATED)
+const CHECK_PRICE_KES = 100;
+const RECHECK_PRICE_KES = 100;
 const GPTZERO_PRICE_KES = 40;
-// Minimum payment to auto-accept as valid (baseline 80 KES)
-const MIN_PAYMENT_KES = 80;
 
-const bot = new Telegraf(botToken);
+// Minimum payment to auto-accept as valid (UPDATED)
+const MIN_PAYMENT_KES = 100;
 
-// Remember which user the next admin file(s) should go to
-// key = admin id, value = { userId, caption, remaining }
-const pendingFileTargets = {};
-
-// ✅ Track underpayment follow-up state so “recheck/top up” works even if user replies with ONLY that word
-// key = user id, value = timestamp (ms)
-const pendingUnderpaymentFollowup = {};
-const UNDERPAYMENT_FOLLOWUP_TTL_MINUTES = 180; // auto-expire after 3 hours
+// Webhook URL: Replace with your Render app URL
+const WEBHOOK_URL = "https://jk-turnitin-telegram-bot-1.onrender.com";
 
 // Button labels
 const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Send Mpesa Text / Screenshot";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
+// Follow-up TTL
+const UNDERPAYMENT_FOLLOWUP_TTL_MINUTES = 180; // 3 hours
+
+// =====================
+// BOT STATE
+// =====================
+const bot = new Telegraf(botToken);
+
+// Remember which user the next admin file(s) should go to
+// key = admin id, value = { userId, caption, remaining }
+const pendingFileTargets = {};
+
+// Track underpayment follow-up state so “recheck/top up” works even if user replies with ONLY that word
+// key = user id, value = timestamp (ms)
+const pendingUnderpaymentFollowup = {};
+
+// =====================
+// HELPERS
+// =====================
+
 /**
- * Inactive period:
- * 02:30–05:59 EAT  =  23:30–02:59 UTC
- * (Active: 06:00–02:29 EAT)
+ * ✅ Inactive period (UPDATED):
+ * 03:00–05:59 EAT  =  00:00–02:59 UTC
+ * (Active: 06:00–02:59 EAT)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 23:30–23:59 UTC OR 00:00–02:59 UTC
-  return currentTime >= "23:30" || currentTime < "03:00";
+  // Inactive from 00:00–02:59 UTC
+  return currentTime >= "00:00" && currentTime < "03:00";
 }
 
-// ✅ Main keyboard helper (ensures buttons don’t “disappear” after replies)
+// Main keyboard helper
 function mainKeyboard() {
   return {
-    keyboard: [
-      [{ text: KEY_SEND_DOC }],
-      [{ text: KEY_SEND_MPESA }],
-      [{ text: KEY_CANCEL }]
-    ],
+    keyboard: [[{ text: KEY_SEND_DOC }], [{ text: KEY_SEND_MPESA }], [{ text: KEY_CANCEL }]],
     resize_keyboard: true,
     one_time_keyboard: false
   };
 }
 
-// ✅ Safe Markdown reply (prevents Telegram Markdown parse errors from killing the reply)
+// Safe Markdown reply
 async function replyMarkdownSafe(ctx, message, extra = {}) {
   try {
     await ctx.reply(message, { parse_mode: "Markdown", ...extra });
-  } catch (err) {
-    // fallback without parse_mode
+  } catch {
     await ctx.reply(message, { ...extra });
   }
 }
 
-// 🔄 Auto-update bot name to show ONLINE / OFFLINE in Telegram
-let lastOnlineStatus = null; // "ONLINE" or "OFFLINE"
+// Bot name ONLINE/OFFLINE
+let lastOnlineStatus = null; // "ONLINE" | "OFFLINE"
 
 async function updateBotNameForCurrentStatus() {
   const inactive = isBotInactivePeriod();
   const desiredStatus = inactive ? "OFFLINE" : "ONLINE";
-
-  if (lastOnlineStatus === desiredStatus) return; // no change needed
+  if (lastOnlineStatus === desiredStatus) return;
 
   const baseName = "JK Turnitin Reports";
   const newName = `${baseName} (${desiredStatus})`;
@@ -91,7 +110,6 @@ async function updateBotNameForCurrentStatus() {
   }
 }
 
-// Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(
     ctx,
@@ -116,64 +134,52 @@ function isUnderpaymentFollowupActive(userId) {
 }
 
 /**
- * 🔍 Parse an M-PESA payment SMS: detect if it's to you and extract amount.
- * FIX: supports both "paid to" (till) AND "sent to" (send money), plus phone number.
+ * Parse an M-PESA payment SMS
  */
 function parseMpesaPayment(text) {
   const t = text || "";
   const lower = t.toLowerCase();
 
-  // Must look like an M-PESA confirmation
   const hasConfirmed = lower.includes("confirmed");
 
-  // Accept common variants (till vs send money)
   const hasPaidOrSent =
     lower.includes("paid to") ||
     lower.includes("sent to") ||
     lower.includes("you have sent") ||
     lower.includes("you have paid");
 
-  // Recipient identifiers
-  const hasYourName =
-    lower.includes("john") &&
-    (lower.includes("makokha") || lower.includes("wanjala"));
-
+  const hasYourName = lower.includes("john") && (lower.includes("makokha") || lower.includes("wanjala"));
   const hasTillNumber = lower.includes("6164915");
-  const hasYourPhone =
-    lower.includes("0741924396") || lower.includes("741924396"); // with/without leading 0
+  const hasYourPhone = lower.includes("0741924396") || lower.includes("741924396");
 
-  const isPaymentToYou =
-    hasConfirmed && hasPaidOrSent && (hasYourName || hasTillNumber || hasYourPhone);
+  const isPaymentToYou = hasConfirmed && hasPaidOrSent && (hasYourName || hasTillNumber || hasYourPhone);
 
-  // Amount extraction (more tolerant)
   let amount = null;
   const amountMatch =
-    t.match(/confirmed\.?\s*ksh\s*([\d,]+(?:\.\d+)?)/i) ||
-    t.match(/\bksh\s*([\d,]+(?:\.\d+)?)/i);
+    t.match(/confirmed\.?\s*ksh\s*([\d,]+(?:\.\d+)?)/i) || t.match(/\bksh\s*([\d,]+(?:\.\d+)?)/i);
 
   if (amountMatch) {
     const amountStr = amountMatch[1].replace(/,/g, "");
     const parsed = parseFloat(amountStr);
-    if (!isNaN(parsed)) amount = parsed;
+    if (!Number.isNaN(parsed)) amount = parsed;
   }
 
-  // Helpful to know if it’s an M-PESA-ish SMS even if recipient didn’t match
   const looksLikeMpesa = hasConfirmed && amount != null;
 
   return { isPaymentToYou, amount, looksLikeMpesa };
 }
 
-// Webhook URL: Replace with your Render app URL
-const webhookUrl = "https://jk-turnitin-telegram-bot-1.onrender.com";
+// =====================
+// WEBHOOK SETUP
+// =====================
+bot.telegram.setWebhook(`${WEBHOOK_URL}/webhook`);
 
-// Set webhook (no polling)
-bot.telegram.setWebhook(webhookUrl + "/webhook");
-
-// Keep bot name in sync with ONLINE/OFFLINE status
 updateBotNameForCurrentStatus();
-setInterval(updateBotNameForCurrentStatus, 10 * 60 * 1000); // every 10 minutes
+setInterval(updateBotNameForCurrentStatus, 10 * 60 * 1000);
 
-// Bot's welcome message
+// =====================
+// MESSAGES
+// =====================
 const WELCOME_MESSAGE = `
 JK Turnitin Reports Bot 
 
@@ -196,11 +202,12 @@ This bot generates Turnitin plagiarism and AI reports.
 • No bargaining.
 `;
 
+// =====================
 // /start
+// =====================
 bot.start(async (ctx) => {
   const user = ctx.from;
 
-  // Users are blocked during inactive period, admin is not
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
     await notifyInactivePeriod(ctx);
     return;
@@ -226,10 +233,8 @@ bot.start(async (ctx) => {
 
   console.log("🔔 New user started the bot:", user.username || user.first_name);
 
-  // Show welcome + custom keyboard (Help removed, Cancel added)
   await replyMarkdownSafe(ctx, WELCOME_MESSAGE, { reply_markup: mainKeyboard() });
 
-  // Notify admin
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -243,13 +248,12 @@ bot.start(async (ctx) => {
   }
 });
 
-/* ---------- BUTTON HANDLERS ---------- */
-
+// =====================
+// BUTTON HANDLERS
+// =====================
 bot.hears(KEY_SEND_DOC, async (ctx) => {
-  if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) {
-    await notifyInactivePeriod(ctx);
-    return;
-  }
+  if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
+
   await replyMarkdownSafe(
     ctx,
     "📄 *How to send your document:*\n\n" +
@@ -261,10 +265,8 @@ bot.hears(KEY_SEND_DOC, async (ctx) => {
 });
 
 bot.hears(KEY_SEND_MPESA, async (ctx) => {
-  if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) {
-    await notifyInactivePeriod(ctx);
-    return;
-  }
+  if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
+
   await replyMarkdownSafe(
     ctx,
     "🧾 *How to send your Mpesa payment:*\n\n" +
@@ -280,14 +282,9 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   );
 });
 
-// Cancel button handler
 bot.hears(KEY_CANCEL, async (ctx) => {
-  if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) {
-    await notifyInactivePeriod(ctx);
-    return;
-  }
+  if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // clear any pending “underpayment follow-up”
   delete pendingUnderpaymentFollowup[ctx.from.id];
 
   await ctx.reply(
@@ -297,93 +294,72 @@ bot.hears(KEY_CANCEL, async (ctx) => {
   );
 });
 
-/* ---------- ADMIN COMMANDS ---------- */
-
-// /reply <userId> <message>
+// =====================
+// ADMIN COMMANDS
+// =====================
 bot.command("reply", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
   const text = ctx.message.text || "";
   const parts = text.split(" ");
 
-  if (parts.length < 3) {
-    await ctx.reply("Usage: /reply <userId> <message>");
-    return;
-  }
+  if (parts.length < 3) return ctx.reply("Usage: /reply <userId> <message>");
 
   const userId = parts[1];
   const replyText = parts.slice(2).join(" ");
 
   try {
     await bot.telegram.sendMessage(userId, replyText);
-    await ctx.reply("✅ Message sent to user " + userId);
+    await ctx.reply(`✅ Message sent to user ${userId}`);
   } catch (err) {
     console.error("Error sending reply:", err.message);
     await ctx.reply("❌ Failed to send message: " + err.message);
   }
 });
 
-// /file <userId> Optional caption  → next 1 document or photo goes to that user
 bot.command("file", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
   const text = ctx.message.text || "";
   const parts = text.split(" ");
 
-  if (parts.length < 2) {
-    await ctx.reply("Usage: /file <userId> Optional caption");
-    return;
-  }
+  if (parts.length < 2) return ctx.reply("Usage: /file <userId> Optional caption");
 
   const userId = parts[1];
   const caption = parts.slice(2).join(" ");
 
   pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 1 };
 
-  await replyMarkdownSafe(
-    ctx,
-    `✅ Got it. The *next document or photo* you send will be delivered to user ${userId}.`
-  );
+  await replyMarkdownSafe(ctx, `✅ Got it. The *next document or photo* you send will be delivered to user ${userId}.`);
 });
 
-// /file2 <userId> Optional caption  → next 2 documents or photos go to that user
 bot.command("file2", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
   const text = ctx.message.text || "";
   const parts = text.split(" ");
 
-  if (parts.length < 2) {
-    await ctx.reply("Usage: /file2 <userId> Optional caption");
-    return;
-  }
+  if (parts.length < 2) return ctx.reply("Usage: /file2 <userId> Optional caption");
 
   const userId = parts[1];
   const caption = parts.slice(2).join(" ");
 
   pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 2 };
 
-  await replyMarkdownSafe(
-    ctx,
-    `✅ Got it. The *next 2 documents or photos* you send will be delivered to user ${userId}.`
-  );
+  await replyMarkdownSafe(ctx, `✅ Got it. The *next 2 documents or photos* you send will be delivered to user ${userId}.`);
 });
 
-/* ---------- DOCUMENT HANDLER ---------- */
-
+// =====================
+// DOCUMENT HANDLER
+// =====================
 bot.on("document", async (ctx) => {
   const user = ctx.from;
 
-  // For normal users, respect inactive period
-  if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
-    await notifyInactivePeriod(ctx);
-    return;
-  }
+  if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // ADMIN sending file(s) to a user
+  // ADMIN: send doc to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
-
     if (!target) {
       await replyMarkdownSafe(
         ctx,
@@ -395,32 +371,25 @@ bot.on("document", async (ctx) => {
 
     const { userId, caption } = target;
     const doc = ctx.message.document;
-    const remainingBefore = target.remaining || 1;
-    const remainingAfter = remainingBefore - 1;
+
+    const remainingAfter = (target.remaining || 1) - 1;
 
     try {
-      await bot.telegram.sendDocument(userId, doc.file_id, {
-        caption: caption || undefined
-      });
+      await bot.telegram.sendDocument(userId, doc.file_id, { caption: caption || undefined });
 
-      if (remainingAfter <= 0) {
-        delete pendingFileTargets[ADMIN_ID];
-      } else {
-        target.remaining = remainingAfter;
-      }
+      if (remainingAfter <= 0) delete pendingFileTargets[ADMIN_ID];
+      else target.remaining = remainingAfter;
 
-      const extra =
-        remainingAfter > 0 ? ` (${remainingAfter} file(s) remaining for this command)` : "";
+      const extra = remainingAfter > 0 ? ` (${remainingAfter} file(s) remaining for this command)` : "";
       await ctx.reply(`✅ File sent to user ${userId}${extra}`);
     } catch (err) {
       console.error("Error sending file to user:", err.message);
       await ctx.reply("❌ Failed to send file: " + err.message);
     }
-
     return;
   }
 
-  // USER sending a file -> forward to admin + auto reply
+  // USER: forward doc to admin
   console.log("📄 Document from user:", user.id);
 
   try {
@@ -431,45 +400,37 @@ bot.on("document", async (ctx) => {
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}`
     );
-
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // Ask user to send payment + mention GPTZero (kept same flow/wording)
-  try {
-    await replyMarkdownSafe(
-      ctx,
-      "📄 We’ve received your file.\n\n" +
-        "Now please send your *Mpesa payment* text or screenshot.\n\n" +
-        "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-        "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala) as a backup.\n" +
-        "   Please use this option *only if the till option fails*.\n\n" +
-        `💰 Price per check: *${CHECK_PRICE_KES} KES* (recheck *${RECHECK_PRICE_KES} KES*)\n` +
-        `🧠 *GPTZero AI report* also available on request at *${GPTZERO_PRICE_KES} KES*.\n` +
-        "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
-      { reply_markup: mainKeyboard() }
-    );
-  } catch (err) {
-    console.error("Error sending auto file-received reply to user:", err.message);
-  }
+  // Prompt for payment
+  await replyMarkdownSafe(
+    ctx,
+    "📄 We’ve received your file.\n\n" +
+      "Now please send your *Mpesa payment* text or screenshot.\n\n" +
+      "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
+      "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala) as a backup.\n" +
+      "   Please use this option *only if the till option fails*.\n\n" +
+      `💰 Price per check: *${CHECK_PRICE_KES} KES* (recheck *${RECHECK_PRICE_KES} KES*)\n` +
+      `🧠 *GPTZero AI report* also available on request at *${GPTZERO_PRICE_KES} KES*.\n` +
+      "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
+    { reply_markup: mainKeyboard() }
+  );
 });
 
-/* ---------- PHOTO HANDLER (USER SCREENSHOTS + ADMIN SENDING PHOTOS) ---------- */
-
+// =====================
+// PHOTO HANDLER
+// =====================
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
 
-  if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
-    await notifyInactivePeriod(ctx);
-    return;
-  }
+  if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // ADMIN sending photo(s) to a user
+  // ADMIN: send photo to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
-
     if (!target) {
       await replyMarkdownSafe(
         ctx,
@@ -482,32 +443,25 @@ bot.on("photo", async (ctx) => {
     const { userId, caption } = target;
     const photos = ctx.message.photo || [];
     const largestPhoto = photos[photos.length - 1];
-    const remainingBefore = target.remaining || 1;
-    const remainingAfter = remainingBefore - 1;
+
+    const remainingAfter = (target.remaining || 1) - 1;
 
     try {
-      await bot.telegram.sendPhoto(userId, largestPhoto.file_id, {
-        caption: caption || undefined
-      });
+      await bot.telegram.sendPhoto(userId, largestPhoto.file_id, { caption: caption || undefined });
 
-      if (remainingAfter <= 0) {
-        delete pendingFileTargets[ADMIN_ID];
-      } else {
-        target.remaining = remainingAfter;
-      }
+      if (remainingAfter <= 0) delete pendingFileTargets[ADMIN_ID];
+      else target.remaining = remainingAfter;
 
-      const extra =
-        remainingAfter > 0 ? ` (${remainingAfter} file(s) remaining for this command)` : "";
+      const extra = remainingAfter > 0 ? ` (${remainingAfter} file(s) remaining for this command)` : "";
       await ctx.reply(`✅ Photo sent to user ${userId}${extra}`);
     } catch (err) {
       console.error("Error sending photo to user:", err.message);
       await ctx.reply("❌ Failed to send photo: " + err.message);
     }
-
     return;
   }
 
-  // USER photos -> forward to admin + neutral reply
+  // USER: forward photo to admin
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   try {
@@ -518,49 +472,38 @@ bot.on("photo", async (ctx) => {
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}`
     );
-
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding photo to admin:", err.message);
   }
 
-  try {
-    await ctx.reply(
-      "🖼️ We’ve received your screenshot.\n\n" +
-        "If it is a payment screenshot, it will be reviewed and confirmed shortly.\n" +
-        "Once payment is confirmed, your file will be queued for processing and you’ll receive your Turnitin AI & Plag report here.",
-      { reply_markup: mainKeyboard() }
-    );
-  } catch (err) {
-    console.error("Error sending screenshot confirmation to user:", err.message);
-  }
+  await ctx.reply(
+    "🖼️ We’ve received your screenshot.\n\n" +
+      "If it is a payment screenshot, it will be reviewed and confirmed shortly.\n" +
+      "Once payment is confirmed, your file will be queued for processing and you’ll receive your Turnitin AI & Plag report here.",
+    { reply_markup: mainKeyboard() }
+  );
 });
 
-/* ---------- TEXT HANDLER (M-PESA SMS + CHAT) ---------- */
-
+// =====================
+// TEXT HANDLER
+// =====================
 bot.on("text", async (ctx) => {
   const user = ctx.from;
   const text = ctx.message.text || "";
 
-  // Let command handlers handle commands
   if (text.startsWith("/")) return;
 
-  if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
-    await notifyInactivePeriod(ctx);
-    return;
-  }
+  if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // Ignore admin free text
   if (user.id === ADMIN_ID) return;
 
   const lowered = text.toLowerCase();
   const mentionsRecheck = lowered.includes("recheck");
   const mentionsTopUp = lowered.includes("top up") || lowered.includes("top-up");
 
-  // Parse payment
   const { isPaymentToYou, amount, looksLikeMpesa } = parseMpesaPayment(text);
 
-  // Decide label for admin message
   let label = "💬 Message";
   let underpayment = false;
 
@@ -575,7 +518,6 @@ bot.on("text", async (ctx) => {
     label = "⚠️ M-PESA text (recipient not matched)";
   }
 
-  // Always forward client messages to admin
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -589,8 +531,7 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // ✅ NEW: If user previously got the underpayment alert and now replies ONLY “recheck” or “top up”
-  // This makes the recheck/top-up autoresponses work even without being inside the M-PESA SMS.
+  // Follow-up mode: user replies only "recheck" or "top up"
   if (!looksLikeMpesa && isUnderpaymentFollowupActive(user.id) && (mentionsRecheck || mentionsTopUp)) {
     try {
       if (mentionsRecheck) {
@@ -618,14 +559,12 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // ✅ Auto-replies for payments to you
+  // Payment to you → auto replies
   if (isPaymentToYou) {
     try {
       if (underpayment) {
-        // Keep the follow-up “armed” so the next “recheck/top up” message works
         pendingUnderpaymentFollowup[user.id] = Date.now();
 
-        // If the underpayment message itself includes “recheck/top up”, respond immediately
         if (mentionsRecheck) {
           await replyMarkdownSafe(
             ctx,
@@ -654,7 +593,6 @@ bot.on("text", async (ctx) => {
           );
         }
       } else {
-        // Payment OK: clear any pending follow-up
         delete pendingUnderpaymentFollowup[user.id];
 
         await replyMarkdownSafe(
@@ -667,39 +605,30 @@ bot.on("text", async (ctx) => {
         );
       }
     } catch (err) {
-      console.error("Error sending payment-related auto-reply to user:", err);
+      console.error("Error sending payment-related auto-reply:", err);
     }
     return;
   }
 
-  // ✅ Fallback: if it looks like M-PESA but recipient didn’t match, still respond (so 80+ won’t be “silent”)
   if (looksLikeMpesa && !isPaymentToYou) {
-    try {
-      await ctx.reply(
-        "✅ We’ve received your M-PESA message.\n\n" +
-          "If you paid to the correct till/number, we’ll confirm shortly.\n" +
-          "If possible, please forward the full SMS (showing the recipient) or send a screenshot for faster confirmation.",
-        { reply_markup: mainKeyboard() }
-      );
-    } catch (err) {
-      console.error("Error sending fallback mpesa auto-reply:", err);
-    }
+    await ctx.reply(
+      "✅ We’ve received your M-PESA message.\n\n" +
+        "If you paid to the correct till/number, we’ll confirm shortly.\n" +
+        "If possible, please forward the full SMS (showing the recipient) or send a screenshot for faster confirmation.",
+      { reply_markup: mainKeyboard() }
+    );
   }
-
-  // For non-payment messages: no auto-reply.
 });
 
-/* ---------- EXPRESS WEBHOOK SERVER ---------- */
-
+// =====================
+// EXPRESS SERVER
+// =====================
 const app = express();
-app.use(express.json()); // so Telegraf sees req.body
+app.use(express.json());
 app.use(bot.webhookCallback("/webhook"));
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Webhook server is listening on port ${port}`);
-});
+app.listen(port, () => console.log(`Webhook server is listening on port ${port}`));
 
-// Graceful shutdown
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
