@@ -1,9 +1,10 @@
 /**
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * UPDATED:
- * ✅ Inactive period now: 03:00 AM – 09:00 PM EAT
- * ✅ CHECK + RECHECK price: 100 KES
- * ✅ MIN_PAYMENT_KES: 100
+ * ✅ Inactive period now: 03:00–05:59 EAT (instead of 02:30–05:59 EAT)
+ * ✅ CHECK price: 80 KES
+ * ✅ RECHECK price: 70 KES
+ * ✅ MIN_PAYMENT_KES adjusted to 80 (baseline for new checks)
  */
 
 require("dotenv").config();
@@ -25,13 +26,13 @@ if (!botToken) {
 // ⭐ Your Telegram numeric ID from @userinfobot
 const ADMIN_ID = 6569201830; // johnkappy
 
-// 💰 Pricing constants
-const CHECK_PRICE_KES = 100;
-const RECHECK_PRICE_KES = 100;
+// 💰 Pricing constants (UPDATED)
+const CHECK_PRICE_KES = 80;
+const RECHECK_PRICE_KES = 70;
 const GPTZERO_PRICE_KES = 40;
 
-// Minimum payment to auto-accept as valid
-const MIN_PAYMENT_KES = 100;
+// Minimum payment to auto-accept as valid (UPDATED baseline)
+const MIN_PAYMENT_KES = 80;
 
 // Webhook URL: Replace with your Render app URL
 const WEBHOOK_URL = "https://jk-turnitin-telegram-bot-1.onrender.com";
@@ -62,16 +63,14 @@ const pendingUnderpaymentFollowup = {};
 // =====================
 
 /**
- * ✅ Inactive period (UPDATED):
- * 03:00–21:00 EAT  =  00:00–18:00 UTC
- * EAT = UTC+3
- *
- * (Active: 21:01–02:59 EAT)  => 18:01–23:59 UTC
+ * ✅ Inactive period:
+ * 03:00–05:59 EAT  =  00:00–02:59 UTC
+ * (Active: 06:00–02:59 EAT)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 00:00–18:00 UTC (inclusive start, inclusive 18:00)
-  return currentTime >= "00:00" && currentTime <= "18:00";
+  // Inactive from 00:00–02:59 UTC
+  return currentTime >= "00:00" && currentTime < "03:00";
 }
 
 // Main keyboard helper
@@ -112,12 +111,11 @@ async function updateBotNameForCurrentStatus() {
   }
 }
 
-// Reply when user writes during inactive hours (but do NOT stop bot)
 async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(
     ctx,
     "⏳ Turnitin checks are paused right now.\n" +
-      "We’ll resume Turnitin reports at *9:01 PM EAT*.\n\n" +
+      "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
       `🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *${GPTZERO_PRICE_KES} KES*.\n` +
       "If urgent, WhatsApp us on *0701730921*.",
     { reply_markup: mainKeyboard() }
@@ -211,7 +209,6 @@ This bot generates Turnitin plagiarism and AI reports.
 bot.start(async (ctx) => {
   const user = ctx.from;
 
-  // Users blocked during inactive period, admin is not
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
     await notifyInactivePeriod(ctx);
     return;
@@ -239,7 +236,6 @@ bot.start(async (ctx) => {
 
   await replyMarkdownSafe(ctx, WELCOME_MESSAGE, { reply_markup: mainKeyboard() });
 
-  // Notify admin
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -322,7 +318,6 @@ bot.command("reply", async (ctx) => {
   }
 });
 
-// /file <userId> Optional caption
 bot.command("file", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -339,7 +334,6 @@ bot.command("file", async (ctx) => {
   await replyMarkdownSafe(ctx, `✅ Got it. The *next document or photo* you send will be delivered to user ${userId}.`);
 });
 
-// /file2 <userId> Optional caption
 bot.command("file2", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -364,7 +358,6 @@ bot.on("document", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // ADMIN: send doc to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -396,7 +389,6 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  // USER: forward doc to admin
   console.log("📄 Document from user:", user.id);
 
   try {
@@ -407,7 +399,6 @@ bot.on("document", async (ctx) => {
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}`
     );
-
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding document to admin:", err.message);
@@ -435,7 +426,6 @@ bot.on("photo", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // ADMIN: send photo to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -468,7 +458,6 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // USER: forward photo to admin
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   try {
@@ -479,7 +468,6 @@ bot.on("photo", async (ctx) => {
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}`
     );
-
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding photo to admin:", err.message);
@@ -526,7 +514,6 @@ bot.on("text", async (ctx) => {
     label = "⚠️ M-PESA text (recipient not matched)";
   }
 
-  // forward all client messages to admin
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -540,7 +527,6 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // If user previously got the underpayment alert and now replies ONLY “recheck” or “top up”
   if (!looksLikeMpesa && isUnderpaymentFollowupActive(user.id) && (mentionsRecheck || mentionsTopUp)) {
     try {
       if (mentionsRecheck) {
@@ -568,7 +554,6 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // Payment to you → auto replies
   if (isPaymentToYou) {
     try {
       if (underpayment) {
@@ -619,7 +604,6 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // Looks like M-PESA but recipient didn’t match
   if (looksLikeMpesa && !isPaymentToYou) {
     await ctx.reply(
       "✅ We’ve received your M-PESA message.\n\n" +
