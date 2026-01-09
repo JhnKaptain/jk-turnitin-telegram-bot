@@ -1,8 +1,10 @@
 /**
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * UPDATED:
- * ✅ Inactive period now: 01:30 PM – 09:30 AM EAT
- * (No other changes)
+ * ✅ Inactive period now: 10:00 AM – 09:30 AM EAT (next day)
+ * ✅ CHECK price: 80 KES
+ * ✅ RECHECK price: 70 KES
+ * ✅ MIN_PAYMENT_KES: 80
  */
 
 require("dotenv").config();
@@ -62,12 +64,13 @@ const pendingUnderpaymentFollowup = {};
 
 /**
  * ✅ Inactive period (UPDATED):
- * 01:30 PM – 09:30 AM EAT  =  10:30 – 06:30 UTC (crosses midnight)
+ * 10:00 AM – 09:30 AM EAT  =  07:00 – 06:30 UTC (crosses midnight)
+ * EAT = UTC+3
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 10:30–23:59 UTC OR 00:00–06:29 UTC
-  return currentTime >= "10:30" || currentTime < "06:30";
+  // Inactive from 07:00–23:59 UTC OR 00:00–06:30 UTC
+  return currentTime >= "07:00" || currentTime <= "06:30";
 }
 
 // Main keyboard helper
@@ -112,7 +115,7 @@ async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(
     ctx,
     "⏳ Turnitin checks are paused right now.\n" +
-      "We’ll resume Turnitin reports at *9:30 AM EAT*.\n\n" +
+      "We’ll resume Turnitin reports at *9:31 AM EAT*.\n\n" +
       `🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *${GPTZERO_PRICE_KES} KES*.\n` +
       "If urgent, WhatsApp us on *0701730921*.",
     { reply_markup: mainKeyboard() }
@@ -146,7 +149,9 @@ function parseMpesaPayment(text) {
     lower.includes("you have sent") ||
     lower.includes("you have paid");
 
-  const hasYourName = lower.includes("john") && (lower.includes("makokha") || lower.includes("wanjala"));
+  const hasYourName =
+    lower.includes("john") && (lower.includes("makokha") || lower.includes("wanjala"));
+
   const hasTillNumber = lower.includes("6164915");
   const hasYourPhone = lower.includes("0741924396") || lower.includes("741924396");
 
@@ -315,6 +320,7 @@ bot.command("reply", async (ctx) => {
   }
 });
 
+// /file <userId> Optional caption
 bot.command("file", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -331,6 +337,7 @@ bot.command("file", async (ctx) => {
   await replyMarkdownSafe(ctx, `✅ Got it. The *next document or photo* you send will be delivered to user ${userId}.`);
 });
 
+// /file2 <userId> Optional caption
 bot.command("file2", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -398,6 +405,7 @@ bot.on("document", async (ctx) => {
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}`
     );
+
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding document to admin:", err.message);
@@ -470,6 +478,7 @@ bot.on("photo", async (ctx) => {
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}`
     );
+
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding photo to admin:", err.message);
@@ -516,6 +525,7 @@ bot.on("text", async (ctx) => {
     label = "⚠️ M-PESA text (recipient not matched)";
   }
 
+  // forward all client messages to admin
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -608,6 +618,7 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  // Looks like M-PESA but recipient didn’t match
   if (looksLikeMpesa && !isPaymentToYou) {
     await ctx.reply(
       "✅ We’ve received your M-PESA message.\n\n" +
