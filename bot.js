@@ -1,10 +1,10 @@
 /**
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * UPDATED:
- * ✅ Inactive period now: 10:00 AM – 09:30 AM EAT (next day)
- * ✅ CHECK price: 80 KES
- * ✅ RECHECK price: 70 KES
- * ✅ MIN_PAYMENT_KES: 80
+ * ✅ Inactive period: 03:00–06:00 EAT
+ * ✅ CHECK price: 100 KES
+ * ✅ RECHECK price: 90 KES
+ * ✅ MIN_PAYMENT_KES: 100 (baseline for new checks)
  */
 
 require("dotenv").config();
@@ -26,13 +26,13 @@ if (!botToken) {
 // ⭐ Your Telegram numeric ID from @userinfobot
 const ADMIN_ID = 6569201830; // johnkappy
 
-// 💰 Pricing constants
-const CHECK_PRICE_KES = 80;
-const RECHECK_PRICE_KES = 70;
+// 💰 Pricing constants (UPDATED)
+const CHECK_PRICE_KES = 100;
+const RECHECK_PRICE_KES = 90;
 const GPTZERO_PRICE_KES = 40;
 
 // Minimum payment to auto-accept as valid (baseline for new checks)
-const MIN_PAYMENT_KES = 80;
+const MIN_PAYMENT_KES = 100;
 
 // Webhook URL: Replace with your Render app URL
 const WEBHOOK_URL = "https://jk-turnitin-telegram-bot-1.onrender.com";
@@ -63,17 +63,16 @@ const pendingUnderpaymentFollowup = {};
 // =====================
 
 /**
- * ✅ Inactive period (UPDATED):
- * 10:00 AM – 09:30 AM EAT  =  07:00 – 06:30 UTC (crosses midnight)
- * EAT = UTC+3
+ * ✅ Inactive period:
+ * 03:00–06:00 EAT  =  00:00–03:00 UTC
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 07:00–23:59 UTC OR 00:00–06:30 UTC
-  return currentTime >= "07:00" || currentTime <= "06:30";
+  // Inactive from 00:00–02:59 UTC
+  return currentTime >= "00:00" && currentTime < "03:00";
 }
 
-// Main keyboard helper
+// ✅ Main keyboard helper
 function mainKeyboard() {
   return {
     keyboard: [[{ text: KEY_SEND_DOC }], [{ text: KEY_SEND_MPESA }], [{ text: KEY_CANCEL }]],
@@ -82,7 +81,7 @@ function mainKeyboard() {
   };
 }
 
-// Safe Markdown reply
+// ✅ Safe Markdown reply
 async function replyMarkdownSafe(ctx, message, extra = {}) {
   try {
     await ctx.reply(message, { parse_mode: "Markdown", ...extra });
@@ -91,12 +90,13 @@ async function replyMarkdownSafe(ctx, message, extra = {}) {
   }
 }
 
-// Bot name ONLINE/OFFLINE
-let lastOnlineStatus = null; // "ONLINE" | "OFFLINE"
+// 🔄 Auto-update bot name to show ONLINE / OFFLINE in Telegram
+let lastOnlineStatus = null; // "ONLINE" or "OFFLINE"
 
 async function updateBotNameForCurrentStatus() {
   const inactive = isBotInactivePeriod();
   const desiredStatus = inactive ? "OFFLINE" : "ONLINE";
+
   if (lastOnlineStatus === desiredStatus) return;
 
   const baseName = "JK Turnitin Reports";
@@ -111,11 +111,12 @@ async function updateBotNameForCurrentStatus() {
   }
 }
 
+// Reply when user writes during inactive hours
 async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(
     ctx,
     "⏳ Turnitin checks are paused right now.\n" +
-      "We’ll resume Turnitin reports at *9:31 AM EAT*.\n\n" +
+      "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
       `🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *${GPTZERO_PRICE_KES} KES*.\n` +
       "If urgent, WhatsApp us on *0701730921*.",
     { reply_markup: mainKeyboard() }
@@ -149,9 +150,7 @@ function parseMpesaPayment(text) {
     lower.includes("you have sent") ||
     lower.includes("you have paid");
 
-  const hasYourName =
-    lower.includes("john") && (lower.includes("makokha") || lower.includes("wanjala"));
-
+  const hasYourName = lower.includes("john") && (lower.includes("makokha") || lower.includes("wanjala"));
   const hasTillNumber = lower.includes("6164915");
   const hasYourPhone = lower.includes("0741924396") || lower.includes("741924396");
 
@@ -175,6 +174,7 @@ function parseMpesaPayment(text) {
 // =====================
 // WEBHOOK SETUP
 // =====================
+
 bot.telegram.setWebhook(`${WEBHOOK_URL}/webhook`);
 
 updateBotNameForCurrentStatus();
@@ -183,6 +183,7 @@ setInterval(updateBotNameForCurrentStatus, 10 * 60 * 1000);
 // =====================
 // MESSAGES
 // =====================
+
 const WELCOME_MESSAGE = `
 JK Turnitin Reports Bot 
 
@@ -208,6 +209,7 @@ This bot generates Turnitin plagiarism and AI reports.
 // =====================
 // /start
 // =====================
+
 bot.start(async (ctx) => {
   const user = ctx.from;
 
@@ -251,9 +253,8 @@ bot.start(async (ctx) => {
   }
 });
 
-// =====================
-// BUTTON HANDLERS
-// =====================
+/* ---------- BUTTON HANDLERS ---------- */
+
 bot.hears(KEY_SEND_DOC, async (ctx) => {
   if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
@@ -297,9 +298,8 @@ bot.hears(KEY_CANCEL, async (ctx) => {
   );
 });
 
-// =====================
-// ADMIN COMMANDS
-// =====================
+/* ---------- ADMIN COMMANDS ---------- */
+
 bot.command("reply", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -320,7 +320,6 @@ bot.command("reply", async (ctx) => {
   }
 });
 
-// /file <userId> Optional caption
 bot.command("file", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -337,7 +336,6 @@ bot.command("file", async (ctx) => {
   await replyMarkdownSafe(ctx, `✅ Got it. The *next document or photo* you send will be delivered to user ${userId}.`);
 });
 
-// /file2 <userId> Optional caption
 bot.command("file2", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -354,15 +352,13 @@ bot.command("file2", async (ctx) => {
   await replyMarkdownSafe(ctx, `✅ Got it. The *next 2 documents or photos* you send will be delivered to user ${userId}.`);
 });
 
-// =====================
-// DOCUMENT HANDLER
-// =====================
+/* ---------- DOCUMENT HANDLER ---------- */
+
 bot.on("document", async (ctx) => {
   const user = ctx.from;
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // ADMIN: send doc to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -394,7 +390,6 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  // USER: forward doc to admin
   console.log("📄 Document from user:", user.id);
 
   try {
@@ -411,7 +406,6 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // Prompt for payment
   await replyMarkdownSafe(
     ctx,
     "📄 We’ve received your file.\n\n" +
@@ -426,15 +420,13 @@ bot.on("document", async (ctx) => {
   );
 });
 
-// =====================
-// PHOTO HANDLER
-// =====================
+/* ---------- PHOTO HANDLER ---------- */
+
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // ADMIN: send photo to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -467,7 +459,6 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // USER: forward photo to admin
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   try {
@@ -492,9 +483,8 @@ bot.on("photo", async (ctx) => {
   );
 });
 
-// =====================
-// TEXT HANDLER
-// =====================
+/* ---------- TEXT HANDLER ---------- */
+
 bot.on("text", async (ctx) => {
   const user = ctx.from;
   const text = ctx.message.text || "";
@@ -525,7 +515,6 @@ bot.on("text", async (ctx) => {
     label = "⚠️ M-PESA text (recipient not matched)";
   }
 
-  // forward all client messages to admin
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -539,7 +528,6 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // Follow-up mode: user replies only "recheck" or "top up"
   if (!looksLikeMpesa && isUnderpaymentFollowupActive(user.id) && (mentionsRecheck || mentionsTopUp)) {
     try {
       if (mentionsRecheck) {
@@ -567,7 +555,6 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // Payment to you → auto replies
   if (isPaymentToYou) {
     try {
       if (underpayment) {
@@ -618,7 +605,6 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // Looks like M-PESA but recipient didn’t match
   if (looksLikeMpesa && !isPaymentToYou) {
     await ctx.reply(
       "✅ We’ve received your M-PESA message.\n\n" +
@@ -629,9 +615,8 @@ bot.on("text", async (ctx) => {
   }
 });
 
-// =====================
-// EXPRESS SERVER
-// =====================
+/* ---------- EXPRESS WEBHOOK SERVER ---------- */
+
 const app = express();
 app.use(express.json());
 app.use(bot.webhookCallback("/webhook"));
