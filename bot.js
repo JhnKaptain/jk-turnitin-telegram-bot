@@ -1,10 +1,8 @@
 /**
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * UPDATED:
- * ✅ Inactive period now: 03:00–05:59 EAT (instead of 02:30–05:59 EAT)
- * ✅ CHECK price: 80 KES
- * ✅ RECHECK price: 70 KES
- * ✅ MIN_PAYMENT_KES adjusted to 80 (baseline for new checks)
+ * ✅ Inactive period now: 01:30 PM – 09:30 AM EAT
+ * (No other changes)
  */
 
 require("dotenv").config();
@@ -26,12 +24,12 @@ if (!botToken) {
 // ⭐ Your Telegram numeric ID from @userinfobot
 const ADMIN_ID = 6569201830; // johnkappy
 
-// 💰 Pricing constants (UPDATED)
+// 💰 Pricing constants
 const CHECK_PRICE_KES = 80;
 const RECHECK_PRICE_KES = 70;
 const GPTZERO_PRICE_KES = 40;
 
-// Minimum payment to auto-accept as valid (UPDATED baseline)
+// Minimum payment to auto-accept as valid (baseline for new checks)
 const MIN_PAYMENT_KES = 80;
 
 // Webhook URL: Replace with your Render app URL
@@ -63,14 +61,13 @@ const pendingUnderpaymentFollowup = {};
 // =====================
 
 /**
- * ✅ Inactive period:
- * 03:00–05:59 EAT  =  00:00–02:59 UTC
- * (Active: 06:00–02:59 EAT)
+ * ✅ Inactive period (UPDATED):
+ * 01:30 PM – 09:30 AM EAT  =  10:30 – 06:30 UTC (crosses midnight)
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 00:00–02:59 UTC
-  return currentTime >= "00:00" && currentTime < "03:00";
+  // Inactive from 10:30–23:59 UTC OR 00:00–06:29 UTC
+  return currentTime >= "10:30" || currentTime < "06:30";
 }
 
 // Main keyboard helper
@@ -115,7 +112,7 @@ async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(
     ctx,
     "⏳ Turnitin checks are paused right now.\n" +
-      "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
+      "We’ll resume Turnitin reports at *9:30 AM EAT*.\n\n" +
       `🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *${GPTZERO_PRICE_KES} KES*.\n` +
       "If urgent, WhatsApp us on *0701730921*.",
     { reply_markup: mainKeyboard() }
@@ -358,6 +355,7 @@ bot.on("document", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
+  // ADMIN: send doc to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -389,6 +387,7 @@ bot.on("document", async (ctx) => {
     return;
   }
 
+  // USER: forward doc to admin
   console.log("📄 Document from user:", user.id);
 
   try {
@@ -404,6 +403,7 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
+  // Prompt for payment
   await replyMarkdownSafe(
     ctx,
     "📄 We’ve received your file.\n\n" +
@@ -426,6 +426,7 @@ bot.on("photo", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
+  // ADMIN: send photo to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -458,6 +459,7 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
+  // USER: forward photo to admin
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   try {
@@ -527,6 +529,7 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
+  // Follow-up mode: user replies only "recheck" or "top up"
   if (!looksLikeMpesa && isUnderpaymentFollowupActive(user.id) && (mentionsRecheck || mentionsTopUp)) {
     try {
       if (mentionsRecheck) {
@@ -554,6 +557,7 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  // Payment to you → auto replies
   if (isPaymentToYou) {
     try {
       if (underpayment) {
