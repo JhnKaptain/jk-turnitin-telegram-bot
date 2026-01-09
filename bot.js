@@ -2,9 +2,9 @@
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * UPDATED:
  * ✅ Inactive period: 03:00–06:00 EAT
- * ✅ CHECK price: 100 KES
- * ✅ RECHECK price: 90 KES
- * ✅ MIN_PAYMENT_KES: 100 (baseline for new checks)
+ * ✅ CHECK price: 80 KES
+ * ✅ RECHECK price: 70 KES
+ * ✅ MIN_PAYMENT_KES: 80 (baseline for new checks)
  */
 
 require("dotenv").config();
@@ -27,12 +27,12 @@ if (!botToken) {
 const ADMIN_ID = 6569201830; // johnkappy
 
 // 💰 Pricing constants (UPDATED)
-const CHECK_PRICE_KES = 100;
-const RECHECK_PRICE_KES = 90;
+const CHECK_PRICE_KES = 80;
+const RECHECK_PRICE_KES = 70;
 const GPTZERO_PRICE_KES = 40;
 
 // Minimum payment to auto-accept as valid (baseline for new checks)
-const MIN_PAYMENT_KES = 100;
+const MIN_PAYMENT_KES = 80;
 
 // Webhook URL: Replace with your Render app URL
 const WEBHOOK_URL = "https://jk-turnitin-telegram-bot-1.onrender.com";
@@ -174,7 +174,6 @@ function parseMpesaPayment(text) {
 // =====================
 // WEBHOOK SETUP
 // =====================
-
 bot.telegram.setWebhook(`${WEBHOOK_URL}/webhook`);
 
 updateBotNameForCurrentStatus();
@@ -183,7 +182,6 @@ setInterval(updateBotNameForCurrentStatus, 10 * 60 * 1000);
 // =====================
 // MESSAGES
 // =====================
-
 const WELCOME_MESSAGE = `
 JK Turnitin Reports Bot 
 
@@ -209,7 +207,6 @@ This bot generates Turnitin plagiarism and AI reports.
 // =====================
 // /start
 // =====================
-
 bot.start(async (ctx) => {
   const user = ctx.from;
 
@@ -253,8 +250,9 @@ bot.start(async (ctx) => {
   }
 });
 
-/* ---------- BUTTON HANDLERS ---------- */
-
+// =====================
+// BUTTON HANDLERS
+// =====================
 bot.hears(KEY_SEND_DOC, async (ctx) => {
   if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
@@ -298,8 +296,9 @@ bot.hears(KEY_CANCEL, async (ctx) => {
   );
 });
 
-/* ---------- ADMIN COMMANDS ---------- */
-
+// =====================
+// ADMIN COMMANDS
+// =====================
 bot.command("reply", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -352,8 +351,9 @@ bot.command("file2", async (ctx) => {
   await replyMarkdownSafe(ctx, `✅ Got it. The *next 2 documents or photos* you send will be delivered to user ${userId}.`);
 });
 
-/* ---------- DOCUMENT HANDLER ---------- */
-
+// =====================
+// DOCUMENT HANDLER
+// =====================
 bot.on("document", async (ctx) => {
   const user = ctx.from;
 
@@ -400,7 +400,6 @@ bot.on("document", async (ctx) => {
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}`
     );
-
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding document to admin:", err.message);
@@ -420,8 +419,9 @@ bot.on("document", async (ctx) => {
   );
 });
 
-/* ---------- PHOTO HANDLER ---------- */
-
+// =====================
+// PHOTO HANDLER
+// =====================
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
 
@@ -469,7 +469,6 @@ bot.on("photo", async (ctx) => {
         `Username: @${user.username || "N/A"}\n` +
         `User ID: ${user.id}`
     );
-
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding photo to admin:", err.message);
@@ -483,8 +482,9 @@ bot.on("photo", async (ctx) => {
   );
 });
 
-/* ---------- TEXT HANDLER ---------- */
-
+// =====================
+// TEXT HANDLER
+// =====================
 bot.on("text", async (ctx) => {
   const user = ctx.from;
   const text = ctx.message.text || "";
@@ -615,8 +615,9 @@ bot.on("text", async (ctx) => {
   }
 });
 
-/* ---------- EXPRESS WEBHOOK SERVER ---------- */
-
+// =====================
+// EXPRESS SERVER
+// =====================
 const app = express();
 app.use(express.json());
 app.use(bot.webhookCallback("/webhook"));
