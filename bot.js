@@ -5,6 +5,7 @@
  * ✅ CHECK price: 80 KES
  * ✅ RECHECK price: 70 KES
  * ✅ MIN_PAYMENT_KES: 80 (baseline for new checks)
+ * ✅ NEW: Cancel button now notifies admin
  */
 
 require("dotenv").config();
@@ -26,7 +27,7 @@ if (!botToken) {
 // ⭐ Your Telegram numeric ID from @userinfobot
 const ADMIN_ID = 6569201830; // johnkappy
 
-// 💰 Pricing constants (UPDATED)
+// 💰 Pricing constants
 const CHECK_PRICE_KES = 80;
 const RECHECK_PRICE_KES = 70;
 const GPTZERO_PRICE_KES = 40;
@@ -68,7 +69,6 @@ const pendingUnderpaymentFollowup = {};
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 00:00–02:59 UTC
   return currentTime >= "00:00" && currentTime < "03:00";
 }
 
@@ -284,10 +284,27 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   );
 });
 
+// ✅ UPDATED: Cancel button now notifies admin
 bot.hears(KEY_CANCEL, async (ctx) => {
   if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  delete pendingUnderpaymentFollowup[ctx.from.id];
+  const user = ctx.from;
+
+  delete pendingUnderpaymentFollowup[user.id];
+
+  // Notify admin
+  try {
+    await bot.telegram.sendMessage(
+      ADMIN_ID,
+      "❌ User cancelled submission:\n" +
+        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
+        `Username: @${user.username || "N/A"}\n` +
+        `User ID: ${user.id}\n` +
+        `Time (EAT): ${moment().utcOffset(3).format("YYYY-MM-DD HH:mm")}`
+    );
+  } catch (err) {
+    console.error("Error notifying admin about cancellation:", err.message);
+  }
 
   await ctx.reply(
     "❌ Current submission cancelled.\n\n" +
@@ -557,7 +574,7 @@ bot.on("text", async (ctx) => {
 
   if (isPaymentToYou) {
     try {
-      if (underpayment) {
+      if (amount != null && amount < MIN_PAYMENT_KES) {
         pendingUnderpaymentFollowup[user.id] = Date.now();
 
         if (mentionsRecheck) {
