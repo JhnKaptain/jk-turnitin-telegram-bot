@@ -1,11 +1,11 @@
 /**
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * UPDATED:
- * ✅ Inactive period: 03:00–06:00 EAT
+ * ✅ Inactive period: 03:30–05:59 EAT
  * ✅ CHECK price: 80 KES
  * ✅ RECHECK price: 70 KES
  * ✅ MIN_PAYMENT_KES: 80 (baseline for new checks)
- * ✅ NEW: Cancel button now notifies admin
+ * ✅ Cancel button notifies admin
  */
 
 require("dotenv").config();
@@ -65,11 +65,12 @@ const pendingUnderpaymentFollowup = {};
 
 /**
  * ✅ Inactive period:
- * 03:00–06:00 EAT  =  00:00–03:00 UTC
+ * 03:30–05:59 EAT  =  00:30–02:59 UTC
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  return currentTime >= "00:00" && currentTime < "03:00";
+  // Inactive from 00:30–02:59 UTC
+  return currentTime >= "00:30" && currentTime < "03:00";
 }
 
 // ✅ Main keyboard helper
@@ -284,7 +285,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   );
 });
 
-// ✅ UPDATED: Cancel button now notifies admin
+// ✅ Cancel button notifies admin
 bot.hears(KEY_CANCEL, async (ctx) => {
   if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
@@ -292,7 +293,6 @@ bot.hears(KEY_CANCEL, async (ctx) => {
 
   delete pendingUnderpaymentFollowup[user.id];
 
-  // Notify admin
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -376,6 +376,7 @@ bot.on("document", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
+  // ADMIN: send doc to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -407,6 +408,7 @@ bot.on("document", async (ctx) => {
     return;
   }
 
+  // USER: forward doc to admin
   console.log("📄 Document from user:", user.id);
 
   try {
@@ -422,6 +424,7 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
+  // Prompt for payment
   await replyMarkdownSafe(
     ctx,
     "📄 We’ve received your file.\n\n" +
@@ -444,6 +447,7 @@ bot.on("photo", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
+  // ADMIN: send photo to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -476,6 +480,7 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
+  // USER: forward photo to admin
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   try {
@@ -545,6 +550,7 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
+  // Follow-up mode: user replies only "recheck" or "top up"
   if (!looksLikeMpesa && isUnderpaymentFollowupActive(user.id) && (mentionsRecheck || mentionsTopUp)) {
     try {
       if (mentionsRecheck) {
@@ -572,6 +578,7 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  // Payment to you → auto replies
   if (isPaymentToYou) {
     try {
       if (amount != null && amount < MIN_PAYMENT_KES) {
@@ -622,6 +629,7 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  // Fallback: looks like M-PESA but recipient not matched
   if (looksLikeMpesa && !isPaymentToYou) {
     await ctx.reply(
       "✅ We’ve received your M-PESA message.\n\n" +
