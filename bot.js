@@ -6,7 +6,7 @@
  * ✅ RECHECK price: 70 KES
  * ✅ MIN_PAYMENT_KES: 80 (baseline for new checks)
  * ✅ Cancel button notifies admin
- * ✅ FIX: Bot name ONLINE/OFFLINE now stays in sync (uses callApi("setMyName"))
+ * ✅ FIX: ONLINE/OFFLINE name sync now RESPECTS Telegram rate limits (429 retry_after)
  */
 
 require("dotenv").config();
@@ -92,10 +92,40 @@ async function replyMarkdownSafe(ctx, message, extra = {}) {
   }
 }
 
-// 🔄 Auto-update bot name to show ONLINE / OFFLINE in Telegram
+// =====================
+// BOT NAME ONLINE/OFFLINE (RATE-LIMIT SAFE)
+// =====================
 let lastOnlineStatus = null; // "ONLINE" or "OFFLINE"
 
+// throttle attempts so we don't spam Telegram even on many messages
+const BOT_NAME_MIN_ATTEMPT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+let lastBotNameAttemptAt = 0;
+
+// when Telegram returns 429 retry_after, we must wait
+let nextBotNameAllowedAt = 0;
+
+function extractRetryAfterSeconds(err) {
+  // Telegraf sometimes provides: err.response.parameters.retry_after
+  const ra = err?.response?.parameters?.retry_after;
+  if (typeof ra === "number") return ra;
+
+  // fallback: parse from message "... retry after 82883"
+  const msg = (err?.message || "").toLowerCase();
+  const m = msg.match(/retry after\s+(\d+)/i);
+  if (m) return parseInt(m[1], 10);
+
+  return null;
+}
+
 async function updateBotNameForCurrentStatus() {
+  const now = Date.now();
+
+  // Respect retry_after cooldown
+  if (now < nextBotNameAllowedAt) return;
+
+  // Throttle attempts
+  if (now - lastBotNameAttemptAt < BOT_NAME_MIN_ATTEMPT_INTERVAL_MS) return;
+
   const inactive = isBotInactivePeriod();
   const desiredStatus = inactive ? "OFFLINE" : "ONLINE";
 
@@ -104,18 +134,29 @@ async function updateBotNameForCurrentStatus() {
   const baseName = "JK Turnitin Reports";
   const newName = `${baseName} (${desiredStatus})`;
 
+  lastBotNameAttemptAt = now;
+
   try {
-    // ✅ FIX: Use direct Bot API call (works reliably across Telegraf versions)
+    // ✅ Reliable across Telegraf versions
     await bot.telegram.callApi("setMyName", { name: newName });
 
     lastOnlineStatus = desiredStatus;
     console.log(`✅ Bot name updated to: ${newName}`);
   } catch (err) {
+    const retryAfter = extractRetryAfterSeconds(err);
+    if (retryAfter) {
+      nextBotNameAllowedAt = Date.now() + retryAfter * 1000;
+      console.error(
+        `❌ Error updating bot name (429). Will retry after ${retryAfter}s at ${new Date(nextBotNameAllowedAt).toISOString()}`
+      );
+      return;
+    }
+
     console.error("❌ Error updating bot name:", err?.message || err);
   }
 }
 
-// ✅ Keep ONLINE/OFFLINE synced on EVERY incoming update
+// ✅ Keep ONLINE/OFFLINE synced on EVERY incoming update (but throttled + 429-safe)
 bot.use(async (ctx, next) => {
   try {
     await updateBotNameForCurrentStatus();
@@ -127,7 +168,7 @@ bot.use(async (ctx, next) => {
 
 // Reply when user writes during inactive hours
 async function notifyInactivePeriod(ctx) {
-  // ✅ Force a sync right before sending the inactive message
+  // best-effort name sync (still throttled + 429-safe)
   await updateBotNameForCurrentStatus();
 
   await replyMarkdownSafe(
@@ -392,7 +433,6 @@ bot.on("document", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // ADMIN: send doc to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -424,7 +464,6 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  // USER: forward doc to admin
   console.log("📄 Document from user:", user.id);
 
   try {
@@ -440,7 +479,6 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // Prompt for payment
   await replyMarkdownSafe(
     ctx,
     "📄 We’ve received your file.\n\n" +
@@ -463,7 +501,6 @@ bot.on("photo", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
-  // ADMIN: send photo to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -496,7 +533,6 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // USER: forward photo to admin
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   try {
@@ -561,7 +597,6 @@ bot.on("text", async (ctx) => {
     console.error("Error forwarding text to admin:", err.message);
   }
 
-  // Follow-up mode: user replies only "recheck" or "top up"
   if (!looksLikeMpesa && isUnderpaymentFollowupActive(user.id) && (mentionsRecheck || mentionsTopUp)) {
     try {
       if (mentionsRecheck) {
@@ -589,7 +624,6 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // Payment to you → auto replies
   if (isPaymentToYou) {
     try {
       if (amount != null && amount < MIN_PAYMENT_KES) {
@@ -640,7 +674,6 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // Fallback: looks like M-PESA but recipient not matched
   if (looksLikeMpesa && !isPaymentToYou) {
     await ctx.reply(
       "✅ We’ve received your M-PESA message.\n\n" +
