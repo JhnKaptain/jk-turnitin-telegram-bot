@@ -6,7 +6,7 @@
  * ✅ RECHECK price: 70 KES
  * ✅ MIN_PAYMENT_KES: 80 (baseline for new checks)
  * ✅ Cancel button notifies admin
- * ✅ FIX: Bot name ONLINE/OFFLINE now stays in sync even if Render sleeps (sync on every update)
+ * ✅ FIX: Bot name ONLINE/OFFLINE now stays in sync (uses callApi("setMyName"))
  */
 
 require("dotenv").config();
@@ -105,26 +105,31 @@ async function updateBotNameForCurrentStatus() {
   const newName = `${baseName} (${desiredStatus})`;
 
   try {
-    await bot.telegram.setMyName(newName);
+    // ✅ FIX: Use direct Bot API call (works reliably across Telegraf versions)
+    await bot.telegram.callApi("setMyName", { name: newName });
+
     lastOnlineStatus = desiredStatus;
     console.log(`✅ Bot name updated to: ${newName}`);
   } catch (err) {
-    console.error("Error updating bot name:", err.message);
+    console.error("❌ Error updating bot name:", err?.message || err);
   }
 }
 
-// ✅ FIX: Keep ONLINE/OFFLINE synced on EVERY incoming update (handles Render sleep)
+// ✅ Keep ONLINE/OFFLINE synced on EVERY incoming update
 bot.use(async (ctx, next) => {
   try {
     await updateBotNameForCurrentStatus();
   } catch (err) {
-    console.error("Error syncing bot name in middleware:", err.message);
+    console.error("Error syncing bot name in middleware:", err?.message || err);
   }
   return next();
 });
 
 // Reply when user writes during inactive hours
 async function notifyInactivePeriod(ctx) {
+  // ✅ Force a sync right before sending the inactive message
+  await updateBotNameForCurrentStatus();
+
   await replyMarkdownSafe(
     ctx,
     "⏳ Turnitin checks are paused right now.\n" +
