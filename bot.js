@@ -6,6 +6,7 @@
  * ✅ RECHECK price: 70 KES
  * ✅ MIN_PAYMENT_KES: 80 (baseline for new checks)
  * ✅ Cancel button notifies admin
+ * ✅ FIX: Bot name ONLINE/OFFLINE now stays in sync even if Render sleeps (sync on every update)
  */
 
 require("dotenv").config();
@@ -111,6 +112,16 @@ async function updateBotNameForCurrentStatus() {
     console.error("Error updating bot name:", err.message);
   }
 }
+
+// ✅ FIX: Keep ONLINE/OFFLINE synced on EVERY incoming update (handles Render sleep)
+bot.use(async (ctx, next) => {
+  try {
+    await updateBotNameForCurrentStatus();
+  } catch (err) {
+    console.error("Error syncing bot name in middleware:", err.message);
+  }
+  return next();
+});
 
 // Reply when user writes during inactive hours
 async function notifyInactivePeriod(ctx) {
@@ -524,15 +535,10 @@ bot.on("text", async (ctx) => {
   const { isPaymentToYou, amount, looksLikeMpesa } = parseMpesaPayment(text);
 
   let label = "💬 Message";
-  let underpayment = false;
 
   if (isPaymentToYou) {
-    if (amount != null && amount < MIN_PAYMENT_KES) {
-      label = "⚠️ Possible underpayment";
-      underpayment = true;
-    } else {
-      label = "💰 Payment text";
-    }
+    if (amount != null && amount < MIN_PAYMENT_KES) label = "⚠️ Possible underpayment";
+    else label = "💰 Payment text";
   } else if (looksLikeMpesa) {
     label = "⚠️ M-PESA text (recipient not matched)";
   }
