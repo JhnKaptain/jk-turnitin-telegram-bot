@@ -7,6 +7,9 @@
  * ✅ MIN_PAYMENT_KES: 80 (baseline for new checks)
  * ✅ Cancel button notifies admin
  * ✅ FIX: ONLINE/OFFLINE name sync now RESPECTS Telegram rate limits (429 retry_after)
+ * ✅ NEW: Admin notifications now include clickable copy-ready commands:
+ *    `/file2 USER_ID` and `/reply USER_ID`
+ * ✅ NEW: Admin notifications show what message the user is replying to (if applicable)
  */
 
 require("dotenv").config();
@@ -89,6 +92,59 @@ async function replyMarkdownSafe(ctx, message, extra = {}) {
     await ctx.reply(message, { parse_mode: "Markdown", ...extra });
   } catch {
     await ctx.reply(message, { ...extra });
+  }
+}
+
+// Basic safe text for admin (avoid markdown breaking)
+function safeText(s) {
+  return (s || "").toString();
+}
+
+// Show which message user is replying to (helps you know the exact file/message)
+function getReplyContextLine(message) {
+  const r = message?.reply_to_message;
+  if (!r) return "";
+
+  // Document
+  if (r.document) {
+    const name = r.document.file_name || "document";
+    return `\n↩️ Replying to: document "${safeText(name)}"`;
+  }
+
+  // Photo
+  if (r.photo) {
+    const cap = r.caption ? ` (caption: "${safeText(r.caption).slice(0, 60)}")` : "";
+    return `\n↩️ Replying to: photo${cap}`;
+  }
+
+  // Text
+  if (typeof r.text === "string" && r.text.trim()) {
+    return `\n↩️ Replying to: "${safeText(r.text).slice(0, 80)}"`;
+  }
+
+  // Caption-only messages (some forwards/media)
+  if (typeof r.caption === "string" && r.caption.trim()) {
+    return `\n↩️ Replying to caption: "${safeText(r.caption).slice(0, 80)}"`;
+  }
+
+  return "\n↩️ Replying to a previous message";
+}
+
+// Build clickable admin commands
+function adminQuickCommands(userId) {
+  return (
+    "\n\nQuick commands (tap & copy):\n" +
+    `\`/file2 ${userId}\`\n` +
+    `\`/reply ${userId} \``
+  );
+}
+
+// Send message to admin (Markdown)
+async function sendAdminMessage(text) {
+  try {
+    await bot.telegram.sendMessage(ADMIN_ID, text, { parse_mode: "Markdown" });
+  } catch (err) {
+    console.error("Error sending message to admin:", err?.message || err);
   }
 }
 
@@ -295,17 +351,15 @@ bot.start(async (ctx) => {
 
   await replyMarkdownSafe(ctx, WELCOME_MESSAGE, { reply_markup: mainKeyboard() });
 
-  try {
-    await bot.telegram.sendMessage(
-      ADMIN_ID,
-      `🔥 New user started the bot:\n` +
-        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
-        `Username: @${user.username || "N/A"}\n` +
-        `User ID: ${user.id}`
-    );
-  } catch (err) {
-    console.error("Error notifying admin about new user:", err.message);
-  }
+  // Notify admin + include quick commands
+  const header =
+    `🔥 New user started the bot:\n` +
+    `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
+    `Username: @${safeText(user.username || "N/A")}\n` +
+    `User ID: ${user.id}` +
+    adminQuickCommands(user.id);
+
+  await sendAdminMessage(header);
 });
 
 // =====================
@@ -350,18 +404,16 @@ bot.hears(KEY_CANCEL, async (ctx) => {
 
   delete pendingUnderpaymentFollowup[user.id];
 
-  try {
-    await bot.telegram.sendMessage(
-      ADMIN_ID,
-      "❌ User cancelled submission:\n" +
-        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
-        `Username: @${user.username || "N/A"}\n` +
-        `User ID: ${user.id}\n` +
-        `Time (EAT): ${moment().utcOffset(3).format("YYYY-MM-DD HH:mm")}`
-    );
-  } catch (err) {
-    console.error("Error notifying admin about cancellation:", err.message);
-  }
+  // Notify admin + include quick commands
+  const msg =
+    "❌ User cancelled submission:\n" +
+    `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
+    `Username: @${safeText(user.username || "N/A")}\n` +
+    `User ID: ${user.id}\n` +
+    `Time (EAT): ${moment().utcOffset(3).format("YYYY-MM-DD HH:mm")}` +
+    adminQuickCommands(user.id);
+
+  await sendAdminMessage(msg);
 
   await ctx.reply(
     "❌ Current submission cancelled.\n\n" +
@@ -433,13 +485,13 @@ bot.on("document", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
+  // ADMIN: send doc to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
       await replyMarkdownSafe(
         ctx,
-        "To send this file to a user, first run:\n" +
-          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
+        "To send this file to a user, first run:\n" + "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
       );
       return;
     }
@@ -464,21 +516,28 @@ bot.on("document", async (ctx) => {
     return;
   }
 
+  // USER: forward doc to admin
   console.log("📄 Document from user:", user.id);
 
+  const replyContext = getReplyContextLine(ctx.message);
+
+  const header =
+    `📨 Document from user:\n` +
+    `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
+    `Username: @${safeText(user.username || "N/A")}\n` +
+    `User ID: ${user.id}` +
+    replyContext +
+    adminQuickCommands(user.id);
+
+  await sendAdminMessage(header);
+
   try {
-    await bot.telegram.sendMessage(
-      ADMIN_ID,
-      `📨 Document from user:\n` +
-        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
-        `Username: @${user.username || "N/A"}\n` +
-        `User ID: ${user.id}`
-    );
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding document to admin:", err.message);
   }
 
+  // Prompt for payment
   await replyMarkdownSafe(
     ctx,
     "📄 We’ve received your file.\n\n" +
@@ -501,13 +560,13 @@ bot.on("photo", async (ctx) => {
 
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
+  // ADMIN: send photo to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
       await replyMarkdownSafe(
         ctx,
-        "To send this photo to a user, first run:\n" +
-          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
+        "To send this photo to a user, first run:\n" + "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
       );
       return;
     }
@@ -533,16 +592,22 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
+  // USER: forward photo to admin
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
+  const replyContext = getReplyContextLine(ctx.message);
+
+  const header =
+    `🖼️ Screenshot/Photo from user:\n` +
+    `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
+    `Username: @${safeText(user.username || "N/A")}\n` +
+    `User ID: ${user.id}` +
+    replyContext +
+    adminQuickCommands(user.id);
+
+  await sendAdminMessage(header);
+
   try {
-    await bot.telegram.sendMessage(
-      ADMIN_ID,
-      `🖼️ Screenshot from user:\n` +
-        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
-        `Username: @${user.username || "N/A"}\n` +
-        `User ID: ${user.id}`
-    );
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch (err) {
     console.error("Error forwarding photo to admin:", err.message);
@@ -576,7 +641,6 @@ bot.on("text", async (ctx) => {
   const { isPaymentToYou, amount, looksLikeMpesa } = parseMpesaPayment(text);
 
   let label = "💬 Message";
-
   if (isPaymentToYou) {
     if (amount != null && amount < MIN_PAYMENT_KES) label = "⚠️ Possible underpayment";
     else label = "💰 Payment text";
@@ -584,19 +648,20 @@ bot.on("text", async (ctx) => {
     label = "⚠️ M-PESA text (recipient not matched)";
   }
 
-  try {
-    await bot.telegram.sendMessage(
-      ADMIN_ID,
-      `${label} from user:\n` +
-        `Name: ${user.first_name || ""} ${user.last_name || ""}\n` +
-        `Username: @${user.username || "N/A"}\n` +
-        `User ID: ${user.id}\n\n` +
-        text
-    );
-  } catch (err) {
-    console.error("Error forwarding text to admin:", err.message);
-  }
+  const replyContext = getReplyContextLine(ctx.message);
 
+  const adminBody =
+    `${label} from user:\n` +
+    `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
+    `Username: @${safeText(user.username || "N/A")}\n` +
+    `User ID: ${user.id}` +
+    replyContext +
+    adminQuickCommands(user.id) +
+    `\n\n${safeText(text)}`;
+
+  await sendAdminMessage(adminBody);
+
+  // Follow-up mode: user replies only "recheck" or "top up"
   if (!looksLikeMpesa && isUnderpaymentFollowupActive(user.id) && (mentionsRecheck || mentionsTopUp)) {
     try {
       if (mentionsRecheck) {
@@ -624,6 +689,7 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  // Payment to you → auto replies
   if (isPaymentToYou) {
     try {
       if (amount != null && amount < MIN_PAYMENT_KES) {
@@ -674,6 +740,7 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  // Fallback: looks like M-PESA but recipient not matched
   if (looksLikeMpesa && !isPaymentToYou) {
     await ctx.reply(
       "✅ We’ve received your M-PESA message.\n\n" +
