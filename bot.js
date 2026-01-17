@@ -1,15 +1,16 @@
 /**
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * UPDATED:
- * ✅ Inactive period: 03:30–05:59 EAT
+ * ✅ Inactive period: 02:00–05:59 EAT
  * ✅ CHECK price: 80 KES
  * ✅ RECHECK price: 70 KES
  * ✅ MIN_PAYMENT_KES: 80 (baseline for new checks)
  * ✅ Cancel button notifies admin
  * ✅ FIX: ONLINE/OFFLINE name sync now RESPECTS Telegram rate limits (429 retry_after)
- * ✅ NEW: Admin notifications now include clickable copy-ready commands:
- *    `/file2 USER_ID` and `/reply USER_ID`
- * ✅ NEW: Admin notifications show what message the user is replying to (if applicable)
+ * ✅ Admin notifications include copy-ready commands: `/file2 USER_ID` and `/reply USER_ID`
+ * ✅ Admin notifications show what message the user is replying to (if applicable)
+ * ✅ REMOVED: GPTZero reports/promos (Turnitin only)
+ * ✅ Inactive message now says: "Voice call on WhatsApp 0701730921 if so urgent"
  */
 
 require("dotenv").config();
@@ -31,10 +32,9 @@ if (!botToken) {
 // ⭐ Your Telegram numeric ID from @userinfobot
 const ADMIN_ID = 6569201830; // johnkappy
 
-// 💰 Pricing constants
+// 💰 Pricing constants (Turnitin only)
 const CHECK_PRICE_KES = 80;
 const RECHECK_PRICE_KES = 70;
-const GPTZERO_PRICE_KES = 40;
 
 // Minimum payment to auto-accept as valid (baseline for new checks)
 const MIN_PAYMENT_KES = 80;
@@ -68,13 +68,36 @@ const pendingUnderpaymentFollowup = {};
 // =====================
 
 /**
- * ✅ Inactive period:
- * 03:30–05:59 EAT  =  00:30–02:59 UTC
+ * ✅ INACTIVE PERIOD CONFIG (EDIT HERE WHEN YOU WANT TO CHANGE TIMES)
+ *
+ * Desired inactive period in EAT: 02:00–05:59
+ * EAT = UTC+3
+ * So UTC inactive = 23:00–02:59
+ *
+ * NOTE: This is the ONLY place you change inactive time.
+ */
+const INACTIVE_START_UTC = "23:00"; // 02:00 EAT
+const INACTIVE_END_UTC = "03:00";   // 05:59 EAT ends at 02:59 UTC (so end is 03:00 exclusive)
+
+/**
+ * Returns true if current UTC time is inside inactive window.
+ * Handles windows that cross midnight (like 23:00 → 03:00).
+ */
+function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
+  // if window does NOT cross midnight
+  if (startHHMM < endHHMM) {
+    return currentHHMM >= startHHMM && currentHHMM < endHHMM;
+  }
+  // crosses midnight (e.g., 23:00 to 03:00)
+  return currentHHMM >= startHHMM || currentHHMM < endHHMM;
+}
+
+/**
+ * ✅ Inactive period checker
  */
 function isBotInactivePeriod() {
   const currentTime = moment.utc().format("HH:mm"); // UTC time (00:00–23:59)
-  // Inactive from 00:30–02:59 UTC
-  return currentTime >= "00:30" && currentTime < "03:00";
+  return isTimeInWindowUTC(currentTime, INACTIVE_START_UTC, INACTIVE_END_UTC);
 }
 
 // ✅ Main keyboard helper
@@ -105,24 +128,20 @@ function getReplyContextLine(message) {
   const r = message?.reply_to_message;
   if (!r) return "";
 
-  // Document
   if (r.document) {
     const name = r.document.file_name || "document";
     return `\n↩️ Replying to: document "${safeText(name)}"`;
   }
 
-  // Photo
   if (r.photo) {
     const cap = r.caption ? ` (caption: "${safeText(r.caption).slice(0, 60)}")` : "";
     return `\n↩️ Replying to: photo${cap}`;
   }
 
-  // Text
   if (typeof r.text === "string" && r.text.trim()) {
     return `\n↩️ Replying to: "${safeText(r.text).slice(0, 80)}"`;
   }
 
-  // Caption-only messages (some forwards/media)
   if (typeof r.caption === "string" && r.caption.trim()) {
     return `\n↩️ Replying to caption: "${safeText(r.caption).slice(0, 80)}"`;
   }
@@ -161,11 +180,9 @@ let lastBotNameAttemptAt = 0;
 let nextBotNameAllowedAt = 0;
 
 function extractRetryAfterSeconds(err) {
-  // Telegraf sometimes provides: err.response.parameters.retry_after
   const ra = err?.response?.parameters?.retry_after;
   if (typeof ra === "number") return ra;
 
-  // fallback: parse from message "... retry after 82883"
   const msg = (err?.message || "").toLowerCase();
   const m = msg.match(/retry after\s+(\d+)/i);
   if (m) return parseInt(m[1], 10);
@@ -176,10 +193,7 @@ function extractRetryAfterSeconds(err) {
 async function updateBotNameForCurrentStatus() {
   const now = Date.now();
 
-  // Respect retry_after cooldown
   if (now < nextBotNameAllowedAt) return;
-
-  // Throttle attempts
   if (now - lastBotNameAttemptAt < BOT_NAME_MIN_ATTEMPT_INTERVAL_MS) return;
 
   const inactive = isBotInactivePeriod();
@@ -193,9 +207,7 @@ async function updateBotNameForCurrentStatus() {
   lastBotNameAttemptAt = now;
 
   try {
-    // ✅ Reliable across Telegraf versions
     await bot.telegram.callApi("setMyName", { name: newName });
-
     lastOnlineStatus = desiredStatus;
     console.log(`✅ Bot name updated to: ${newName}`);
   } catch (err) {
@@ -207,7 +219,6 @@ async function updateBotNameForCurrentStatus() {
       );
       return;
     }
-
     console.error("❌ Error updating bot name:", err?.message || err);
   }
 }
@@ -224,15 +235,13 @@ bot.use(async (ctx, next) => {
 
 // Reply when user writes during inactive hours
 async function notifyInactivePeriod(ctx) {
-  // best-effort name sync (still throttled + 429-safe)
   await updateBotNameForCurrentStatus();
 
   await replyMarkdownSafe(
     ctx,
     "⏳ Turnitin checks are paused right now.\n" +
       "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
-      `🧠 In the meantime, *GPTZero AI & Plagiarism reports* are available at *${GPTZERO_PRICE_KES} KES*.\n` +
-      "If urgent, WhatsApp us on *0701730921*.",
+      "If so urgent, *voice call on WhatsApp 0701730921*.",
     { reply_markup: mainKeyboard() }
   );
 }
@@ -297,9 +306,7 @@ setInterval(updateBotNameForCurrentStatus, 10 * 60 * 1000);
 // MESSAGES
 // =====================
 const WELCOME_MESSAGE = `
-JK Turnitin Reports Bot 
-
-What can this bot do?
+JK Turnitin Reports Bot
 
 This bot generates Turnitin plagiarism and AI reports.
 
@@ -351,7 +358,6 @@ bot.start(async (ctx) => {
 
   await replyMarkdownSafe(ctx, WELCOME_MESSAGE, { reply_markup: mainKeyboard() });
 
-  // Notify admin + include quick commands
   const header =
     `🔥 New user started the bot:\n` +
     `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
@@ -404,7 +410,6 @@ bot.hears(KEY_CANCEL, async (ctx) => {
 
   delete pendingUnderpaymentFollowup[user.id];
 
-  // Notify admin + include quick commands
   const msg =
     "❌ User cancelled submission:\n" +
     `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
@@ -537,7 +542,6 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
-  // Prompt for payment
   await replyMarkdownSafe(
     ctx,
     "📄 We’ve received your file.\n\n" +
@@ -546,7 +550,6 @@ bot.on("document", async (ctx) => {
       "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala) as a backup.\n" +
       "   Please use this option *only if the till option fails*.\n\n" +
       `💰 Price per check: *${CHECK_PRICE_KES} KES* (recheck *${RECHECK_PRICE_KES} KES*)\n` +
-      `🧠 *GPTZero AI report* also available on request at *${GPTZERO_PRICE_KES} KES*.\n` +
       "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
     { reply_markup: mainKeyboard() }
   );
@@ -592,7 +595,6 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // USER: forward photo to admin
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   const replyContext = getReplyContextLine(ctx.message);
