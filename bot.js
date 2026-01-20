@@ -2,9 +2,9 @@
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * UPDATED:
  * ✅ Inactive period: 02:00–05:59 EAT
- * ✅ CHECK price: 75 KES
- * ✅ RECHECK price: 70 KES
- * ✅ MIN_PAYMENT_KES: 75 (baseline for new checks)
+ * ✅ CHECK price: 70 KES
+ * ✅ RECHECK price: 65 KES
+ * ✅ MIN_PAYMENT_KES: 70 (baseline for new checks)
  * ✅ Cancel button notifies admin
  * ✅ FIX: ONLINE/OFFLINE name sync now RESPECTS Telegram rate limits (429 retry_after)
  * ✅ Admin notifications include copy-ready commands: `/file2 USER_ID` and `/reply USER_ID`
@@ -41,11 +41,11 @@ if (!botToken) {
 const ADMIN_ID = 6569201830; // johnkappy
 
 // 💰 Pricing constants (Turnitin only)
-const CHECK_PRICE_KES = 75;
-const RECHECK_PRICE_KES = 70;
+const CHECK_PRICE_KES = 70;
+const RECHECK_PRICE_KES = 65;
 
 // Minimum payment to auto-accept as valid (baseline for new checks)
-const MIN_PAYMENT_KES = 75;
+const MIN_PAYMENT_KES = 70;
 
 // Payment details (used for copy-friendly display in payment prompt)
 const MPESA_TILL = "6164915";
