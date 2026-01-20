@@ -11,6 +11,13 @@
  * ✅ Admin notifications show what message the user is replying to (if applicable)
  * ✅ REMOVED: GPTZero reports/promos (Turnitin only)
  * ✅ Inactive message: "Voice call on WhatsApp 0701730921 if so urgent"
+ *
+ * ✅ NEW FIX:
+ * During inactive period, users are still notified about resuming at 6:00 AM,
+ * BUT their documents/photos/text are STILL forwarded to admin, and admin can respond/send files normally.
+ *
+ * ✅ NEW:
+ * M-PESA Till + Phone are shown in code format for easy tap-to-copy.
  */
 
 require("dotenv").config();
@@ -38,6 +45,10 @@ const RECHECK_PRICE_KES = 70;
 
 // Minimum payment to auto-accept as valid (baseline for new checks)
 const MIN_PAYMENT_KES = 75;
+
+// Payment numbers (copy-friendly)
+const MPESA_TILL = "6164915";
+const MPESA_PHONE = "0741924396";
 
 // Webhook URL: Replace with your Render app URL
 const WEBHOOK_URL = "https://jk-turnitin-telegram-bot-1.onrender.com";
@@ -77,7 +88,7 @@ const pendingUnderpaymentFollowup = {};
  * NOTE: This is the ONLY place you change inactive time.
  */
 const INACTIVE_START_UTC = "23:00"; // 02:00 EAT
-const INACTIVE_END_UTC = "03:00"; // 05:59 EAT ends at 02:59 UTC (so end is 03:00 exclusive)
+const INACTIVE_END_UTC = "03:00"; // 05:59 EAT ends at 02:59 UTC (end is 03:00 exclusive)
 
 /**
  * Returns true if current UTC time is inside inactive window.
@@ -149,7 +160,7 @@ function getReplyContextLine(message) {
   return "\n↩️ Replying to a previous message";
 }
 
-// Build clickable admin commands
+// Build copy-ready admin commands
 function adminQuickCommands(userId) {
   return (
     "\n\nQuick commands (tap & copy):\n" +
@@ -274,8 +285,8 @@ function parseMpesaPayment(text) {
     lower.includes("you have paid");
 
   const hasYourName = lower.includes("john") && (lower.includes("makokha") || lower.includes("wanjala"));
-  const hasTillNumber = lower.includes("6164915");
-  const hasYourPhone = lower.includes("0741924396") || lower.includes("741924396");
+  const hasTillNumber = lower.includes(MPESA_TILL);
+  const hasYourPhone = lower.includes(MPESA_PHONE) || lower.includes(MPESA_PHONE.replace(/^0/, "")); // allow missing leading 0
 
   const isPaymentToYou = hasConfirmed && hasPaidOrSent && (hasYourName || hasTillNumber || hasYourPhone);
 
@@ -305,25 +316,22 @@ setInterval(updateBotNameForCurrentStatus, 10 * 60 * 1000);
 // =====================
 // MESSAGES
 // =====================
-const WELCOME_MESSAGE = `
-JK Turnitin Reports Bot
-
-This bot generates Turnitin plagiarism and AI reports.
-
-✅ Lipa Na Mpesa Till Number: 6164915
-📱 If you cannot use the till, you may *Send Money* to 0741924396 (John Wanjala).
-   Please use this option *only if the till option fails*.
-
-📌 Instructions:
-1️⃣ Send your document here as a file (not as a photo).
-2️⃣ Send your Mpesa payment text or screenshot.
-3️⃣ Wait for confirmation and then receive your report.
-
-💰 Pricing
-• Price / check: ${CHECK_PRICE_KES} KES
-• Recheck: ${RECHECK_PRICE_KES} KES
-• No bargaining.
-`;
+const WELCOME_MESSAGE =
+  "JK Turnitin Reports Bot\n\n" +
+  "This bot generates Turnitin plagiarism and AI reports.\n\n" +
+  "✅ Lipa Na Mpesa Till Number:\n" +
+  `\`${MPESA_TILL}\`\n\n` +
+  "📱 If you cannot use the till, you may *Send Money* to:\n" +
+  `\`${MPESA_PHONE}\` (John Wanjala)\n` +
+  "   Please use this option *only if the till option fails*.\n\n" +
+  "📌 Instructions:\n" +
+  "1️⃣ Send your document here as a file (not as a photo).\n" +
+  "2️⃣ Send your Mpesa payment text or screenshot.\n" +
+  "3️⃣ Wait for confirmation and then receive your report.\n\n" +
+  "💰 Pricing\n" +
+  `• Price / check: ${CHECK_PRICE_KES} KES\n` +
+  `• Recheck: ${RECHECK_PRICE_KES} KES\n` +
+  "• No bargaining.\n";
 
 // =====================
 // /start
@@ -331,6 +339,7 @@ This bot generates Turnitin plagiarism and AI reports.
 bot.start(async (ctx) => {
   const user = ctx.from;
 
+  // Users get offline notice during inactive; admin still works
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
     await notifyInactivePeriod(ctx);
     return;
@@ -394,9 +403,10 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
       "2️⃣ Either:\n" +
       "   • *Forward* the payment SMS here, or\n" +
       "   • Take a *screenshot* and send it here as a photo.\n\n" +
-      "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-      "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala).\n" +
-      "   Please use this option *only if the till option fails*.\n\n" +
+      "✅ Lipa Na Mpesa Till Number:\n" +
+      `\`${MPESA_TILL}\`\n\n` +
+      "📱 Backup (only if till fails): Send Money to:\n" +
+      `\`${MPESA_PHONE}\` (John Wanjala)\n\n` +
       `💰 Price / check: *${CHECK_PRICE_KES} KES*  |  Recheck: *${RECHECK_PRICE_KES} KES*`,
     { reply_markup: mainKeyboard() }
   );
@@ -488,9 +498,7 @@ bot.command("file2", async (ctx) => {
 bot.on("document", async (ctx) => {
   const user = ctx.from;
 
-  if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
-
-  // ADMIN: send doc to user
+  // ADMIN sending doc to user (allowed anytime)
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -521,11 +529,10 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  // USER: forward doc to admin
+  // USER sending doc: ALWAYS forward to admin (even during inactive)
   console.log("📄 Document from user:", user.id);
 
   const replyContext = getReplyContextLine(ctx.message);
-
   const header =
     `📨 Document from user:\n` +
     `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
@@ -542,12 +549,21 @@ bot.on("document", async (ctx) => {
     console.error("Error forwarding document to admin:", err.message);
   }
 
+  // If inactive: user only gets offline notice (no payment prompting)
+  if (isBotInactivePeriod()) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
+
+  // Active hours: prompt for payment (copy-friendly numbers)
   await replyMarkdownSafe(
     ctx,
     "📄 We’ve received your file.\n\n" +
       "Now please send your *Mpesa payment* text or screenshot.\n\n" +
-      "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
-      "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala) as a backup.\n" +
+      "✅ Lipa Na Mpesa Till Number:\n" +
+      `\`${MPESA_TILL}\`\n\n` +
+      "📱 Backup (only if till fails): Send Money to:\n" +
+      `\`${MPESA_PHONE}\` (John Wanjala)\n` +
       "   Please use this option *only if the till option fails*.\n\n" +
       `💰 Price per check: *${CHECK_PRICE_KES} KES* (recheck *${RECHECK_PRICE_KES} KES*)\n` +
       "Once payment is confirmed, your Turnitin AI & Plag report will be processed.",
@@ -561,9 +577,7 @@ bot.on("document", async (ctx) => {
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
 
-  if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
-
-  // ADMIN: send photo to user
+  // ADMIN sending photo to user (allowed anytime)
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -595,10 +609,10 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
+  // USER sending photo: ALWAYS forward to admin (even during inactive)
   console.log("🖼️ Photo from user (likely screenshot):", user.id);
 
   const replyContext = getReplyContextLine(ctx.message);
-
   const header =
     `🖼️ Screenshot/Photo from user:\n` +
     `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
@@ -615,6 +629,13 @@ bot.on("photo", async (ctx) => {
     console.error("Error forwarding photo to admin:", err.message);
   }
 
+  // If inactive: user only gets offline notice
+  if (isBotInactivePeriod()) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
+
+  // Active hours: normal acknowledgement
   await ctx.reply(
     "🖼️ We’ve received your screenshot.\n\n" +
       "If it is a payment screenshot, it will be reviewed and confirmed shortly.\n" +
@@ -631,9 +652,6 @@ bot.on("text", async (ctx) => {
   const text = ctx.message.text || "";
 
   if (text.startsWith("/")) return;
-
-  if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
-
   if (user.id === ADMIN_ID) return;
 
   const lowered = text.toLowerCase();
@@ -661,7 +679,14 @@ bot.on("text", async (ctx) => {
     adminQuickCommands(user.id) +
     `\n\n${safeText(text)}`;
 
+  // ✅ ALWAYS forward text to admin (even during inactive)
   await sendAdminMessage(adminBody);
+
+  // If inactive: user only gets offline notice (no payment flow)
+  if (isBotInactivePeriod()) {
+    await notifyInactivePeriod(ctx);
+    return;
+  }
 
   // Follow-up mode: user replies only "recheck" or "top up"
   if (!looksLikeMpesa && isUnderpaymentFollowupActive(user.id) && (mentionsRecheck || mentionsTopUp)) {
