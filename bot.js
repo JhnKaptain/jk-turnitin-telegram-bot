@@ -2,15 +2,15 @@
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * UPDATED:
  * ✅ Inactive period: 02:00–05:59 EAT
- * ✅ CHECK price: 80 KES
+ * ✅ CHECK price: 75 KES
  * ✅ RECHECK price: 70 KES
- * ✅ MIN_PAYMENT_KES: 80 (baseline for new checks)
+ * ✅ MIN_PAYMENT_KES: 75 (baseline for new checks)
  * ✅ Cancel button notifies admin
  * ✅ FIX: ONLINE/OFFLINE name sync now RESPECTS Telegram rate limits (429 retry_after)
  * ✅ Admin notifications include copy-ready commands: `/file2 USER_ID` and `/reply USER_ID`
  * ✅ Admin notifications show what message the user is replying to (if applicable)
  * ✅ REMOVED: GPTZero reports/promos (Turnitin only)
- * ✅ Inactive message now says: "Voice call on WhatsApp 0701730921 if so urgent"
+ * ✅ Inactive message: "Voice call on WhatsApp 0701730921 if so urgent"
  */
 
 require("dotenv").config();
@@ -33,11 +33,11 @@ if (!botToken) {
 const ADMIN_ID = 6569201830; // johnkappy
 
 // 💰 Pricing constants (Turnitin only)
-const CHECK_PRICE_KES = 80;
+const CHECK_PRICE_KES = 75;
 const RECHECK_PRICE_KES = 70;
 
 // Minimum payment to auto-accept as valid (baseline for new checks)
-const MIN_PAYMENT_KES = 80;
+const MIN_PAYMENT_KES = 75;
 
 // Webhook URL: Replace with your Render app URL
 const WEBHOOK_URL = "https://jk-turnitin-telegram-bot-1.onrender.com";
@@ -77,7 +77,7 @@ const pendingUnderpaymentFollowup = {};
  * NOTE: This is the ONLY place you change inactive time.
  */
 const INACTIVE_START_UTC = "23:00"; // 02:00 EAT
-const INACTIVE_END_UTC = "03:00";   // 05:59 EAT ends at 02:59 UTC (so end is 03:00 exclusive)
+const INACTIVE_END_UTC = "03:00"; // 05:59 EAT ends at 02:59 UTC (so end is 03:00 exclusive)
 
 /**
  * Returns true if current UTC time is inside inactive window.
