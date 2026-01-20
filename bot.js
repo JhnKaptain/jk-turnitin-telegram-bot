@@ -12,12 +12,13 @@
  * ✅ REMOVED: GPTZero reports/promos (Turnitin only)
  * ✅ Inactive message: "Voice call on WhatsApp 0701730921 if so urgent"
  *
- * ✅ NEW FIX:
+ * ✅ NEW FIX (requested):
  * During inactive period, users are still notified about resuming at 6:00 AM,
  * BUT their documents/photos/text are STILL forwarded to admin, and admin can respond/send files normally.
  *
- * ✅ NEW:
- * M-PESA Till + Phone are shown in code format for easy tap-to-copy.
+ * ✅ NEW (requested):
+ * ONLY on the PAYMENT PROMPT (after receiving a file, during ACTIVE hours),
+ * show “tap & hold to copy” and put till/phone in code format for easy copy.
  */
 
 require("dotenv").config();
@@ -46,7 +47,7 @@ const RECHECK_PRICE_KES = 70;
 // Minimum payment to auto-accept as valid (baseline for new checks)
 const MIN_PAYMENT_KES = 75;
 
-// Payment numbers (copy-friendly)
+// Payment details (used for copy-friendly display in payment prompt)
 const MPESA_TILL = "6164915";
 const MPESA_PHONE = "0741924396";
 
@@ -88,7 +89,7 @@ const pendingUnderpaymentFollowup = {};
  * NOTE: This is the ONLY place you change inactive time.
  */
 const INACTIVE_START_UTC = "23:00"; // 02:00 EAT
-const INACTIVE_END_UTC = "03:00"; // 05:59 EAT ends at 02:59 UTC (end is 03:00 exclusive)
+const INACTIVE_END_UTC = "03:00"; // 05:59 EAT ends at 02:59 UTC (so end is 03:00 exclusive)
 
 /**
  * Returns true if current UTC time is inside inactive window.
@@ -160,7 +161,7 @@ function getReplyContextLine(message) {
   return "\n↩️ Replying to a previous message";
 }
 
-// Build copy-ready admin commands
+// Build clickable admin commands
 function adminQuickCommands(userId) {
   return (
     "\n\nQuick commands (tap & copy):\n" +
@@ -285,8 +286,8 @@ function parseMpesaPayment(text) {
     lower.includes("you have paid");
 
   const hasYourName = lower.includes("john") && (lower.includes("makokha") || lower.includes("wanjala"));
-  const hasTillNumber = lower.includes(MPESA_TILL);
-  const hasYourPhone = lower.includes(MPESA_PHONE) || lower.includes(MPESA_PHONE.replace(/^0/, "")); // allow missing leading 0
+  const hasTillNumber = lower.includes("6164915");
+  const hasYourPhone = lower.includes("0741924396") || lower.includes("741924396");
 
   const isPaymentToYou = hasConfirmed && hasPaidOrSent && (hasYourName || hasTillNumber || hasYourPhone);
 
@@ -316,22 +317,25 @@ setInterval(updateBotNameForCurrentStatus, 10 * 60 * 1000);
 // =====================
 // MESSAGES
 // =====================
-const WELCOME_MESSAGE =
-  "JK Turnitin Reports Bot\n\n" +
-  "This bot generates Turnitin plagiarism and AI reports.\n\n" +
-  "✅ Lipa Na Mpesa Till Number:\n" +
-  `\`${MPESA_TILL}\`\n\n` +
-  "📱 If you cannot use the till, you may *Send Money* to:\n" +
-  `\`${MPESA_PHONE}\` (John Wanjala)\n` +
-  "   Please use this option *only if the till option fails*.\n\n" +
-  "📌 Instructions:\n" +
-  "1️⃣ Send your document here as a file (not as a photo).\n" +
-  "2️⃣ Send your Mpesa payment text or screenshot.\n" +
-  "3️⃣ Wait for confirmation and then receive your report.\n\n" +
-  "💰 Pricing\n" +
-  `• Price / check: ${CHECK_PRICE_KES} KES\n` +
-  `• Recheck: ${RECHECK_PRICE_KES} KES\n` +
-  "• No bargaining.\n";
+const WELCOME_MESSAGE = `
+JK Turnitin Reports Bot
+
+This bot generates Turnitin plagiarism and AI reports.
+
+✅ Lipa Na Mpesa Till Number: 6164915
+📱 If you cannot use the till, you may *Send Money* to 0741924396 (John Wanjala).
+   Please use this option *only if the till option fails*.
+
+📌 Instructions:
+1️⃣ Send your document here as a file (not as a photo).
+2️⃣ Send your Mpesa payment text or screenshot.
+3️⃣ Wait for confirmation and then receive your report.
+
+💰 Pricing
+• Price / check: ${CHECK_PRICE_KES} KES
+• Recheck: ${RECHECK_PRICE_KES} KES
+• No bargaining.
+`;
 
 // =====================
 // /start
@@ -339,7 +343,6 @@ const WELCOME_MESSAGE =
 bot.start(async (ctx) => {
   const user = ctx.from;
 
-  // Users get offline notice during inactive; admin still works
   if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
     await notifyInactivePeriod(ctx);
     return;
@@ -403,10 +406,9 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
       "2️⃣ Either:\n" +
       "   • *Forward* the payment SMS here, or\n" +
       "   • Take a *screenshot* and send it here as a photo.\n\n" +
-      "✅ Lipa Na Mpesa Till Number:\n" +
-      `\`${MPESA_TILL}\`\n\n` +
-      "📱 Backup (only if till fails): Send Money to:\n" +
-      `\`${MPESA_PHONE}\` (John Wanjala)\n\n` +
+      "✅ Lipa Na Mpesa Till Number: *6164915*\n" +
+      "📱 If you cannot use the till, you may *Send Money* to *0741924396* (John Wanjala).\n" +
+      "   Please use this option *only if the till option fails*.\n\n" +
       `💰 Price / check: *${CHECK_PRICE_KES} KES*  |  Recheck: *${RECHECK_PRICE_KES} KES*`,
     { reply_markup: mainKeyboard() }
   );
@@ -504,7 +506,8 @@ bot.on("document", async (ctx) => {
     if (!target) {
       await replyMarkdownSafe(
         ctx,
-        "To send this file to a user, first run:\n" + "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
+        "To send this file to a user, first run:\n" +
+          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
       );
       return;
     }
@@ -555,14 +558,14 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  // Active hours: prompt for payment (copy-friendly numbers)
+  // Active hours: prompt for payment  ✅ (ONLY PLACE with “tap & hold to copy”)
   await replyMarkdownSafe(
     ctx,
     "📄 We’ve received your file.\n\n" +
       "Now please send your *Mpesa payment* text or screenshot.\n\n" +
-      "✅ Lipa Na Mpesa Till Number:\n" +
+      "✅ Lipa Na Mpesa Till Number *(tap & hold to copy)*:\n" +
       `\`${MPESA_TILL}\`\n\n` +
-      "📱 Backup (only if till fails): Send Money to:\n" +
+      "📱 Backup (only if till fails): Send Money to *(tap & hold to copy)*:\n" +
       `\`${MPESA_PHONE}\` (John Wanjala)\n` +
       "   Please use this option *only if the till option fails*.\n\n" +
       `💰 Price per check: *${CHECK_PRICE_KES} KES* (recheck *${RECHECK_PRICE_KES} KES*)\n` +
@@ -583,7 +586,8 @@ bot.on("photo", async (ctx) => {
     if (!target) {
       await replyMarkdownSafe(
         ctx,
-        "To send this photo to a user, first run:\n" + "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
+        "To send this photo to a user, first run:\n" +
+          "`/file <userId> Optional caption` or `/file2 <userId> Optional caption`"
       );
       return;
     }
