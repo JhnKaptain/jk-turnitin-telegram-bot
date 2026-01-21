@@ -1,3 +1,14 @@
+/**
+ * JK Turnitin Reports Bot — Telegraf + Express Webhook + IntaSend M-Pesa
+ * Includes:
+ * - Inactive period (02:00–05:59 EAT) with forwarding still enabled
+ * - Admin reply/file/file2 commands
+ * - CHECK/RECHECK selection after doc
+ * - IntaSend checkout link + optional STK push
+ * - IntaSend webhook confirmation
+ * - ✅ Readable IntaSend errors (no more Buffer hex)
+ */
+
 require("dotenv").config();
 
 const { Telegraf } = require("telegraf");
@@ -41,7 +52,7 @@ const KEY_SEND_DOC = "📄 Send Document";
 const KEY_PAYMENT_HELP = "💳 Payment (Link / STK)";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
-// Legacy note only
+// Legacy note only (not used for verification)
 const MPESA_PHONE = "0741924396";
 
 // =====================
@@ -54,6 +65,7 @@ const collection = intasend.collection();
 
 // =====================
 // STATE (in-memory)
+// NOTE: resets if Render restarts.
 // =====================
 // submissions[userId] = {
 //   userId, submissionId, type, amount, status,
@@ -66,8 +78,7 @@ const pendingFileTargets = {};
 
 // =====================
 // INACTIVE HOURS
-// 02:00–05:59 EAT => 23:00–02:59 UTC
-// end is 03:00 exclusive
+// 02:00–05:59 EAT => 23:00–02:59 UTC, end is 03:00 exclusive
 // =====================
 const INACTIVE_START_UTC = "23:00";
 const INACTIVE_END_UTC = "03:00";
@@ -166,6 +177,12 @@ function normalizeKenyanPhone(input) {
   return null;
 }
 
+// ✅ Turn Buffer/odd SDK errors into readable text
+function readableErr(err) {
+  const raw = err?.response?.data || err?.body || err?.message || err;
+  return Buffer.isBuffer(raw) ? raw.toString("utf8") : raw;
+}
+
 // =====================
 // BOT NAME ONLINE/OFFLINE (RATE LIMIT SAFE)
 // =====================
@@ -220,31 +237,41 @@ bot.use(async (ctx, next) => {
 // INTASEND PAYMENT HELPERS
 // =====================
 async function createMpesaCheckoutLink(submission) {
-  const resp = await collection.charge({
-    first_name: "Telegram",
-    last_name: "User",
-    email: `${submission.userId}@telegram.local`,
-    host: WEBHOOK_URL,
-    amount: submission.amount,
-    currency: "KES",
-    api_ref: submission.apiRef,
-    method: "M-PESA",
-    redirect_url: `${WEBHOOK_URL}/paid`
-  });
+  try {
+    const resp = await collection.charge({
+      first_name: "Telegram",
+      last_name: "User",
+      email: `${submission.userId}@telegram.local`,
+      host: WEBHOOK_URL,
+      amount: submission.amount,
+      currency: "KES",
+      api_ref: submission.apiRef,
+      method: "M-PESA",
+      redirect_url: `${WEBHOOK_URL}/paid`
+    });
 
-  submission.invoiceId = resp.invoice_id || resp.id || submission.invoiceId;
-  submission.checkoutUrl = resp.url || resp.checkout_url || resp.link || resp.payment_url || null;
+    submission.invoiceId = resp.invoice_id || resp.id || submission.invoiceId;
+    submission.checkoutUrl = resp.url || resp.checkout_url || resp.link || resp.payment_url || null;
 
-  return submission.checkoutUrl;
+    return submission.checkoutUrl;
+  } catch (err) {
+    console.error("INTASEND CHARGE ERROR:", readableErr(err));
+    throw err;
+  }
 }
 
 async function sendStkPush(submission, phone254) {
-  return await collection.mpesaStkPush({
-    phone_number: phone254,
-    amount: submission.amount,
-    currency: "KES",
-    api_ref: submission.apiRef
-  });
+  try {
+    return await collection.mpesaStkPush({
+      phone_number: phone254,
+      amount: submission.amount,
+      currency: "KES",
+      api_ref: submission.apiRef
+    });
+  } catch (err) {
+    console.error("INTASEND STK ERROR:", readableErr(err));
+    throw err;
+  }
 }
 
 async function sendPaymentInstructions(ctx, submission) {
@@ -422,8 +449,10 @@ bot.on("callback_query", async (ctx) => {
     }
 
     const submission = submissions[user.id];
+
+    // ✅ Better message than "No pending submission"
     if (!submission || submission.status !== "WAITING_TYPE") {
-      await ctx.answerCbQuery("No pending submission.");
+      await ctx.answerCbQuery("This request expired. Please resend the document.", { show_alert: true });
       return;
     }
 
@@ -442,9 +471,10 @@ bot.on("callback_query", async (ctx) => {
     await ctx.answerCbQuery("Creating payment link...");
 
     const url = await createMpesaCheckoutLink(submission);
+
     if (!url) {
       submission.status = "ERROR";
-      await ctx.reply("❌ Failed to create link. Try again later.", { reply_markup: mainKeyboard() });
+      await ctx.reply("❌ Failed to create payment link. Try again later.", { reply_markup: mainKeyboard() });
       return;
     }
 
@@ -460,7 +490,7 @@ bot.on("callback_query", async (ctx) => {
         adminQuickCommands(user.id)
     );
   } catch (err) {
-    console.error("callback_query error:", err?.message || err);
+    console.error("callback_query error:", readableErr(err));
   }
 });
 
@@ -504,7 +534,7 @@ bot.on("document", async (ctx) => {
 
   try {
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
-  } catch (err) {}
+  } catch {}
 
   if (isBotInactivePeriod()) {
     await notifyInactivePeriod(ctx);
@@ -544,7 +574,7 @@ bot.on("document", async (ctx) => {
 });
 
 // =====================
-// PHOTO HANDLER (forward to admin)
+// PHOTO HANDLER
 // =====================
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
@@ -571,6 +601,7 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
+  // User photo => forward to admin always
   const replyContext = getReplyContextLine(ctx.message);
   await sendAdminMessage(
     `🖼️ Photo/Screenshot from user:\n` +
@@ -583,7 +614,7 @@ bot.on("photo", async (ctx) => {
 
   try {
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
-  } catch (err) {}
+  } catch {}
 
   if (isBotInactivePeriod()) {
     await notifyInactivePeriod(ctx);
@@ -673,6 +704,7 @@ app.post("/intasend/webhook", async (req, res) => {
   try {
     const payload = req.body || {};
 
+    // challenge verification
     if (payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
       return res.status(401).send("Invalid challenge");
     }
@@ -717,7 +749,7 @@ app.post("/intasend/webhook", async (req, res) => {
 
     return res.status(200).send("OK");
   } catch (err) {
-    console.error("IntaSend webhook error:", err?.message || err);
+    console.error("IntaSend webhook error:", readableErr(err));
     return res.status(200).send("OK");
   }
 });
