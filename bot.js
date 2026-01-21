@@ -2,12 +2,11 @@
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * + IntaSend STK Push (default) + Webhook confirmation
  *
- * FIXES INCLUDED:
- * ✅ Phone-number flow handled BEFORE forwarding to admin (so admin won’t receive the phone number)
- * ✅ STK Push is default (no checkout link needed)
- * ✅ IntaSend webhook FIX: supports GET/POST challenge + JSON/urlencoded bodies + robust parsing
- * ✅ Admin STK response is SHORT (no long JSON dump)
- * ✅ Payment confirmation sent to BOTH user + admin when state becomes COMPLETE
+ * FIXED:
+ * ✅ Removed broken req.on("data") rawBody middleware (it can hang requests)
+ * ✅ Use express verify() to capture rawBody safely
+ * ✅ IntaSend webhook supports GET challenge + POST JSON + POST form-urlencoded
+ * ✅ Payment COMPLETE notifies both user + admin
  */
 
 require("dotenv").config();
@@ -58,11 +57,8 @@ const intasend = new IntaSend(INTASEND_PUBLISHABLE_KEY, INTASEND_SECRET_KEY, INT
 const collection = intasend.collection();
 
 const pendingFileTargets = {};
-
-// userId -> { stage, docMsgId, kind, amount, api_ref, phone, paid, createdAt }
-const submissions = {};
-// api_ref -> { userId, kind, amount }
-const paymentRefs = {};
+const submissions = {}; // userId -> {stage, kind, amount, api_ref, phone, paid, createdAt}
+const paymentRefs = {}; // api_ref -> {userId, kind, amount}
 
 const STAGE_WAIT_TYPE = "WAIT_TYPE";
 const STAGE_WAIT_PHONE = "WAIT_PHONE";
@@ -104,11 +100,7 @@ function safeText(s) {
 }
 
 function adminQuickCommands(userId) {
-  return (
-    "\n\nQuick commands (tap & copy):\n" +
-    `\`/file2 ${userId}\`\n` +
-    `\`/reply ${userId} \``
-  );
+  return "\n\nQuick commands (tap & copy):\n" + `\`/file2 ${userId}\`\n` + `\`/reply ${userId} \``;
 }
 
 async function sendAdminMessage(text) {
@@ -149,54 +141,23 @@ function typeInlineKeyboard() {
 async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(
     ctx,
-    "⏳ Turnitin checks are paused right now.\n" +
-      "We’ll resume Turnitin reports at *6:00 AM EAT*.\n\n" +
-      "If so urgent, *voice call on WhatsApp 0701730921*.",
+    "⏳ Turnitin checks are paused right now.\nWe’ll resume Turnitin reports at *6:00 AM EAT*.\n\nIf so urgent, *voice call on WhatsApp 0701730921*.",
     { reply_markup: mainKeyboard() }
   );
 }
 
-// compact IntaSend response summary for admin
 function summarizeIntaSendResp(resp) {
   const id = resp?.id || "";
   const invoiceId = resp?.invoice?.invoice_id || resp?.invoice_id || "";
   const state = resp?.invoice?.state || resp?.state || "";
   const amount = resp?.invoice?.amount || resp?.amount || "";
   const currency = resp?.invoice?.currency || resp?.currency || "";
-
   const parts = [];
   if (id) parts.push(`id: ${id}`);
   if (invoiceId) parts.push(`invoice_id: ${invoiceId}`);
   if (state) parts.push(`state: ${state}`);
   if (amount) parts.push(`amount: ${amount}${currency ? ` ${currency}` : ""}`);
-
   return parts.length ? parts.join(" | ") : "(no summary fields)";
-}
-
-// robust payload getter (handles json, urlencoded, and raw string)
-function getWebhookPayload(req) {
-  let payload = req.body;
-
-  // If express gave us a raw string, try parse JSON
-  if (typeof payload === "string") {
-    try {
-      payload = JSON.parse(payload);
-    } catch {
-      payload = {};
-    }
-  }
-
-  // If body is empty but rawBody exists, try parse
-  if ((!payload || (typeof payload === "object" && Object.keys(payload).length === 0)) && req.rawBody) {
-    try {
-      payload = JSON.parse(req.rawBody);
-    } catch {
-      // ignore
-    }
-  }
-
-  if (!payload || typeof payload !== "object") payload = {};
-  return payload;
 }
 
 function extractApiRef(payload) {
@@ -211,7 +172,6 @@ function extractApiRef(payload) {
     payload.payload?.apiRef
   );
 }
-
 function extractState(payload) {
   return (
     payload.state ||
@@ -224,7 +184,6 @@ function extractState(payload) {
     payload.payload?.status
   );
 }
-
 function extractInvoiceId(payload) {
   return payload.invoice_id || payload.invoice?.invoice_id || payload.data?.invoice_id || payload.payload?.invoice_id || "";
 }
@@ -247,19 +206,12 @@ JK Turnitin Reports Bot
 bot.start(async (ctx) => {
   const user = ctx.from;
 
-  if (isBotInactivePeriod() && user.id !== ADMIN_ID) {
-    await notifyInactivePeriod(ctx);
-    return;
-  }
+  if (isBotInactivePeriod() && user.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
 
   if (user.id === ADMIN_ID) {
     await replyMarkdownSafe(
       ctx,
-      "👋 Admin mode is ready.\n\n" +
-        "📩 Reply as bot:\n`/reply <userId> <message>`\n\n" +
-        "📁 Send file(s) as bot:\n" +
-        "`/file <userId> Optional caption` (next 1)\n" +
-        "`/file2 <userId> Optional caption` (next 2)"
+      "👋 Admin mode is ready.\n\n📩 Reply as bot:\n`/reply <userId> <message>`\n\n📁 Send file(s) as bot:\n`/file <userId> Optional caption`\n`/file2 <userId> Optional caption`"
     );
     return;
   }
@@ -267,11 +219,9 @@ bot.start(async (ctx) => {
   await replyMarkdownSafe(ctx, WELCOME_MESSAGE, { reply_markup: mainKeyboard() });
 
   await sendAdminMessage(
-    `🔥 New user started the bot:\n` +
-      `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
-      `Username: @${safeText(user.username || "N/A")}\n` +
-      `User ID: ${user.id}` +
-      adminQuickCommands(user.id)
+    `🔥 New user started the bot:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\nUser ID: ${user.id}` + adminQuickCommands(user.id)
   );
 });
 
@@ -280,22 +230,16 @@ bot.start(async (ctx) => {
 // =====================
 bot.hears(KEY_SEND_DOC, async (ctx) => {
   if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
-
-  await replyMarkdownSafe(
-    ctx,
-    "📄 Tap 📎 → *File* → select DOC/PDF → send here.\n(Please don’t send as a photo.)",
-    { reply_markup: mainKeyboard() }
-  );
+  await replyMarkdownSafe(ctx, "📄 Tap 📎 → *File* → select DOC/PDF → send here.\n(Please don’t send as a photo.)", {
+    reply_markup: mainKeyboard()
+  });
 });
 
 bot.hears(KEY_SEND_MPESA, async (ctx) => {
   if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
-
-  await replyMarkdownSafe(
-    ctx,
-    "✅ No need to forward Mpesa SMS.\nSend a document → choose CHECK/RECHECK → enter phone → get STK prompt.",
-    { reply_markup: mainKeyboard() }
-  );
+  await replyMarkdownSafe(ctx, "✅ No need to forward Mpesa SMS.\nSend a document → choose CHECK/RECHECK → enter phone → get STK prompt.", {
+    reply_markup: mainKeyboard()
+  });
 });
 
 bot.hears(KEY_CANCEL, async (ctx) => {
@@ -305,12 +249,9 @@ bot.hears(KEY_CANCEL, async (ctx) => {
   delete submissions[userId];
 
   await sendAdminMessage(
-    "❌ User cancelled submission:\n" +
-      `Name: ${safeText(ctx.from.first_name)} ${safeText(ctx.from.last_name)}\n` +
-      `Username: @${safeText(ctx.from.username || "N/A")}\n` +
-      `User ID: ${userId}\n` +
-      `Time (EAT): ${moment().utcOffset(3).format("YYYY-MM-DD HH:mm")}` +
-      adminQuickCommands(userId)
+    `❌ User cancelled submission:\nName: ${safeText(ctx.from.first_name)} ${safeText(ctx.from.last_name)}\nUsername: @${safeText(
+      ctx.from.username || "N/A"
+    )}\nUser ID: ${userId}\nTime (EAT): ${moment().utcOffset(3).format("YYYY-MM-DD HH:mm")}` + adminQuickCommands(userId)
   );
 
   await ctx.reply("❌ Cancelled. Send a new document to start again.", { reply_markup: mainKeyboard() });
@@ -345,7 +286,6 @@ bot.command("file", async (ctx) => {
   const userId = parts[1];
   const caption = parts.slice(2).join(" ");
   pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 1 };
-
   await replyMarkdownSafe(ctx, `✅ Next document/photo you send will go to user ${userId}.`);
 });
 
@@ -358,7 +298,6 @@ bot.command("file2", async (ctx) => {
   const userId = parts[1];
   const caption = parts.slice(2).join(" ");
   pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 2 };
-
   await replyMarkdownSafe(ctx, `✅ Next 2 document/photo messages will go to user ${userId}.`);
 });
 
@@ -371,10 +310,7 @@ bot.on("document", async (ctx) => {
   // admin send doc to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
-    if (!target) {
-      await replyMarkdownSafe(ctx, "Use `/file <userId>` or `/file2 <userId>` first.");
-      return;
-    }
+    if (!target) return replyMarkdownSafe(ctx, "Use `/file <userId>` or `/file2 <userId>` first.");
 
     const { userId, caption } = target;
     const doc = ctx.message.document;
@@ -391,13 +327,10 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  // user doc -> forward to admin
   await sendAdminMessage(
-    `📨 Document from user:\n` +
-      `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
-      `Username: @${safeText(user.username || "N/A")}\n` +
-      `User ID: ${user.id}` +
-      adminQuickCommands(user.id)
+    `📨 Document from user:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\nUser ID: ${user.id}` + adminQuickCommands(user.id)
   );
 
   try {
@@ -406,14 +339,10 @@ bot.on("document", async (ctx) => {
     console.error("Forward doc error:", err?.message || err);
   }
 
-  if (isBotInactivePeriod()) {
-    await notifyInactivePeriod(ctx);
-    return;
-  }
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
   submissions[user.id] = {
     stage: STAGE_WAIT_TYPE,
-    docMsgId: ctx.message.message_id,
     kind: null,
     amount: null,
     api_ref: null,
@@ -431,11 +360,7 @@ bot.on("document", async (ctx) => {
 bot.action("TYPE_CHECK", async (ctx) => {
   const userId = ctx.from.id;
   const sub = submissions[userId];
-
-  if (!sub || sub.stage !== STAGE_WAIT_TYPE) {
-    await ctx.answerCbQuery("No pending submission.");
-    return;
-  }
+  if (!sub || sub.stage !== STAGE_WAIT_TYPE) return ctx.answerCbQuery("No pending submission.");
 
   sub.kind = "CHECK";
   sub.amount = CHECK_PRICE_KES;
@@ -444,19 +369,13 @@ bot.action("TYPE_CHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("CHECK selected");
-  await ctx.reply(`✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, {
-    reply_markup: mainKeyboard()
-  });
+  await ctx.reply(`✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, { reply_markup: mainKeyboard() });
 });
 
 bot.action("TYPE_RECHECK", async (ctx) => {
   const userId = ctx.from.id;
   const sub = submissions[userId];
-
-  if (!sub || sub.stage !== STAGE_WAIT_TYPE) {
-    await ctx.answerCbQuery("No pending submission.");
-    return;
-  }
+  if (!sub || sub.stage !== STAGE_WAIT_TYPE) return ctx.answerCbQuery("No pending submission.");
 
   sub.kind = "RECHECK";
   sub.amount = RECHECK_PRICE_KES;
@@ -465,9 +384,7 @@ bot.action("TYPE_RECHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("RECHECK selected");
-  await ctx.reply(`🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, {
-    reply_markup: mainKeyboard()
-  });
+  await ctx.reply(`🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, { reply_markup: mainKeyboard() });
 });
 
 bot.action("TYPE_CANCEL", async (ctx) => {
@@ -486,29 +403,23 @@ bot.on("text", async (ctx) => {
   if (text.startsWith("/")) return;
   if (user.id === ADMIN_ID) return;
 
-  // inactive: forward + notify
   if (isBotInactivePeriod()) {
     await sendAdminMessage(
-      `💬 Message from user (inactive period):\n` +
-        `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
-        `Username: @${safeText(user.username || "N/A")}\n` +
-        `User ID: ${user.id}` +
+      `💬 Message from user (inactive period):\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
+        user.username || "N/A"
+      )}\nUser ID: ${user.id}` +
         adminQuickCommands(user.id) +
         `\n\n${safeText(text)}`
     );
-    await notifyInactivePeriod(ctx);
-    return;
+    return notifyInactivePeriod(ctx);
   }
 
   const sub = submissions[user.id];
 
-  // ✅ if waiting for phone: handle it here and don't forward to admin
+  // waiting for phone
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
-    if (!phone254) {
-      await ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX or 2547XXXXXXXX.");
-      return;
-    }
+    if (!phone254) return ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX or 2547XXXXXXXX.");
 
     sub.phone = phone254;
     sub.stage = STAGE_WAIT_PAYMENT;
@@ -529,40 +440,29 @@ bot.on("text", async (ctx) => {
       await ctx.reply("✅ STK Push sent. Pay on your phone — confirmation is automatic.");
 
       await sendAdminMessage(
-        `📲 STK Push initiated:\n` +
-          `User ID: ${user.id}\n` +
-          `Type: ${sub.kind}\n` +
-          `Amount: ${sub.amount} KES\n` +
-          `Phone: ${sub.phone}\n` +
-          `api_ref: ${sub.api_ref}\n\n` +
-          `Summary: ${summarizeIntaSendResp(resp)}`
+        `📲 STK Push initiated:\nUser ID: ${user.id}\nType: ${sub.kind}\nAmount: ${sub.amount} KES\nPhone: ${sub.phone}\napi_ref: ${sub.api_ref}\n\nSummary: ${summarizeIntaSendResp(
+          resp
+        )}`
       );
     } catch (err) {
       await ctx.reply("❌ STK Push failed. Try again in 1 minute.");
-      await sendAdminMessage(
-        `❌ STK Push error:\nUser ID: ${user.id}\napi_ref: ${sub.api_ref}\n\n${safeText(err?.message || err)}`
-      );
+      await sendAdminMessage(`❌ STK Push error:\nUser ID: ${user.id}\napi_ref: ${sub.api_ref}\n\n${safeText(err?.message || err)}`);
     }
     return;
   }
 
-  // normal: forward to admin
+  // normal forward
   await sendAdminMessage(
-    `💬 Message from user:\n` +
-      `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
-      `Username: @${safeText(user.username || "N/A")}\n` +
-      `User ID: ${user.id}` +
+    `💬 Message from user:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\nUser ID: ${user.id}` +
       adminQuickCommands(user.id) +
       `\n\n${safeText(text)}`
   );
 
-  if (!sub) {
-    await ctx.reply("Send your document first to start.", { reply_markup: mainKeyboard() });
-  } else if (sub.stage === STAGE_WAIT_TYPE) {
-    await ctx.reply("Please choose CHECK or RECHECK using the buttons.");
-  } else if (sub.stage === STAGE_WAIT_PAYMENT) {
-    await ctx.reply("Waiting for payment confirmation…");
-  }
+  if (!sub) return ctx.reply("Send your document first to start.", { reply_markup: mainKeyboard() });
+  if (sub.stage === STAGE_WAIT_TYPE) return ctx.reply("Please choose CHECK or RECHECK using the buttons.");
+  if (sub.stage === STAGE_WAIT_PAYMENT) return ctx.reply("Waiting for payment confirmation…");
 });
 
 // =====================
@@ -574,10 +474,7 @@ bot.on("photo", async (ctx) => {
   // admin send photo to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
-    if (!target) {
-      await replyMarkdownSafe(ctx, "Use `/file <userId>` or `/file2 <userId>` first.");
-      return;
-    }
+    if (!target) return replyMarkdownSafe(ctx, "Use `/file <userId>` or `/file2 <userId>` first.");
 
     const { userId, caption } = target;
     const photos = ctx.message.photo || [];
@@ -595,13 +492,10 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // user photo -> forward to admin
   await sendAdminMessage(
-    `🖼️ Photo from user:\n` +
-      `Name: ${safeText(user.first_name)} ${safeText(user.last_name)}\n` +
-      `Username: @${safeText(user.username || "N/A")}\n` +
-      `User ID: ${user.id}` +
-      adminQuickCommands(user.id)
+    `🖼️ Photo from user:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\nUser ID: ${user.id}` + adminQuickCommands(user.id)
   );
 
   try {
@@ -610,58 +504,64 @@ bot.on("photo", async (ctx) => {
     console.error("Forward photo error:", err?.message || err);
   }
 
-  if (isBotInactivePeriod()) {
-    await notifyInactivePeriod(ctx);
-    return;
-  }
-
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
   await ctx.reply("✅ Received.", { reply_markup: mainKeyboard() });
 });
 
 // =====================
-// EXPRESS SERVER + TELEGRAM + INTASEND WEBHOOKS
+// EXPRESS SERVER + WEBHOOKS
 // =====================
 const app = express();
 
-// ✅ IMPORTANT: accept JSON + urlencoded (webhooks often use form encoding)
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true }));
-
-// ✅ capture raw body (helps if provider posts raw JSON as text)
-app.use((req, res, next) => {
-  let data = "";
-  req.on("data", (chunk) => (data += chunk));
-  req.on("end", () => {
-    if (data && !req.rawBody) req.rawBody = data;
-    next();
-  });
-});
+// ✅ SAFE raw body capture (does NOT hang requests)
+app.use(
+  express.json({
+    limit: "2mb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf?.toString() || "";
+    }
+  })
+);
+app.use(
+  express.urlencoded({
+    extended: true,
+    verify: (req, res, buf) => {
+      req.rawBody = buf?.toString() || "";
+    }
+  })
+);
 
 // Telegram webhook
 app.use(bot.webhookCallback("/webhook"));
 bot.telegram.setWebhook(`${PUBLIC_BASE_URL}/webhook`);
 
-// =====================
-// INTASEND WEBHOOK (THOROUGH FIX)
-// Supports:
-//   - GET /intasend/webhook?challenge=...
-//   - POST with JSON or urlencoded body
-//   - POST with { challenge: ... } handshake
-// =====================
-app.all("/intasend/webhook", async (req, res) => {
+// ---- IntaSend challenge (GET)
+app.get("/intasend/webhook", (req, res) => {
+  const qChallenge = req.query?.challenge;
+  if (!qChallenge) return res.status(200).send("OK");
+
+  if (INTASEND_WEBHOOK_CHALLENGE && qChallenge !== INTASEND_WEBHOOK_CHALLENGE) {
+    return res.status(401).send("Invalid challenge");
+  }
+  return res.status(200).send(qChallenge);
+});
+
+// ---- IntaSend events (POST)
+app.post("/intasend/webhook", async (req, res) => {
   try {
-    // 1) GET challenge
-    const qChallenge = req.query?.challenge;
-    if (qChallenge) {
-      if (INTASEND_WEBHOOK_CHALLENGE && qChallenge !== INTASEND_WEBHOOK_CHALLENGE) {
-        return res.status(401).send("Invalid challenge");
+    // Payload can be JSON or urlencoded
+    let payload = req.body || {};
+
+    // If provider posts raw JSON as string
+    if (typeof payload === "string") {
+      try {
+        payload = JSON.parse(payload);
+      } catch {
+        payload = {};
       }
-      return res.status(200).send(qChallenge); // simplest echo
     }
 
-    const payload = getWebhookPayload(req);
-
-    // 2) POST challenge
+    // POST challenge (if any)
     if (payload.challenge) {
       if (INTASEND_WEBHOOK_CHALLENGE && payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
         return res.status(401).send("Invalid challenge");
@@ -669,37 +569,31 @@ app.all("/intasend/webhook", async (req, res) => {
       return res.status(200).json({ challenge: payload.challenge });
     }
 
-    // 3) Extract fields
     const apiRef = extractApiRef(payload);
     const stateRaw = extractState(payload);
     const invoiceId = extractInvoiceId(payload);
-
     const state = String(stateRaw || "").trim().toUpperCase();
 
-    // 🔍 if webhook hit but we can’t read body, tell admin (this is key for debugging)
+    // If webhook hit but missing api_ref, notify admin for debugging
     if (!apiRef) {
       await sendAdminMessage(
-        `⚠️ IntaSend webhook HIT but api_ref missing.\n` +
-          `Method: ${req.method}\n` +
-          `CT: ${safeText(req.headers["content-type"])}\n` +
-          `Raw(150): ${safeText((req.rawBody || "").slice(0, 150))}`
+        `⚠️ IntaSend webhook HIT but api_ref missing.\nCT: ${safeText(req.headers["content-type"])}\nRaw(180): ${safeText(
+          (req.rawBody || "").slice(0, 180)
+        )}`
       );
       return res.status(200).json({ ok: true });
     }
 
+    // Always notify admin that webhook arrived
+    await sendAdminMessage(`📩 IntaSend webhook:\napi_ref: \`${apiRef}\`\nstate: *${safeText(state || stateRaw)}*\ninvoice: ${safeText(invoiceId)}`);
+
     const ref = paymentRefs[apiRef];
-
-    // Always show admin that webhook is coming in
-    await sendAdminMessage(
-      `📩 IntaSend webhook:\napi_ref: \`${apiRef}\`\nstate: *${safeText(state || stateRaw)}*\ninvoice: ${safeText(invoiceId)}`
-    );
-
     if (!ref) {
       await sendAdminMessage(`⚠️ Webhook api_ref not found in memory: \`${apiRef}\``);
       return res.status(200).json({ ok: true });
     }
 
-    // 4) Confirm ONLY when COMPLETE
+    // Confirm only when COMPLETE
     if (state === "COMPLETE") {
       const { userId, kind, amount } = ref;
       const sub = submissions[userId];
@@ -717,9 +611,7 @@ app.all("/intasend/webhook", async (req, res) => {
         await sendAdminMessage(`❌ Could not message user ${userId}.\n${safeText(e?.message || e)}`);
       }
 
-      await sendAdminMessage(
-        `✅ PAYMENT COMPLETE:\nUser ID: ${userId}\nType: ${kind}\nAmount: ${amount} KES\napi_ref: \`${apiRef}\``
-      );
+      await sendAdminMessage(`✅ PAYMENT COMPLETE:\nUser ID: ${userId}\nType: ${kind}\nAmount: ${amount} KES\napi_ref: \`${apiRef}\``);
     }
 
     return res.status(200).json({ ok: true });
