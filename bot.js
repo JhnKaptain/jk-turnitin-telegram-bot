@@ -2,11 +2,13 @@
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * + IntaSend STK Push (default) + Webhook confirmation
  *
- * FIXES:
- * ✅ Phone-number flow no longer forwarded to admin before processing
+ * FIXES INCLUDED:
+ * ✅ Phone-number flow handled BEFORE forwarding to admin (so admin won’t receive the phone number)
  * ✅ STK Push is default (no checkout link needed)
- * ✅ Webhook validates challenge + marks payments COMPLETE via api_ref/state
+ * ✅ IntaSend webhook FIX: challenge validation only when challenge exists + echoes challenge
+ * ✅ Webhook robust parsing for api_ref/state from different payload shapes
  * ✅ Admin STK response is SHORT (no long JSON dump)
+ * ✅ Payment confirmation sent to BOTH user + admin when state becomes COMPLETE
  */
 
 require("dotenv").config();
@@ -389,10 +391,9 @@ bot.action("TYPE_CHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("CHECK selected");
-  await ctx.reply(
-    `✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`,
-    { reply_markup: mainKeyboard() }
-  );
+  await ctx.reply(`✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, {
+    reply_markup: mainKeyboard()
+  });
 });
 
 bot.action("TYPE_RECHECK", async (ctx) => {
@@ -411,10 +412,9 @@ bot.action("TYPE_RECHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("RECHECK selected");
-  await ctx.reply(
-    `🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`,
-    { reply_markup: mainKeyboard() }
-  );
+  await ctx.reply(`🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, {
+    reply_markup: mainKeyboard()
+  });
 });
 
 bot.action("TYPE_CANCEL", async (ctx) => {
@@ -576,47 +576,78 @@ const WEBHOOK_URL = `${PUBLIC_BASE_URL}/webhook`;
 bot.telegram.setWebhook(WEBHOOK_URL);
 
 // =====================
-// INTASEND WEBHOOK
+// INTASEND WEBHOOK (FIXED)
 // =====================
 app.post("/intasend/webhook", async (req, res) => {
   try {
     const payload = req.body || {};
 
-    if (INTASEND_WEBHOOK_CHALLENGE && payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
-      return res.status(401).json({ ok: false, message: "Invalid challenge" });
+    // 1) ✅ Challenge handshake ONLY when IntaSend sends challenge
+    if (payload.challenge) {
+      if (INTASEND_WEBHOOK_CHALLENGE && payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
+        return res.status(401).send("Invalid challenge");
+      }
+      return res.status(200).json({ challenge: payload.challenge });
     }
 
-    const apiRef = payload.api_ref;
-    const state = payload.state;
+    // 2) ✅ Robust extraction (payload shapes vary)
+    const apiRef =
+      payload.api_ref ||
+      payload.apiRef ||
+      payload.invoice?.api_ref ||
+      payload.invoice?.apiRef ||
+      payload.data?.api_ref ||
+      payload.data?.apiRef;
+
+    const state =
+      payload.state ||
+      payload.status ||
+      payload.invoice?.state ||
+      payload.invoice?.status ||
+      payload.data?.state ||
+      payload.data?.status;
+
+    const invoiceId = payload.invoice_id || payload.invoice?.invoice_id || payload.data?.invoice_id || "";
 
     if (!apiRef) return res.status(200).json({ ok: true });
 
     const ref = paymentRefs[apiRef];
-    if (!ref) return res.status(200).json({ ok: true });
+    if (!ref) {
+      await sendAdminMessage(
+        `⚠️ Webhook received for unknown api_ref:\n\`${apiRef}\`\nState: ${safeText(state)}\nInvoice: ${safeText(
+          invoiceId
+        )}`
+      );
+      return res.status(200).json({ ok: true });
+    }
 
-    if (state === "COMPLETE") {
+    // 3) ✅ Always notify admin that webhook hit
+    await sendAdminMessage(
+      `📩 IntaSend webhook:\napi_ref: \`${apiRef}\`\nstate: *${safeText(state)}*\ninvoice: ${safeText(invoiceId)}`
+    );
+
+    // 4) ✅ Confirm only when COMPLETE
+    if (String(state).toUpperCase() === "COMPLETE") {
       const { userId, kind, amount } = ref;
       const sub = submissions[userId];
       if (sub && sub.api_ref === apiRef) sub.paid = true;
 
-      // ✅ UPDATED short user message (requested)
       const userMsg =
         `✅ Payment confirmed (${amount} KES) for *${kind}*.\n` +
         `⏱ Reports take *2–8 min* (queue).\n` +
         `ℹ️ AI < *20%* shows (*) and no highlights.\n` +
-        `To get highlights: add more AI-like text to reach ≥20% + request a *paid recheck*.`;
+        `To get highlights: add AI text to reach ≥20% + request a *paid recheck*.`;
 
       try {
         await bot.telegram.sendMessage(userId, userMsg, { parse_mode: "Markdown" });
-      } catch {}
+      } catch (e) {
+        await sendAdminMessage(
+          `❌ Failed to message user ${userId} after COMPLETE.\nError: ${safeText(e?.message || e)}`
+        );
+      }
 
       await sendAdminMessage(
-        `✅ PAYMENT COMPLETE:\n` +
-          `User ID: ${userId}\n` +
-          `Type: ${kind}\n` +
-          `Amount: ${amount} KES\n` +
-          `api_ref: ${apiRef}\n` +
-          `invoice_id: ${safeText(payload.invoice_id || "")}`
+        `✅ PAYMENT COMPLETE:\nUser ID: ${userId}\nType: ${kind}\nAmount: ${amount} KES\napi_ref: \`${apiRef}\``
       );
     }
 
