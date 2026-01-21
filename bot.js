@@ -1,12 +1,15 @@
 /**
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
- * + IntaSend STK Push (default) + Webhook confirmation
+ * + IntaSend STK Push + Webhook confirmation
  *
- * FIXED:
- * ✅ Removed broken req.on("data") rawBody middleware (it can hang requests)
- * ✅ Use express verify() to capture rawBody safely
- * ✅ IntaSend webhook supports GET challenge + POST JSON + POST form-urlencoded
- * ✅ Payment COMPLETE notifies both user + admin
+ * FIXES INCLUDED:
+ * ✅ Fast ACK to IntaSend then async processing
+ * ✅ Robust payload parsing (JSON, urlencoded, rawBody fallback)
+ * ✅ Accept multiple paid states (COMPLETE/COMPLETED/SUCCESS/PAID etc)
+ * ✅ Admin messages are plain text (no Markdown parse failures)
+ * ✅ Recovery of userId/kind from api_ref if server restarts
+ * ✅ Phone-number flow handled BEFORE forwarding to admin
+ * ✅ Inactive window: 02:30–05:59 EAT
  */
 
 require("dotenv").config();
@@ -15,6 +18,7 @@ const { Telegraf, Markup } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
 const IntaSend = require("intasend-node");
+const qs = require("querystring");
 
 // =====================
 // ENV + CONSTANTS
@@ -25,9 +29,14 @@ if (!botToken) {
   process.exit(1);
 }
 
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://jk-turnitin-telegram-bot-1.onrender.com";
-const INTASEND_WEBHOOK_CHALLENGE = process.env.INTASEND_WEBHOOK_CHALLENGE || "";
-const INTASEND_TEST = String(process.env.INTASEND_TEST_ENVIRONMENT || "true").toLowerCase() === "true";
+const PUBLIC_BASE_URL =
+  process.env.PUBLIC_BASE_URL || "https://jk-turnitin-telegram-bot-1.onrender.com";
+
+const INTASEND_WEBHOOK_CHALLENGE =
+  process.env.INTASEND_WEBHOOK_CHALLENGE || "";
+
+const INTASEND_TEST =
+  String(process.env.INTASEND_TEST_ENVIRONMENT || "true").toLowerCase() === "true";
 
 const INTASEND_PUBLISHABLE_KEY = process.env.INTASEND_PUBLISHABLE_KEY || "";
 const INTASEND_SECRET_KEY = process.env.INTASEND_SECRET_KEY || "";
@@ -53,13 +62,18 @@ const KEY_CANCEL = "❌ Cancel / New submission";
 // =====================
 const bot = new Telegraf(botToken);
 
-const intasend = new IntaSend(INTASEND_PUBLISHABLE_KEY, INTASEND_SECRET_KEY, INTASEND_TEST);
+const intasend = new IntaSend(
+  INTASEND_PUBLISHABLE_KEY,
+  INTASEND_SECRET_KEY,
+  INTASEND_TEST
+);
 const collection = intasend.collection();
 
 const pendingFileTargets = {};
 const submissions = {}; // userId -> {stage, kind, amount, api_ref, phone, paid, createdAt}
 const paymentRefs = {}; // api_ref -> {userId, kind, amount}
 
+// Stages
 const STAGE_WAIT_TYPE = "WAIT_TYPE";
 const STAGE_WAIT_PHONE = "WAIT_PHONE";
 const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
@@ -67,8 +81,9 @@ const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
 // =====================
 // HELPERS
 // =====================
+// Inactive 02:30–05:59 EAT (UTC+3) => UTC 23:30–02:59, end exclusive at 03:00
 const INACTIVE_START_UTC = "23:30"; // 02:30 EAT
-const INACTIVE_END_UTC = "03:00"; // 05:59 EAT ends at 02:59 UTC (03:00 exclusive)
+const INACTIVE_END_UTC = "03:00";   // 05:59 EAT ends at 02:59 UTC (03:00 exclusive)
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
   if (startHHMM < endHHMM) return currentHHMM >= startHHMM && currentHHMM < endHHMM;
@@ -100,12 +115,15 @@ function safeText(s) {
 }
 
 function adminQuickCommands(userId) {
-  return "\n\nQuick commands (tap & copy):\n" + `\`/file2 ${userId}\`\n` + `\`/reply ${userId} \``;
+  return "\n\nQuick commands (tap & copy):\n" + `/file2 ${userId}\n` + `/reply ${userId} `;
 }
 
+/**
+ * Admin logs as PLAIN TEXT (no parse_mode) to avoid Markdown parse failures
+ */
 async function sendAdminMessage(text) {
   try {
-    await bot.telegram.sendMessage(ADMIN_ID, text, { parse_mode: "Markdown" });
+    await bot.telegram.sendMessage(ADMIN_ID, text);
   } catch (err) {
     console.error("Error sending message to admin:", err?.message || err);
   }
@@ -172,6 +190,7 @@ function extractApiRef(payload) {
     payload.payload?.apiRef
   );
 }
+
 function extractState(payload) {
   return (
     payload.state ||
@@ -184,9 +203,54 @@ function extractState(payload) {
     payload.payload?.status
   );
 }
+
 function extractInvoiceId(payload) {
-  return payload.invoice_id || payload.invoice?.invoice_id || payload.data?.invoice_id || payload.payload?.invoice_id || "";
+  return (
+    payload.invoice_id ||
+    payload.invoice?.invoice_id ||
+    payload.data?.invoice_id ||
+    payload.payload?.invoice_id ||
+    ""
+  );
 }
+
+function extractAmount(payload) {
+  return (
+    payload.amount ||
+    payload.invoice?.amount ||
+    payload.data?.amount ||
+    payload.payload?.amount ||
+    null
+  );
+}
+
+function extractCurrency(payload) {
+  return (
+    payload.currency ||
+    payload.invoice?.currency ||
+    payload.data?.currency ||
+    payload.payload?.currency ||
+    "KES"
+  );
+}
+
+/**
+ * Recover data from api_ref if memory lost:
+ * api_ref = JK_<KIND>_<USERID>_<TS>
+ */
+function recoverRefFromApiRef(apiRef) {
+  const m = /^JK_(CHECK|RECHECK)_(\d+)_/.exec(String(apiRef || ""));
+  if (!m) return null;
+  return { kind: m[1], userId: Number(m[2]) };
+}
+
+const PAID_STATES = new Set([
+  "COMPLETE",
+  "COMPLETED",
+  "SUCCESS",
+  "SUCCESSFUL",
+  "PAID"
+]);
 
 // =====================
 // START / WELCOME
@@ -237,9 +301,11 @@ bot.hears(KEY_SEND_DOC, async (ctx) => {
 
 bot.hears(KEY_SEND_MPESA, async (ctx) => {
   if (isBotInactivePeriod() && ctx.from.id !== ADMIN_ID) return notifyInactivePeriod(ctx);
-  await replyMarkdownSafe(ctx, "✅ No need to forward Mpesa SMS.\nSend a document → choose CHECK/RECHECK → enter phone → get STK prompt.", {
-    reply_markup: mainKeyboard()
-  });
+  await replyMarkdownSafe(
+    ctx,
+    "✅ No need to forward Mpesa SMS.\nSend a document → choose CHECK/RECHECK → enter phone → get STK prompt.",
+    { reply_markup: mainKeyboard() }
+  );
 });
 
 bot.hears(KEY_CANCEL, async (ctx) => {
@@ -369,7 +435,9 @@ bot.action("TYPE_CHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("CHECK selected");
-  await ctx.reply(`✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, { reply_markup: mainKeyboard() });
+  await ctx.reply(`✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, {
+    reply_markup: mainKeyboard()
+  });
 });
 
 bot.action("TYPE_RECHECK", async (ctx) => {
@@ -384,7 +452,9 @@ bot.action("TYPE_RECHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("RECHECK selected");
-  await ctx.reply(`🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, { reply_markup: mainKeyboard() });
+  await ctx.reply(`🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, {
+    reply_markup: mainKeyboard()
+  });
 });
 
 bot.action("TYPE_CANCEL", async (ctx) => {
@@ -416,7 +486,7 @@ bot.on("text", async (ctx) => {
 
   const sub = submissions[user.id];
 
-  // waiting for phone
+  // waiting for phone (DO NOT forward phone to admin)
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
     if (!phone254) return ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX or 2547XXXXXXXX.");
@@ -440,13 +510,13 @@ bot.on("text", async (ctx) => {
       await ctx.reply("✅ STK Push sent. Pay on your phone — confirmation is automatic.");
 
       await sendAdminMessage(
-        `📲 STK Push initiated:\nUser ID: ${user.id}\nType: ${sub.kind}\nAmount: ${sub.amount} KES\nPhone: ${sub.phone}\napi_ref: ${sub.api_ref}\n\nSummary: ${summarizeIntaSendResp(
-          resp
-        )}`
+        `📲 STK Push initiated:\nUser ID: ${user.id}\nType: ${sub.kind}\nAmount: ${sub.amount} KES\nPhone: ${sub.phone}\napi_ref: ${sub.api_ref}\n\nSummary: ${summarizeIntaSendResp(resp)}`
       );
     } catch (err) {
       await ctx.reply("❌ STK Push failed. Try again in 1 minute.");
-      await sendAdminMessage(`❌ STK Push error:\nUser ID: ${user.id}\napi_ref: ${sub.api_ref}\n\n${safeText(err?.message || err)}`);
+      await sendAdminMessage(
+        `❌ STK Push error:\nUser ID: ${user.id}\napi_ref: ${sub.api_ref}\n\n${safeText(err?.message || err)}`
+      );
     }
     return;
   }
@@ -513,7 +583,7 @@ bot.on("photo", async (ctx) => {
 // =====================
 const app = express();
 
-// ✅ SAFE raw body capture (does NOT hang requests)
+// raw body capture (for debugging + fallback parsing)
 app.use(
   express.json({
     limit: "2mb",
@@ -531,9 +601,16 @@ app.use(
   })
 );
 
-// Telegram webhook
+// Telegram webhook route
 app.use(bot.webhookCallback("/webhook"));
-bot.telegram.setWebhook(`${PUBLIC_BASE_URL}/webhook`);
+
+// Set telegram webhook
+bot.telegram.setWebhook(`${PUBLIC_BASE_URL}/webhook`).catch((e) => {
+  console.error("Failed to set Telegram webhook:", e?.message || e);
+});
+
+// Health check
+app.get("/", (req, res) => res.status(200).send("OK"));
 
 // ---- IntaSend challenge (GET)
 app.get("/intasend/webhook", (req, res) => {
@@ -543,82 +620,116 @@ app.get("/intasend/webhook", (req, res) => {
   if (INTASEND_WEBHOOK_CHALLENGE && qChallenge !== INTASEND_WEBHOOK_CHALLENGE) {
     return res.status(401).send("Invalid challenge");
   }
-  return res.status(200).send(qChallenge);
+  return res.status(200).send(String(qChallenge));
 });
 
 // ---- IntaSend events (POST)
-app.post("/intasend/webhook", async (req, res) => {
-  try {
-    // Payload can be JSON or urlencoded
-    let payload = req.body || {};
+app.post("/intasend/webhook", (req, res) => {
+  // ACK immediately
+  res.status(200).json({ ok: true });
 
-    // If provider posts raw JSON as string
-    if (typeof payload === "string") {
-      try {
-        payload = JSON.parse(payload);
-      } catch {
-        payload = {};
+  setImmediate(async () => {
+    try {
+      // robust parse
+      let payload = req.body;
+
+      const bodyIsEmptyObj =
+        payload && typeof payload === "object" && !Array.isArray(payload) && Object.keys(payload).length === 0;
+
+      if (!payload || typeof payload === "string" || bodyIsEmptyObj) {
+        const raw = (req.rawBody || "").trim();
+        if (raw) {
+          try {
+            payload = JSON.parse(raw);
+          } catch {
+            payload = qs.parse(raw);
+          }
+        } else {
+          payload = {};
+        }
       }
-    }
 
-    // POST challenge (if any)
-    if (payload.challenge) {
-      if (INTASEND_WEBHOOK_CHALLENGE && payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
-        return res.status(401).send("Invalid challenge");
+      // challenge (POST) handling (do not block real events)
+      if (payload.challenge) {
+        if (INTASEND_WEBHOOK_CHALLENGE && payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
+          await sendAdminMessage("❌ IntaSend POST challenge invalid (ignored).");
+          return;
+        }
+        await sendAdminMessage("✅ IntaSend POST challenge received (ignored for events).");
+        return;
       }
-      return res.status(200).json({ challenge: payload.challenge });
-    }
 
-    const apiRef = extractApiRef(payload);
-    const stateRaw = extractState(payload);
-    const invoiceId = extractInvoiceId(payload);
-    const state = String(stateRaw || "").trim().toUpperCase();
+      const apiRef = extractApiRef(payload);
+      const stateRaw = extractState(payload);
+      const invoiceId = extractInvoiceId(payload);
+      const state = String(stateRaw || "").trim().toUpperCase();
 
-    // If webhook hit but missing api_ref, notify admin for debugging
-    if (!apiRef) {
+      if (!apiRef) {
+        await sendAdminMessage(
+          `⚠️ IntaSend webhook HIT but api_ref missing.\nCT: ${safeText(req.headers["content-type"])}\nRaw(400): ${safeText(
+            (req.rawBody || "").slice(0, 400)
+          )}`
+        );
+        return;
+      }
+
       await sendAdminMessage(
-        `⚠️ IntaSend webhook HIT but api_ref missing.\nCT: ${safeText(req.headers["content-type"])}\nRaw(180): ${safeText(
-          (req.rawBody || "").slice(0, 180)
-        )}`
+        `📩 IntaSend webhook:\napi_ref: ${apiRef}\nstate: ${safeText(state || stateRaw)}\ninvoice: ${safeText(invoiceId)}`
       );
-      return res.status(200).json({ ok: true });
-    }
 
-    // Always notify admin that webhook arrived
-    await sendAdminMessage(`📩 IntaSend webhook:\napi_ref: \`${apiRef}\`\nstate: *${safeText(state || stateRaw)}*\ninvoice: ${safeText(invoiceId)}`);
+      // get ref from memory
+      let ref = paymentRefs[apiRef];
 
-    const ref = paymentRefs[apiRef];
-    if (!ref) {
-      await sendAdminMessage(`⚠️ Webhook api_ref not found in memory: \`${apiRef}\``);
-      return res.status(200).json({ ok: true });
-    }
-
-    // Confirm only when COMPLETE
-    if (state === "COMPLETE") {
-      const { userId, kind, amount } = ref;
-      const sub = submissions[userId];
-      if (sub && sub.api_ref === apiRef) sub.paid = true;
-
-      const userMsg =
-        `✅ Payment confirmed (${amount} KES) for *${kind}*.\n` +
-        `⏱ Reports take *2–8 min*.\n` +
-        `ℹ️ AI < *20%* shows (*) no highlights.\n` +
-        `For highlights: reach ≥20% + *paid recheck*.`;
-
-      try {
-        await bot.telegram.sendMessage(userId, userMsg, { parse_mode: "Markdown" });
-      } catch (e) {
-        await sendAdminMessage(`❌ Could not message user ${userId}.\n${safeText(e?.message || e)}`);
+      // recover if restarted
+      if (!ref) {
+        const recovered = recoverRefFromApiRef(apiRef);
+        if (recovered) {
+          ref = {
+            userId: recovered.userId,
+            kind: recovered.kind,
+            amount: null
+          };
+        }
       }
 
-      await sendAdminMessage(`✅ PAYMENT COMPLETE:\nUser ID: ${userId}\nType: ${kind}\nAmount: ${amount} KES\napi_ref: \`${apiRef}\``);
-    }
+      if (!ref) {
+        await sendAdminMessage(`⚠️ Webhook api_ref not found & not recoverable: ${apiRef}`);
+        return;
+      }
 
-    return res.status(200).json({ ok: true });
-  } catch (err) {
-    console.error("IntaSend webhook error:", err?.message || err);
-    return res.status(200).json({ ok: true });
-  }
+      const amountFromPayload = extractAmount(payload);
+      const currency = extractCurrency(payload);
+      const amount = ref.amount || amountFromPayload;
+
+      // confirm on paid states
+      if (PAID_STATES.has(state)) {
+        const userId = ref.userId;
+        const kind = ref.kind;
+
+        const sub = submissions[userId];
+        if (sub && sub.api_ref === apiRef) sub.paid = true;
+
+        const userMsg =
+          `✅ Payment confirmed (${amount || "paid"} ${currency}) for *${kind}*.\n` +
+          `⏱ Reports take *2–8 min* (queue).\n` +
+          `ℹ️ AI < *20%* shows (*) no highlights.\n` +
+          `For highlights: reach ≥20% + *paid recheck*.`;
+
+        try {
+          await bot.telegram.sendMessage(userId, userMsg, { parse_mode: "Markdown" });
+        } catch (e) {
+          await sendAdminMessage(`❌ Could not message user ${userId}.\n${safeText(e?.message || e)}`);
+        }
+
+        await sendAdminMessage(
+          `✅ PAYMENT CONFIRMED:\nUser ID: ${userId}\nType: ${kind}\nAmount: ${amount || "N/A"} ${currency}\napi_ref: ${apiRef}\nstate: ${state}`
+        );
+      }
+    } catch (err) {
+      console.error("Async IntaSend processing error:", err?.message || err);
+      await sendAdminMessage(`❌ Webhook processing error: ${safeText(err?.message || err)}`);
+    }
+  });
 });
 
 // =====================
@@ -628,12 +739,8 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Webhook server listening on port ${port}`));
 
 process.once("SIGINT", () => {
-  try {
-    bot.stop("SIGINT");
-  } catch {}
+  try { bot.stop("SIGINT"); } catch {}
 });
 process.once("SIGTERM", () => {
-  try {
-    bot.stop("SIGTERM");
-  } catch {}
+  try { bot.stop("SIGTERM"); } catch {}
 });
