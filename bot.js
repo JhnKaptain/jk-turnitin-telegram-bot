@@ -67,7 +67,7 @@ const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
 // =====================
 // HELPERS
 // =====================
-const INACTIVE_START_UTC = "23:00"; // 02:00 EAT
+const INACTIVE_START_UTC = "23:30"; // 02:30 EAT
 const INACTIVE_END_UTC = "03:00"; // 05:59 EAT ends at 02:59 UTC (03:00 exclusive)
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
