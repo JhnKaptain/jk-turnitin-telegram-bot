@@ -5,8 +5,7 @@
  * FIXES INCLUDED:
  * ✅ Phone-number flow handled BEFORE forwarding to admin (so admin won’t receive the phone number)
  * ✅ STK Push is default (no checkout link needed)
- * ✅ IntaSend webhook FIX: challenge validation only when challenge exists + echoes challenge
- * ✅ Webhook robust parsing for api_ref/state from different payload shapes
+ * ✅ IntaSend webhook FIX: supports GET/POST challenge + JSON/urlencoded bodies + robust parsing
  * ✅ Admin STK response is SHORT (no long JSON dump)
  * ✅ Payment confirmation sent to BOTH user + admin when state becomes COMPLETE
  */
@@ -160,9 +159,8 @@ async function notifyInactivePeriod(ctx) {
 // compact IntaSend response summary for admin
 function summarizeIntaSendResp(resp) {
   const id = resp?.id || "";
-  const invoiceId = resp?.invoice?.invoice_id || resp?.invoice?.invoiceid || resp?.invoice_id || "";
+  const invoiceId = resp?.invoice?.invoice_id || resp?.invoice_id || "";
   const state = resp?.invoice?.state || resp?.state || "";
-  const provider = resp?.provider || resp?.invoice?.provider || "";
   const amount = resp?.invoice?.amount || resp?.amount || "";
   const currency = resp?.invoice?.currency || resp?.currency || "";
 
@@ -170,10 +168,65 @@ function summarizeIntaSendResp(resp) {
   if (id) parts.push(`id: ${id}`);
   if (invoiceId) parts.push(`invoice_id: ${invoiceId}`);
   if (state) parts.push(`state: ${state}`);
-  if (provider) parts.push(`provider: ${provider}`);
   if (amount) parts.push(`amount: ${amount}${currency ? ` ${currency}` : ""}`);
 
   return parts.length ? parts.join(" | ") : "(no summary fields)";
+}
+
+// robust payload getter (handles json, urlencoded, and raw string)
+function getWebhookPayload(req) {
+  let payload = req.body;
+
+  // If express gave us a raw string, try parse JSON
+  if (typeof payload === "string") {
+    try {
+      payload = JSON.parse(payload);
+    } catch {
+      payload = {};
+    }
+  }
+
+  // If body is empty but rawBody exists, try parse
+  if ((!payload || (typeof payload === "object" && Object.keys(payload).length === 0)) && req.rawBody) {
+    try {
+      payload = JSON.parse(req.rawBody);
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!payload || typeof payload !== "object") payload = {};
+  return payload;
+}
+
+function extractApiRef(payload) {
+  return (
+    payload.api_ref ||
+    payload.apiRef ||
+    payload.invoice?.api_ref ||
+    payload.invoice?.apiRef ||
+    payload.data?.api_ref ||
+    payload.data?.apiRef ||
+    payload.payload?.api_ref ||
+    payload.payload?.apiRef
+  );
+}
+
+function extractState(payload) {
+  return (
+    payload.state ||
+    payload.status ||
+    payload.invoice?.state ||
+    payload.invoice?.status ||
+    payload.data?.state ||
+    payload.data?.status ||
+    payload.payload?.state ||
+    payload.payload?.status
+  );
+}
+
+function extractInvoiceId(payload) {
+  return payload.invoice_id || payload.invoice?.invoice_id || payload.data?.invoice_id || payload.payload?.invoice_id || "";
 }
 
 // =====================
@@ -566,23 +619,49 @@ bot.on("photo", async (ctx) => {
 });
 
 // =====================
-// EXPRESS SERVER + TELEGRAM WEBHOOK
+// EXPRESS SERVER + TELEGRAM + INTASEND WEBHOOKS
 // =====================
 const app = express();
-app.use(express.json());
+
+// ✅ IMPORTANT: accept JSON + urlencoded (webhooks often use form encoding)
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+// ✅ capture raw body (helps if provider posts raw JSON as text)
+app.use((req, res, next) => {
+  let data = "";
+  req.on("data", (chunk) => (data += chunk));
+  req.on("end", () => {
+    if (data && !req.rawBody) req.rawBody = data;
+    next();
+  });
+});
+
+// Telegram webhook
 app.use(bot.webhookCallback("/webhook"));
-
-const WEBHOOK_URL = `${PUBLIC_BASE_URL}/webhook`;
-bot.telegram.setWebhook(WEBHOOK_URL);
+bot.telegram.setWebhook(`${PUBLIC_BASE_URL}/webhook`);
 
 // =====================
-// INTASEND WEBHOOK (FIXED)
+// INTASEND WEBHOOK (THOROUGH FIX)
+// Supports:
+//   - GET /intasend/webhook?challenge=...
+//   - POST with JSON or urlencoded body
+//   - POST with { challenge: ... } handshake
 // =====================
-app.post("/intasend/webhook", async (req, res) => {
+app.all("/intasend/webhook", async (req, res) => {
   try {
-    const payload = req.body || {};
+    // 1) GET challenge
+    const qChallenge = req.query?.challenge;
+    if (qChallenge) {
+      if (INTASEND_WEBHOOK_CHALLENGE && qChallenge !== INTASEND_WEBHOOK_CHALLENGE) {
+        return res.status(401).send("Invalid challenge");
+      }
+      return res.status(200).send(qChallenge); // simplest echo
+    }
 
-    // 1) ✅ Challenge handshake ONLY when IntaSend sends challenge
+    const payload = getWebhookPayload(req);
+
+    // 2) POST challenge
     if (payload.challenge) {
       if (INTASEND_WEBHOOK_CHALLENGE && payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
         return res.status(401).send("Invalid challenge");
@@ -590,60 +669,52 @@ app.post("/intasend/webhook", async (req, res) => {
       return res.status(200).json({ challenge: payload.challenge });
     }
 
-    // 2) ✅ Robust extraction (payload shapes vary)
-    const apiRef =
-      payload.api_ref ||
-      payload.apiRef ||
-      payload.invoice?.api_ref ||
-      payload.invoice?.apiRef ||
-      payload.data?.api_ref ||
-      payload.data?.apiRef;
+    // 3) Extract fields
+    const apiRef = extractApiRef(payload);
+    const stateRaw = extractState(payload);
+    const invoiceId = extractInvoiceId(payload);
 
-    const state =
-      payload.state ||
-      payload.status ||
-      payload.invoice?.state ||
-      payload.invoice?.status ||
-      payload.data?.state ||
-      payload.data?.status;
+    const state = String(stateRaw || "").trim().toUpperCase();
 
-    const invoiceId = payload.invoice_id || payload.invoice?.invoice_id || payload.data?.invoice_id || "";
-
-    if (!apiRef) return res.status(200).json({ ok: true });
-
-    const ref = paymentRefs[apiRef];
-    if (!ref) {
+    // 🔍 if webhook hit but we can’t read body, tell admin (this is key for debugging)
+    if (!apiRef) {
       await sendAdminMessage(
-        `⚠️ Webhook received for unknown api_ref:\n\`${apiRef}\`\nState: ${safeText(state)}\nInvoice: ${safeText(
-          invoiceId
-        )}`
+        `⚠️ IntaSend webhook HIT but api_ref missing.\n` +
+          `Method: ${req.method}\n` +
+          `CT: ${safeText(req.headers["content-type"])}\n` +
+          `Raw(150): ${safeText((req.rawBody || "").slice(0, 150))}`
       );
       return res.status(200).json({ ok: true });
     }
 
-    // 3) ✅ Always notify admin that webhook hit
+    const ref = paymentRefs[apiRef];
+
+    // Always show admin that webhook is coming in
     await sendAdminMessage(
-      `📩 IntaSend webhook:\napi_ref: \`${apiRef}\`\nstate: *${safeText(state)}*\ninvoice: ${safeText(invoiceId)}`
+      `📩 IntaSend webhook:\napi_ref: \`${apiRef}\`\nstate: *${safeText(state || stateRaw)}*\ninvoice: ${safeText(invoiceId)}`
     );
 
-    // 4) ✅ Confirm only when COMPLETE
-    if (String(state).toUpperCase() === "COMPLETE") {
+    if (!ref) {
+      await sendAdminMessage(`⚠️ Webhook api_ref not found in memory: \`${apiRef}\``);
+      return res.status(200).json({ ok: true });
+    }
+
+    // 4) Confirm ONLY when COMPLETE
+    if (state === "COMPLETE") {
       const { userId, kind, amount } = ref;
       const sub = submissions[userId];
       if (sub && sub.api_ref === apiRef) sub.paid = true;
 
       const userMsg =
         `✅ Payment confirmed (${amount} KES) for *${kind}*.\n` +
-        `⏱ Reports take *2–8 min* (queue).\n` +
-        `ℹ️ AI < *20%* shows (*) and no highlights.\n` +
-        `To get highlights: add AI text to reach ≥20% + request a *paid recheck*.`;
+        `⏱ Reports take *2–8 min*.\n` +
+        `ℹ️ AI < *20%* shows (*) no highlights.\n` +
+        `For highlights: reach ≥20% + *paid recheck*.`;
 
       try {
         await bot.telegram.sendMessage(userId, userMsg, { parse_mode: "Markdown" });
       } catch (e) {
-        await sendAdminMessage(
-          `❌ Failed to message user ${userId} after COMPLETE.\nError: ${safeText(e?.message || e)}`
-        );
+        await sendAdminMessage(`❌ Could not message user ${userId}.\n${safeText(e?.message || e)}`);
       }
 
       await sendAdminMessage(
