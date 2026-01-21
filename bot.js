@@ -9,7 +9,7 @@
  * ✅ Admin messages are plain text (no Markdown parse failures)
  * ✅ Recovery of userId/kind from api_ref if server restarts
  * ✅ Phone-number flow handled BEFORE forwarding to admin
- * ✅ Inactive window: 02:30–05:59 EAT
+ * ✅ Inactive window: 03:00–05:59 EAT
  */
 
 require("dotenv").config();
@@ -81,8 +81,8 @@ const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
 // =====================
 // HELPERS
 // =====================
-// Inactive 02:30–05:59 EAT (UTC+3) => UTC 23:30–02:59, end exclusive at 03:00
-const INACTIVE_START_UTC = "23:30"; // 02:30 EAT
+// Inactive 03:00–05:59 EAT (UTC+3) => UTC 00:00–02:59, end exclusive at 03:00
+const INACTIVE_START_UTC = "00:00"; // 03:00 EAT
 const INACTIVE_END_UTC = "03:00";   // 05:59 EAT ends at 02:59 UTC (03:00 exclusive)
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
@@ -649,7 +649,7 @@ app.post("/intasend/webhook", (req, res) => {
         }
       }
 
-      // challenge (POST) handling (do not block real events)
+      // challenge (POST)
       if (payload.challenge) {
         if (INTASEND_WEBHOOK_CHALLENGE && payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
           await sendAdminMessage("❌ IntaSend POST challenge invalid (ignored).");
@@ -701,7 +701,6 @@ app.post("/intasend/webhook", (req, res) => {
       const currency = extractCurrency(payload);
       const amount = ref.amount || amountFromPayload;
 
-      // confirm on paid states
       if (PAID_STATES.has(state)) {
         const userId = ref.userId;
         const kind = ref.kind;
