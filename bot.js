@@ -8,7 +8,7 @@
  * ✅ Webhook ACKs FAST (responds 200 immediately), then processes in background → reduces delays
  * ✅ Robust webhook payload parsing (json/urlencoded/rawBody fallback)
  * ✅ Prevent re-sending STK push when already waiting for payment
- * ✅ Inactive window set to 05:40 AM – 11:00 AM EAT (resume 11:00 AM)
+ * ✅ Inactive window set to 02:00 AM – 05:59 AM EAT (resume 06:00 AM)
  */
 
 require("dotenv").config();
@@ -48,9 +48,9 @@ if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
 // ⭐ Your Telegram numeric ID
 const ADMIN_ID = 6569201830;
 
-// 💰 Pricing
-const CHECK_PRICE_KES = 70;
-const RECHECK_PRICE_KES = 65;
+// 💰 Pricing (ONLY change requested)
+const CHECK_PRICE_KES = 100;
+const RECHECK_PRICE_KES = 90;
 
 // Buttons
 const KEY_SEND_DOC = "📄 Send Document";
@@ -83,10 +83,10 @@ const confirmedRefs = new Set(); // prevent double-confirmations
 // HELPERS
 // =====================
 
-// Inactive window: 05:40–11:00 EAT (EAT = UTC+3)
-// => UTC: 02:40–08:00 (end at 08:00 exclusive)
-const INACTIVE_START_UTC = "02:40"; // 05:40 EAT
-const INACTIVE_END_UTC = "08:00";   // 11:00 EAT (exclusive)
+// Inactive window: 02:00–05:59 EAT (EAT = UTC+3)
+// => UTC: 23:00–02:59 (end at 03:00 exclusive)
+const INACTIVE_START_UTC = "23:00"; // 02:00 EAT
+const INACTIVE_END_UTC = "03:00";   // 06:00 EAT (exclusive)
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
   if (startHHMM < endHHMM) return currentHHMM >= startHHMM && currentHHMM < endHHMM;
@@ -180,7 +180,7 @@ function typeInlineKeyboard() {
 async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(
     ctx,
-    "⏳ Turnitin checks are paused right now.\nWe’ll resume at *11:00 AM EAT*.\n\nIf urgent, WhatsApp call *0701730921*.",
+    "⏳ Turnitin checks are paused right now.\nWe’ll resume at *6:00 AM EAT*.\n\nIf urgent, WhatsApp call *0701730921*.",
     { reply_markup: mainKeyboard() }
   );
 }
