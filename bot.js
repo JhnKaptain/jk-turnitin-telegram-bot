@@ -8,7 +8,7 @@
  * ✅ Webhook ACKs FAST (responds 200 immediately), then processes in background → reduces delays
  * ✅ Robust webhook payload parsing (json/urlencoded/rawBody fallback)
  * ✅ Prevent re-sending STK push when already waiting for payment
- * ✅ Inactive window set to 05:30 AM – 05:59 AM EAT (resume 6:00 AM)
+ * ✅ Inactive window set to 05:40 AM – 11:00 AM EAT (resume 11:00 AM)
  */
 
 require("dotenv").config();
@@ -83,10 +83,10 @@ const confirmedRefs = new Set(); // prevent double-confirmations
 // HELPERS
 // =====================
 
-// Inactive window: 05:30–05:59 EAT  (EAT = UTC+3)
-// => UTC: 02:30–02:59 (end at 03:00 exclusive)
-const INACTIVE_START_UTC = "02:30"; // 05:30 EAT
-const INACTIVE_END_UTC = "03:00";   // 06:00 EAT (exclusive)
+// Inactive window: 05:40–11:00 EAT (EAT = UTC+3)
+// => UTC: 02:40–08:00 (end at 08:00 exclusive)
+const INACTIVE_START_UTC = "02:40"; // 05:40 EAT
+const INACTIVE_END_UTC = "08:00";   // 11:00 EAT (exclusive)
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
   if (startHHMM < endHHMM) return currentHHMM >= startHHMM && currentHHMM < endHHMM;
@@ -118,18 +118,35 @@ function safeText(s) {
   return (s || "").toString();
 }
 
+// ✅ Click-to-copy commands in Telegram = wrap in backticks (Markdown)
+// We DO NOT use parse_mode on admin messages globally, so we embed Markdown
+// and send with parse_mode only for the quick commands chunk.
 function adminQuickCommands(userId) {
-  return "\n\nQuick commands (tap & copy):\n" + `/file2 ${userId}\n` + `/reply ${userId} `;
+  return `\n\n\`/file2 ${userId}\`\n\`/reply ${userId}\``;
 }
 
 /**
- * Admin logs as PLAIN TEXT (no parse_mode) to avoid Markdown parse failures.
+ * Admin logs as PLAIN TEXT (no Markdown) to avoid Markdown parse failures.
  */
 async function sendAdminMessage(text) {
   try {
     await bot.telegram.sendMessage(ADMIN_ID, text);
   } catch (err) {
     console.error("Error sending message to admin:", err?.message || err);
+  }
+}
+
+/**
+ * Admin message but with Markdown enabled ONLY when we want clickable /file2 and /reply blocks.
+ * Keeps the rest of the system unchanged.
+ */
+async function sendAdminMessageMarkdown(text) {
+  try {
+    await bot.telegram.sendMessage(ADMIN_ID, text, { parse_mode: "Markdown" });
+  } catch (err) {
+    // fallback to plain text if markdown fails for any reason
+    console.error("Admin markdown send failed:", err?.message || err);
+    try { await bot.telegram.sendMessage(ADMIN_ID, text); } catch {}
   }
 }
 
@@ -163,7 +180,7 @@ function typeInlineKeyboard() {
 async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(
     ctx,
-    "⏳ Turnitin checks are paused right now.\nWe’ll resume at *6:00 AM EAT*.\n\nIf urgent, WhatsApp call *0701730921*.",
+    "⏳ Turnitin checks are paused right now.\nWe’ll resume at *11:00 AM EAT*.\n\nIf urgent, WhatsApp call *0701730921*.",
     { reply_markup: mainKeyboard() }
   );
 }
@@ -244,11 +261,13 @@ bot.start(async (ctx) => {
 
   await replyMarkdownSafe(ctx, WELCOME_MESSAGE, { reply_markup: mainKeyboard() });
 
+  // Send start message plain + then quick commands as markdown blocks (click-to-copy)
   await sendAdminMessage(
     `🔥 New user started the bot:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\nUser ID: ${user.id}` + adminQuickCommands(user.id)
+    )}\nUser ID: ${user.id}`
   );
+  await sendAdminMessageMarkdown(adminQuickCommands(user.id));
 });
 
 // =====================
@@ -279,8 +298,9 @@ bot.hears(KEY_CANCEL, async (ctx) => {
   await sendAdminMessage(
     `❌ User cancelled submission:\nName: ${safeText(ctx.from.first_name)} ${safeText(ctx.from.last_name)}\nUsername: @${safeText(
       ctx.from.username || "N/A"
-    )}\nUser ID: ${userId}\nTime (EAT): ${moment().utcOffset(3).format("YYYY-MM-DD HH:mm")}` + adminQuickCommands(userId)
+    )}\nUser ID: ${userId}\nTime (EAT): ${moment().utcOffset(3).format("YYYY-MM-DD HH:mm")}`
   );
+  await sendAdminMessageMarkdown(adminQuickCommands(userId));
 
   await ctx.reply("❌ Cancelled. Send a new document to start again.", { reply_markup: mainKeyboard() });
 });
@@ -359,8 +379,9 @@ bot.on("document", async (ctx) => {
   await sendAdminMessage(
     `📨 Document from user:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\nUser ID: ${user.id}` + adminQuickCommands(user.id)
+    )}\nUser ID: ${user.id}`
   );
+  await sendAdminMessageMarkdown(adminQuickCommands(user.id));
 
   try {
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
@@ -531,6 +552,7 @@ bot.on("photo", async (ctx) => {
       user.username || "N/A"
     )}\nUser ID: ${user.id}`
   );
+  await sendAdminMessageMarkdown(adminQuickCommands(user.id));
 
   try {
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
@@ -667,6 +689,7 @@ app.post("/intasend/webhook", (req, res) => {
       await sendAdminMessage(
         `✅ PAYMENT COMPLETE:\nUser ID: ${userId}\nType: ${kind}\nAmount: ${amount ? `${amount} KES` : "N/A"}\napi_ref: ${apiRef}\ninvoice_id: ${safeText(invoiceId)}`
       );
+      await sendAdminMessageMarkdown(adminQuickCommands(userId));
     } catch (err) {
       console.error("Async IntaSend processing error:", err?.message || err);
     }
