@@ -8,7 +8,7 @@
  * ✅ Webhook ACKs FAST (responds 200 immediately), then processes in background → reduces delays
  * ✅ Robust webhook payload parsing (json/urlencoded/rawBody fallback)
  * ✅ Prevent re-sending STK push when already waiting for payment
- * ✅ Inactive window set to 04:30 AM – 05:00 AM EAT
+ * ✅ Inactive window set to 05:30 AM – 05:59 AM EAT (resume 6:00 AM)
  */
 
 require("dotenv").config();
@@ -83,9 +83,10 @@ const confirmedRefs = new Set(); // prevent double-confirmations
 // HELPERS
 // =====================
 
-// Inactive window: 04:30–05:00 EAT  (EAT = UTC+3)
-const INACTIVE_START_UTC = "01:30"; // 04:30 EAT
-const INACTIVE_END_UTC = "02:00";   // 05:00 EAT (exclusive)
+// Inactive window: 05:30–05:59 EAT  (EAT = UTC+3)
+// => UTC: 02:30–02:59 (end at 03:00 exclusive)
+const INACTIVE_START_UTC = "02:30"; // 05:30 EAT
+const INACTIVE_END_UTC = "03:00";   // 06:00 EAT (exclusive)
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
   if (startHHMM < endHHMM) return currentHHMM >= startHHMM && currentHHMM < endHHMM;
@@ -162,7 +163,7 @@ function typeInlineKeyboard() {
 async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(
     ctx,
-    "⏳ Turnitin checks are paused right now.\nWe’ll resume at *5:00 AM EAT*.\n\nIf urgent, WhatsApp call *0701730921*.",
+    "⏳ Turnitin checks are paused right now.\nWe’ll resume at *6:00 AM EAT*.\n\nIf urgent, WhatsApp call *0701730921*.",
     { reply_markup: mainKeyboard() }
   );
 }
@@ -651,7 +652,7 @@ app.post("/intasend/webhook", (req, res) => {
       const sub = submissions[userId];
       if (sub && sub.api_ref === apiRef) sub.paid = true;
 
-      // User confirmation (short, includes 2–8min)
+      // User confirmation (short)
       const userMsg =
         `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n` +
         `⏱ Reports take *2–8 min* (queue).`;
