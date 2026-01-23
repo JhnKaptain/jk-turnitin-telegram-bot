@@ -49,7 +49,7 @@ if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
 const ADMIN_ID = 6569201830;
 
 // 💰 Pricing (ONLY change requested)
-const CHECK_PRICE_KES = 80;
+const CHECK_PRICE_KES = 75;
 const RECHECK_PRICE_KES = 70;
 
 // Buttons
