@@ -8,7 +8,7 @@
  * ✅ Webhook ACKs FAST (responds 200 immediately), then processes in background → reduces delays
  * ✅ Robust webhook payload parsing (json/urlencoded/rawBody fallback)
  * ✅ Prevent re-sending STK push when already waiting for payment
- * ✅ Inactive window set to 02:00 AM – 05:59 AM EAT (resume 06:00 AM)
+ * ✅ Inactive window set to 02:30 AM – 05:59 AM EAT (resume 06:00 AM)
  */
 
 require("dotenv").config();
@@ -48,7 +48,7 @@ if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
 // ⭐ Your Telegram numeric ID
 const ADMIN_ID = 6569201830;
 
-// 💰 Pricing (ONLY change requested)
+// 💰 Pricing
 const CHECK_PRICE_KES = 75;
 const RECHECK_PRICE_KES = 70;
 
@@ -83,9 +83,9 @@ const confirmedRefs = new Set(); // prevent double-confirmations
 // HELPERS
 // =====================
 
-// Inactive window: 02:00–05:59 EAT (EAT = UTC+3)
-// => UTC: 23:00–02:59 (end at 03:00 exclusive)
-const INACTIVE_START_UTC = "23:00"; // 02:00 EAT
+// Inactive window: 02:30–05:59 EAT (EAT = UTC+3)
+// => UTC: 23:30–02:59 (end at 03:00 exclusive)
+const INACTIVE_START_UTC = "23:30"; // 02:30 EAT
 const INACTIVE_END_UTC = "03:00";   // 06:00 EAT (exclusive)
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
@@ -119,8 +119,6 @@ function safeText(s) {
 }
 
 // ✅ Click-to-copy commands in Telegram = wrap in backticks (Markdown)
-// We DO NOT use parse_mode on admin messages globally, so we embed Markdown
-// and send with parse_mode only for the quick commands chunk.
 function adminQuickCommands(userId) {
   return `\n\n\`/file2 ${userId}\`\n\`/reply ${userId}\``;
 }
@@ -144,24 +142,39 @@ async function sendAdminMessageMarkdown(text) {
   try {
     await bot.telegram.sendMessage(ADMIN_ID, text, { parse_mode: "Markdown" });
   } catch (err) {
-    // fallback to plain text if markdown fails for any reason
     console.error("Admin markdown send failed:", err?.message || err);
     try { await bot.telegram.sendMessage(ADMIN_ID, text); } catch {}
   }
 }
 
+/**
+ * Accepts Kenyan numbers:
+ * - 07XXXXXXXX  -> 2547XXXXXXXX
+ * - 01XXXXXXXX  -> 2541XXXXXXXX
+ * - 2547XXXXXXXX / +2547XXXXXXXX
+ * - 2541XXXXXXXX / +2541XXXXXXXX
+ * - 7XXXXXXXX / 1XXXXXXXX -> 2547XXXXXXXX / 2541XXXXXXXX (optional convenience)
+ */
 function normalizePhoneTo254(phoneRaw) {
   const t = String(phoneRaw || "").trim().replace(/\s+/g, "");
   if (!t) return null;
 
+  // +2547XXXXXXXX / +2541XXXXXXXX
   if (t.startsWith("+")) {
     const x = t.slice(1);
-    if (/^2547\d{8}$/.test(x)) return x;
+    if (/^254(?:7|1)\d{8}$/.test(x)) return x;
     return null;
   }
-  if (/^2547\d{8}$/.test(t)) return t;
-  if (/^07\d{8}$/.test(t)) return "254" + t.slice(1);
-  if (/^7\d{8}$/.test(t)) return "254" + t;
+
+  // 2547XXXXXXXX / 2541XXXXXXXX
+  if (/^254(?:7|1)\d{8}$/.test(t)) return t;
+
+  // 07XXXXXXXX / 01XXXXXXXX
+  if (/^0(?:7|1)\d{8}$/.test(t)) return "254" + t.slice(1);
+
+  // 7XXXXXXXX / 1XXXXXXXX
+  if (/^(?:7|1)\d{8}$/.test(t)) return "254" + t;
+
   return null;
 }
 
@@ -221,10 +234,6 @@ function extractInvoiceId(payload) {
   );
 }
 
-/**
- * Recover data from api_ref if memory lost:
- * api_ref = JK_<KIND>_<USERID>_<TS>
- */
 function recoverRefFromApiRef(apiRef) {
   const m = /^JK_(CHECK|RECHECK)_(\d+)_/.exec(String(apiRef || ""));
   if (!m) return null;
@@ -261,7 +270,6 @@ bot.start(async (ctx) => {
 
   await replyMarkdownSafe(ctx, WELCOME_MESSAGE, { reply_markup: mainKeyboard() });
 
-  // Send start message plain + then quick commands as markdown blocks (click-to-copy)
   await sendAdminMessage(
     `🔥 New user started the bot:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
       user.username || "N/A"
@@ -355,7 +363,6 @@ bot.command("file2", async (ctx) => {
 bot.on("document", async (ctx) => {
   const user = ctx.from;
 
-  // admin send doc to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) return replyMarkdownSafe(ctx, "Use `/file <userId>` or `/file2 <userId>` first.");
@@ -375,7 +382,6 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  // user doc -> forward to admin
   await sendAdminMessage(
     `📨 Document from user:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
       user.username || "N/A"
@@ -420,7 +426,7 @@ bot.action("TYPE_CHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("CHECK selected");
-  await ctx.reply(`✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, {
+  await ctx.reply(`✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 01XXXXXXXX or 2547XXXXXXXX or 2541XXXXXXXX).`, {
     reply_markup: mainKeyboard()
   });
 });
@@ -437,7 +443,7 @@ bot.action("TYPE_RECHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("RECHECK selected");
-  await ctx.reply(`🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 2547XXXXXXXX).`, {
+  await ctx.reply(`🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 01XXXXXXXX or 2547XXXXXXXX or 2541XXXXXXXX).`, {
     reply_markup: mainKeyboard()
   });
 });
@@ -462,16 +468,14 @@ bot.on("text", async (ctx) => {
 
   const sub = submissions[user.id];
 
-  // If already waiting for payment, don't re-trigger STK again
   if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
     await ctx.reply("Waiting for payment confirmation…");
     return;
   }
 
-  // waiting for phone
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
-    if (!phone254) return ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX or 2547XXXXXXXX.");
+    if (!phone254) return ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX / 01XXXXXXXX / 2547XXXXXXXX / 2541XXXXXXXX.");
 
     sub.phone = phone254;
     sub.stage = STAGE_WAIT_PAYMENT;
@@ -491,16 +495,13 @@ bot.on("text", async (ctx) => {
 
       sub.stkSentAt = Date.now();
 
-      // User message only (keep it short)
       await ctx.reply("✅ STK Push sent. Pay on your phone — confirmation is automatic.");
       await ctx.reply("Waiting for payment confirmation…");
     } catch (err) {
-      // If STK fails, revert to phone stage so user can retry
       sub.stage = STAGE_WAIT_PHONE;
 
       await ctx.reply("❌ STK Push failed. Try again in 1 minute (send your phone number again).");
 
-      // Admin gets only the error (still plain text)
       await sendAdminMessage(
         `❌ STK Push error:\nUser ID: ${user.id}\napi_ref: ${safeText(sub.api_ref)}\nError: ${safeText(err?.message || err)}`
       );
@@ -508,7 +509,6 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // normal user text (optional forward to admin, but keep minimal)
   await sendAdminMessage(
     `💬 Message from user:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
       user.username || "N/A"
@@ -525,7 +525,6 @@ bot.on("text", async (ctx) => {
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
 
-  // admin send photo to user
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) return replyMarkdownSafe(ctx, "Use `/file <userId>` or `/file2 <userId>` first.");
@@ -546,7 +545,6 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // user photo -> forward to admin
   await sendAdminMessage(
     `🖼️ Photo from user:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
       user.username || "N/A"
@@ -569,7 +567,6 @@ bot.on("photo", async (ctx) => {
 // =====================
 const app = express();
 
-// Capture raw body safely (for providers that POST raw)
 app.use(
   express.json({
     limit: "2mb",
@@ -587,16 +584,13 @@ app.use(
   })
 );
 
-// Telegram webhook
 app.use(bot.webhookCallback("/webhook"));
 bot.telegram.setWebhook(`${PUBLIC_BASE_URL}/webhook`).catch((e) => {
   console.error("Failed to set Telegram webhook:", e?.message || e);
 });
 
-// Health check
 app.get("/", (req, res) => res.status(200).send("OK"));
 
-// ---- IntaSend challenge (GET)
 app.get("/intasend/webhook", (req, res) => {
   const qChallenge = req.query?.challenge;
   if (!qChallenge) return res.status(200).send("OK");
@@ -607,14 +601,11 @@ app.get("/intasend/webhook", (req, res) => {
   return res.status(200).send(qChallenge);
 });
 
-// ---- IntaSend events (POST) — ACK FAST, process after response
 app.post("/intasend/webhook", (req, res) => {
-  // Always ACK quickly to reduce delays/retries
   res.status(200).json({ ok: true });
 
   setImmediate(async () => {
     try {
-      // Robust parse payload
       let payload = req.body;
 
       const bodyIsEmptyObj =
@@ -633,7 +624,6 @@ app.post("/intasend/webhook", (req, res) => {
         }
       }
 
-      // Validate challenge only if present (do NOT block real events)
       if (payload.challenge && INTASEND_WEBHOOK_CHALLENGE && payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
         await sendAdminMessage("⚠️ IntaSend webhook: invalid challenge received.");
         return;
@@ -645,15 +635,11 @@ app.post("/intasend/webhook", (req, res) => {
       const state = String(stateRaw || "").trim().toUpperCase();
 
       if (!apiRef) return;
-
-      // Confirm only COMPLETE
       if (state !== "COMPLETE") return;
 
-      // Idempotency
       if (confirmedRefs.has(apiRef)) return;
       confirmedRefs.add(apiRef);
 
-      // Find ref (memory) or recover from api_ref
       let ref = paymentRefs[apiRef];
       if (!ref) {
         const recovered = recoverRefFromApiRef(apiRef);
@@ -670,11 +656,9 @@ app.post("/intasend/webhook", (req, res) => {
       const kind = ref.kind || "CHECK/RECHECK";
       const amount = ref.amount || "";
 
-      // Mark paid if submission exists
       const sub = submissions[userId];
       if (sub && sub.api_ref === apiRef) sub.paid = true;
 
-      // User confirmation (short)
       const userMsg =
         `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n` +
         `⏱ Reports take *2–8 min* (queue).`;
@@ -685,7 +669,6 @@ app.post("/intasend/webhook", (req, res) => {
         await sendAdminMessage(`❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`);
       }
 
-      // Admin: ONLY payment complete (short)
       await sendAdminMessage(
         `✅ PAYMENT COMPLETE:\nUser ID: ${userId}\nType: ${kind}\nAmount: ${amount ? `${amount} KES` : "N/A"}\napi_ref: ${apiRef}\ninvoice_id: ${safeText(invoiceId)}`
       );
