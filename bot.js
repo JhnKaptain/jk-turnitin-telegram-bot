@@ -184,8 +184,8 @@ function makeApiRef(userId, kind) {
 
 function typeInlineKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback(`✅ CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")],
-    [Markup.button.callback(`🔁 RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")],
+    [Markup.button.callback(`✅ CLICK TO CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")],
+    [Markup.button.callback(`🔁 CLICK TO RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")],
     [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
   ]);
 }
