@@ -86,7 +86,7 @@ const confirmedRefs = new Set(); // prevent double-confirmations
 // Inactive window: 02:30–05:59 EAT (EAT = UTC+3)
 // => UTC: 23:30–02:59 (end at 03:00 exclusive)
 const INACTIVE_START_UTC = "02:00"; // 05:00 EAT
-const INACTIVE_END_UTC = "23:59";   // 02:00 EAT (exclusive)
+const INACTIVE_END_UTC = "03:00";   // 06:00 EAT (exclusive)
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
   if (startHHMM < endHHMM) return currentHHMM >= startHHMM && currentHHMM < endHHMM;
