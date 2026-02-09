@@ -2,13 +2,18 @@
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * + IntaSend STK Push (default) + Webhook confirmation
  *
- * FINAL FIXES (no functionality change, just stability + less spam):
+ * UPDATED (as requested):
+ * ✅ CHECK price: 150 KES
+ * ✅ RECHECK price: 140 KES
+ * ✅ Inactive window: 12:00 AM – 6:00 AM EAT (resume 6:00 AM)
+ * ✅ Queue message: reports take 10–20 minutes (queue)
+ *
+ * FINAL FIXES (kept):
  * ✅ Admin messages are PLAIN TEXT (no Markdown) → fixes Telegram 400 parse errors
  * ✅ Admin receives ONLY: start, document received, PAYMENT COMPLETE (no STK/other debug spam)
  * ✅ Webhook ACKs FAST (responds 200 immediately), then processes in background → reduces delays
  * ✅ Robust webhook payload parsing (json/urlencoded/rawBody fallback)
  * ✅ Prevent re-sending STK push when already waiting for payment
- * ✅ Inactive window set to 02:30 AM – 05:59 AM EAT (resume 06:00 AM)
  */
 
 require("dotenv").config();
@@ -49,8 +54,8 @@ if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
 const ADMIN_ID = 6569201830;
 
 // 💰 Pricing
-const CHECK_PRICE_KES = 75;
-const RECHECK_PRICE_KES = 70;
+const CHECK_PRICE_KES = 150;
+const RECHECK_PRICE_KES = 140;
 
 // Buttons
 const KEY_SEND_DOC = "📄 Send Document";
@@ -83,13 +88,18 @@ const confirmedRefs = new Set(); // prevent double-confirmations
 // HELPERS
 // =====================
 
-// Inactive window: 02:30–05:59 EAT (EAT = UTC+3)
-// => UTC: 23:30–02:59 (end at 03:00 exclusive)
-const INACTIVE_START_UTC = "02:00"; // 05:00 EAT
-const INACTIVE_END_UTC = "00:59";   // 04:00 EAT (exclusive)
+/**
+ * ✅ Inactive window: 12:00 AM – 6:00 AM EAT
+ * EAT = UTC+3
+ * So UTC inactive = 21:00 – 03:00 (crosses midnight, end exclusive)
+ */
+const INACTIVE_START_UTC = "21:00"; // 00:00 EAT
+const INACTIVE_END_UTC = "03:00";   // 06:00 EAT (end exclusive)
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
+  // window does NOT cross midnight
   if (startHHMM < endHHMM) return currentHHMM >= startHHMM && currentHHMM < endHHMM;
+  // crosses midnight (e.g., 21:00 → 03:00)
   return currentHHMM >= startHHMM || currentHHMM < endHHMM;
 }
 
@@ -136,14 +146,15 @@ async function sendAdminMessage(text) {
 
 /**
  * Admin message but with Markdown enabled ONLY when we want clickable /file2 and /reply blocks.
- * Keeps the rest of the system unchanged.
  */
 async function sendAdminMessageMarkdown(text) {
   try {
     await bot.telegram.sendMessage(ADMIN_ID, text, { parse_mode: "Markdown" });
   } catch (err) {
     console.error("Admin markdown send failed:", err?.message || err);
-    try { await bot.telegram.sendMessage(ADMIN_ID, text); } catch {}
+    try {
+      await bot.telegram.sendMessage(ADMIN_ID, text);
+    } catch {}
   }
 }
 
@@ -159,20 +170,16 @@ function normalizePhoneTo254(phoneRaw) {
   const t = String(phoneRaw || "").trim().replace(/\s+/g, "");
   if (!t) return null;
 
-  // +2547XXXXXXXX / +2541XXXXXXXX
   if (t.startsWith("+")) {
     const x = t.slice(1);
     if (/^254(?:7|1)\d{8}$/.test(x)) return x;
     return null;
   }
 
-  // 2547XXXXXXXX / 2541XXXXXXXX
   if (/^254(?:7|1)\d{8}$/.test(t)) return t;
 
-  // 07XXXXXXXX / 01XXXXXXXX
   if (/^0(?:7|1)\d{8}$/.test(t)) return "254" + t.slice(1);
 
-  // 7XXXXXXXX / 1XXXXXXXX
   if (/^(?:7|1)\d{8}$/.test(t)) return "254" + t;
 
   return null;
@@ -602,6 +609,7 @@ app.get("/intasend/webhook", (req, res) => {
 });
 
 app.post("/intasend/webhook", (req, res) => {
+  // ACK immediately
   res.status(200).json({ ok: true });
 
   setImmediate(async () => {
@@ -661,7 +669,7 @@ app.post("/intasend/webhook", (req, res) => {
 
       const userMsg =
         `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n` +
-        `⏱ Reports take *2–8 min* (queue).`;
+        `⏱ Reports take *10–20 minutes* (queue).`;
 
       try {
         await bot.telegram.sendMessage(userId, userMsg, { parse_mode: "Markdown" });
@@ -686,8 +694,12 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Webhook server listening on port ${port}`));
 
 process.once("SIGINT", () => {
-  try { bot.stop("SIGINT"); } catch {}
+  try {
+    bot.stop("SIGINT");
+  } catch {}
 });
 process.once("SIGTERM", () => {
-  try { bot.stop("SIGTERM"); } catch {}
+  try {
+    bot.stop("SIGTERM");
+  } catch {}
 });
