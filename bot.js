@@ -3,8 +3,8 @@
  * + IntaSend STK Push (default) + Webhook confirmation
  *
  * UPDATED (as requested):
- * ✅ CHECK price: 150 KES
- * ✅ RECHECK price: 140 KES
+ * ✅ CHECK price: 140 KES
+ * ✅ RECHECK price: 130 KES
  * ✅ Inactive window: 12:00 AM – 6:00 AM EAT (resume 6:00 AM)
  * ✅ Queue message: reports take 10–20 minutes (queue)
  *
@@ -53,9 +53,9 @@ if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
 // ⭐ Your Telegram numeric ID
 const ADMIN_ID = 6569201830;
 
-// 💰 Pricing
-const CHECK_PRICE_KES = 150;
-const RECHECK_PRICE_KES = 140;
+// 💰 Pricing (UPDATED)
+const CHECK_PRICE_KES = 140;
+const RECHECK_PRICE_KES = 130;
 
 // Buttons
 const KEY_SEND_DOC = "📄 Send Document";
@@ -433,9 +433,10 @@ bot.action("TYPE_CHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("CHECK selected");
-  await ctx.reply(`✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 01XXXXXXXX or 2547XXXXXXXX or 2541XXXXXXXX).`, {
-    reply_markup: mainKeyboard()
-  });
+  await ctx.reply(
+    `✅ CHECK (${CHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 01XXXXXXXX or 2547XXXXXXXX or 2541XXXXXXXX).`,
+    { reply_markup: mainKeyboard() }
+  );
 });
 
 bot.action("TYPE_RECHECK", async (ctx) => {
@@ -450,9 +451,10 @@ bot.action("TYPE_RECHECK", async (ctx) => {
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("RECHECK selected");
-  await ctx.reply(`🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 01XXXXXXXX or 2547XXXXXXXX or 2541XXXXXXXX).`, {
-    reply_markup: mainKeyboard()
-  });
+  await ctx.reply(
+    `🔁 RECHECK (${RECHECK_PRICE_KES} KES).\nSend phone (07XXXXXXXX or 01XXXXXXXX or 2547XXXXXXXX or 2541XXXXXXXX).`,
+    { reply_markup: mainKeyboard() }
+  );
 });
 
 bot.action("TYPE_CANCEL", async (ctx) => {
@@ -482,7 +484,9 @@ bot.on("text", async (ctx) => {
 
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
-    if (!phone254) return ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX / 01XXXXXXXX / 2547XXXXXXXX / 2541XXXXXXXX.");
+    if (!phone254) {
+      return ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX / 01XXXXXXXX / 2547XXXXXXXX / 2541XXXXXXXX.");
+    }
 
     sub.phone = phone254;
     sub.stage = STAGE_WAIT_PAYMENT;
@@ -674,6 +678,7 @@ app.post("/intasend/webhook", (req, res) => {
       try {
         await bot.telegram.sendMessage(userId, userMsg, { parse_mode: "Markdown" });
       } catch (e) {
+        // FIXED: typo sendA-dminMessage -> sendAdminMessage
         await sendAdminMessage(`❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`);
       }
 
