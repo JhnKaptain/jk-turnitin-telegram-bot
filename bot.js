@@ -14,8 +14,8 @@
  * ✅ Admin receives ONLY key messages: start, document received, PAYMENT COMPLETE/FAILED
  *
  * PRICING + SETTINGS:
- * ✅ CHECK price: 150 KES
- * ✅ RECHECK price: 140 KES
+ * ✅ CHECK price: 140 KES
+ * ✅ RECHECK price: 130 KES
  * ✅ Inactive window: 12:00 AM – 6:00 AM EAT (resume 6:00 AM)
  * ✅ Queue message: reports take 10–20 minutes (queue)
  */
@@ -60,8 +60,8 @@ if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
 const ADMIN_ID = 6569201830;
 
 // 💰 Pricing (UPDATED)
-const CHECK_PRICE_KES = 150;
-const RECHECK_PRICE_KES = 140;
+const CHECK_PRICE_KES = 140;
+const RECHECK_PRICE_KES = 130;
 
 // OPTIONAL fallback till (only used if STK fails repeatedly)
 const FALLBACK_TILL = "6164915"; // if you decide to use fallback, keep it here
