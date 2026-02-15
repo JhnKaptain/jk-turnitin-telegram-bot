@@ -2,17 +2,21 @@
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * + IntaSend STK Push (default) + Webhook confirmation
  *
+ * FIXES INCLUDED:
+ * ✅ Robust PUBLIC_BASE_URL handling (uses PUBLIC_BASE_URL OR Render external URL)
+ * ✅ Prevents invalid Telegram webhook URL errors (sanitizes base URL)
+ * ✅ Removes Telegraf.stop crash ("Bot is not running!") in webhook mode
+ *
+ * HARD FIXES:
+ * ✅ NO prompts during inactive hours (12:00 AM – 6:00 AM EAT)
+ * ✅ Webhook handles COMPLETE + FAILED/CANCELLED/EXPIRED/PENDING
+ * ✅ Resend STK / Change phone / Cancel buttons
+ * ✅ Payment timeout reminders
+ * ✅ Persists payment refs to disk
+ *
  * TILL FALLBACK (MANUAL):
- * ✅ Till option appears ONLY after the 2nd payment failure (FAILED/CANCELLED/EXPIRED from webhook)
- * ✅ Only ONE STK resend is allowed total
+ * ✅ Till option appears ONLY after ONE FAILED STK RESEND (NOT payment failure)
  * ✅ Till payment is NOT IntaSend -> admin confirms via /markpaid
- *
- * DEBUG (SAFE):
- * ✅ Logs key lengths + first 8 chars (prefix) so you can confirm Render loaded the right keys
- *    (Does NOT print full keys)
- *
- * NOTE:
- * - Remove the debug logs once everything is stable.
  */
 
 require("dotenv").config();
@@ -34,11 +38,20 @@ if (!botToken) {
   process.exit(1);
 }
 
+/**
+ * ✅ Render provides an external URL in some environments.
+ * We support BOTH:
+ * - PUBLIC_BASE_URL (recommended)
+ * - RENDER_EXTERNAL_URL (fallback)
+ */
 function sanitizeBaseUrl(raw) {
   let u = String(raw || "").trim();
   if (!u) return "";
+  // Remove trailing slash
   u = u.replace(/\/+$/, "");
+  // Force https if user accidentally used http (Telegram requires https)
   if (u.startsWith("http://")) u = "https://" + u.slice("http://".length);
+  // Must be https://
   if (!u.startsWith("https://")) return "";
   return u;
 }
@@ -97,13 +110,12 @@ const KEY_CANCEL = "❌ Cancel / New submission";
 const STAGE_WAIT_TYPE = "WAIT_TYPE";
 const STAGE_WAIT_PHONE = "WAIT_PHONE";
 const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
-const STAGE_WAIT_TILL = "WAIT_TILL"; // user chose Till fallback
 const STAGE_PAID = "PAID";
 
 // Retry behavior
 const STK_RESEND_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes
-const STK_MAX_RESENDS = 1; // ✅ only ONE resend total
-const TILL_AFTER_PAYMENT_FAILS = 2; // ✅ show Till after 2nd payment failure
+const STK_MAX_RESENDS = 3;
+const TILL_AFTER_RESEND_FAILS = 1; // ✅ show Till after ONE resend FAIL
 const PAYMENT_TIMEOUT_MS = 6 * 60 * 1000;
 
 // Text blocks (easy editing)
@@ -131,7 +143,7 @@ If urgent, WhatsApp call *0701730921*.
   sendDocHelp:
     "📄 Tap 📎 → *File* → select DOC/PDF → send here.\n(Please don’t send as a photo.)",
   paymentHelp:
-    "🧾 Payment help:\n\n✅ Default method: *STK Push*\nSend a document → choose CHECK/RECHECK → enter phone → receive STK prompt.\n\nIf STK prompt delays, you can tap *Resend STK Push* (once).",
+    "🧾 Payment help:\n\n✅ Default method: *STK Push*\nSend a document → choose CHECK/RECHECK → enter phone → receive STK prompt.\n\nIf STK prompt delays, you can tap *Resend STK Push* once available.",
   askPhone: (kind, amount) =>
     `${kind} (${amount} KES).\nSend phone (07XXXXXXXX or 01XXXXXXXX or 2547XXXXXXXX or 2541XXXXXXXX).`,
   stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
@@ -139,16 +151,14 @@ If urgent, WhatsApp call *0701730921*.
   waitingConfirm: "Waiting for payment confirmation…",
   queueMsg: (kind, amount) =>
     `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n⏱ Reports take *10–20 minutes* (queue).`,
-  resendFailed:
-    "❌ STK resend failed.\n\nTry again in 1 minute, or change phone number.",
+  resendFailedWithTill:
+    "❌ STK resend failed.\n\nTry again in 1 minute, or use the Till option below.",
   tillInstructions: (till) =>
     "🏦 *Pay via Till instead (tap & hold to copy)*\n\n" +
     "✅ Lipa na M-PESA Till:\n" +
     `\`${till}\`\n\n` +
     "After paying, send the confirmation message/screenshot here.\n" +
     "An admin will confirm and activate your order.",
-  tillWaiting:
-    "✅ Till selected.\n\nAfter paying, send the M-PESA confirmation message or screenshot here.\nAn admin will confirm shortly.",
   manualPaidUser: (kind, amount, mpesaRef) =>
     `✅ Payment confirmed for *${kind}* (${amount} KES).\n` +
     `Ref: *${mpesaRef}*\n` +
@@ -160,11 +170,7 @@ If urgent, WhatsApp call *0701730921*.
 // =====================
 const bot = new Telegraf(botToken);
 
-const intasend = new IntaSend(
-  INTASEND_PUBLISHABLE_KEY,
-  INTASEND_SECRET_KEY,
-  INTASEND_TEST
-);
+const intasend = new IntaSend(INTASEND_PUBLISHABLE_KEY, INTASEND_SECRET_KEY, INTASEND_TEST);
 const collection = intasend.collection();
 
 const pendingFileTargets = {};
@@ -173,15 +179,6 @@ const submissions = {}; // userId -> state
 // paymentRefs[api_ref] = { userId, kind, amount, createdAt }
 let paymentRefs = {};
 const confirmedRefs = new Set();
-
-// =====================
-// SAFE DEBUG LOGS (Render env verification)
-// =====================
-console.log("INTASEND_TEST:", INTASEND_TEST);
-console.log("PUB len:", (INTASEND_PUBLISHABLE_KEY || "").length);
-console.log("SEC len:", (INTASEND_SECRET_KEY || "").length);
-console.log("PUB prefix:", (INTASEND_PUBLISHABLE_KEY || "").slice(0, 8));
-console.log("SEC prefix:", (INTASEND_SECRET_KEY || "").slice(0, 8));
 
 // =====================
 // PERSISTENCE
@@ -302,18 +299,13 @@ function typeInlineKeyboard() {
 }
 
 function paymentWaitKeyboard(sub) {
-  const rows = [];
-  const failCount = sub?.paymentFailCount || 0;
-  const resendCount = sub?.resendCount || 0;
+  const rows = [
+    [Markup.button.callback("🔁 Resend STK Push", "STK_RESEND")],
+    [Markup.button.callback("📞 Change phone number", "STK_CHANGE_PHONE")]
+  ];
 
-  const canResend = resendCount < STK_MAX_RESENDS && failCount < TILL_AFTER_PAYMENT_FAILS;
-  if (canResend) {
-    rows.push([Markup.button.callback("🔁 Resend STK Push", "STK_RESEND")]);
-  }
-
-  rows.push([Markup.button.callback("📞 Change phone number", "STK_CHANGE_PHONE")]);
-
-  if (failCount >= TILL_AFTER_PAYMENT_FAILS) {
+  // ✅ show till ONLY after ONE resend failure
+  if ((sub?.resendFailCount || 0) >= TILL_AFTER_RESEND_FAILS) {
     rows.push([Markup.button.callback("🏦 Pay via Till instead", "PAY_VIA_TILL")]);
   }
 
@@ -380,18 +372,15 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
     if (!sub) return;
     if (sub.paid) return;
     if (sub.api_ref !== apiRef) return;
-    if (![STAGE_WAIT_PAYMENT, STAGE_WAIT_TILL].includes(sub.stage)) return;
-
-    const msg =
-      sub.stage === STAGE_WAIT_TILL
-        ? "⏳ Still waiting for Till confirmation.\n\nIf you already paid, send the M-PESA confirmation message or screenshot here."
-        : "⏳ Still waiting for payment confirmation.\n\nIf you did not receive the STK prompt, tap *Resend STK Push* (once) or *Change phone number*.";
+    if (sub.stage !== STAGE_WAIT_PAYMENT) return;
 
     try {
-      await bot.telegram.sendMessage(userId, msg, {
-        parse_mode: "Markdown",
-        reply_markup: paymentWaitKeyboard(sub).reply_markup
-      });
+      await bot.telegram.sendMessage(
+        userId,
+        "⏳ Still waiting for payment confirmation.\n\n" +
+          "If you did not receive the STK prompt, tap *Resend STK Push* or *Change phone number*.",
+        { parse_mode: "Markdown", reply_markup: paymentWaitKeyboard(sub).reply_markup }
+      );
     } catch {}
   }, PAYMENT_TIMEOUT_MS);
 }
@@ -467,6 +456,10 @@ bot.command("reply", async (ctx) => {
   }
 });
 
+/**
+ * ✅ Manual confirmation for Till payments
+ * Usage: /markpaid <userId> <mpesaRef>
+ */
 bot.command("markpaid", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -564,6 +557,7 @@ bot.on("document", async (ctx) => {
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
   } catch {}
 
+  // Inactive hours: accept doc but do NOT start payment flow
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
   submissions[user.id] = {
@@ -577,7 +571,6 @@ bot.on("document", async (ctx) => {
     stkSentAt: null,
     resendCount: 0,
     resendFailCount: 0,
-    paymentFailCount: 0,
     invoiceId: ""
   };
 
@@ -624,13 +617,6 @@ bot.on("photo", async (ctx) => {
   } catch {}
 
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
-
-  const sub = submissions[user.id];
-  if (sub?.stage === STAGE_WAIT_TILL) {
-    await ctx.reply("✅ Received payment proof. Admin will confirm shortly.", { reply_markup: mainKeyboard() });
-    return;
-  }
-
   await ctx.reply("✅ Received.", { reply_markup: mainKeyboard() });
 });
 
@@ -714,19 +700,17 @@ bot.action("PAY_VIA_TILL", async (ctx) => {
     return notifyInactivePeriod(ctx);
   }
 
-  if (!sub || (sub.paymentFailCount || 0) < TILL_AFTER_PAYMENT_FAILS) {
+  // Only allow till if we hit the resend-fail threshold
+  if (!sub || (sub.resendFailCount || 0) < TILL_AFTER_RESEND_FAILS) {
     await ctx.answerCbQuery("Till not available yet.");
     return;
   }
-
-  sub.stage = STAGE_WAIT_TILL;
 
   await ctx.answerCbQuery("Till details");
   await ctx.reply(MESSAGES.tillInstructions(FALLBACK_TILL), {
     parse_mode: "Markdown",
     reply_markup: mainKeyboard()
   });
-  await ctx.reply(MESSAGES.tillWaiting, { reply_markup: mainKeyboard() });
 });
 
 bot.action("STK_RESEND", async (ctx) => {
@@ -744,7 +728,7 @@ bot.action("STK_RESEND", async (ctx) => {
 
   if (sub.resendCount >= STK_MAX_RESENDS) {
     await ctx.answerCbQuery("Resend limit reached.");
-    await ctx.reply("⚠️ Resend limit reached. Change phone number or use Till (when it appears).", {
+    await ctx.reply("⚠️ Resend limit reached. Change phone number or use Till (if available).", {
       parse_mode: "Markdown",
       reply_markup: paymentWaitKeyboard(sub).reply_markup
     });
@@ -772,23 +756,8 @@ bot.action("STK_RESEND", async (ctx) => {
       api_ref: sub.api_ref
     });
 
-    const invoiceId =
-      safeText(resp?.invoice_id || resp?.invoice?.invoice_id || resp?.invoiceId || sub.invoiceId);
-
-    sub.invoiceId = invoiceId;
+    sub.invoiceId = safeText(resp?.invoice_id || resp?.invoice?.invoice_id || resp?.invoiceId || sub.invoiceId);
     sub.stkSentAt = Date.now();
-
-    console.log("STK RESEND accepted:", {
-      userId,
-      api_ref: sub.api_ref,
-      invoiceId
-    });
-
-    await sendAdminMessage(
-      `✅ STK RESEND accepted:\nUser ID: ${userId}\napi_ref: ${safeText(sub.api_ref)}\ninvoice_id: ${invoiceId}\nPhone: ${safeText(
-        sub.phone
-      )}\nAmount: ${safeText(sub.amount)}\n(If user didn't receive prompt, it's likely Safaricom/M-Pesa delay or handset PIN prompt blocked.)`
-    );
 
     await ctx.reply("✅ STK Push resent. Pay on your phone — confirmation is automatic.", {
       reply_markup: mainKeyboard()
@@ -801,18 +770,12 @@ bot.action("STK_RESEND", async (ctx) => {
   } catch (err) {
     sub.resendFailCount = (sub.resendFailCount || 0) + 1;
 
-    const details = err?.response?.data || err?.body || err?.data || err?.message || String(err);
-
-    console.log("STK RESEND error:", details);
-
-    await ctx.reply(MESSAGES.resendFailed, {
+    await ctx.reply(MESSAGES.resendFailedWithTill, {
       reply_markup: paymentWaitKeyboard(sub).reply_markup
     });
 
     await sendAdminMessage(
-      `❌ STK RESEND error:\nUser ID: ${userId}\napi_ref: ${safeText(sub.api_ref)}\nDetails: ${safeText(
-        typeof details === "object" ? JSON.stringify(details) : details
-      ).slice(0, 1800)}`
+      `❌ STK RESEND error:\nUser ID: ${userId}\napi_ref: ${safeText(sub.api_ref)}\nError: ${safeText(err?.message || err)}`
     );
   }
 });
@@ -827,41 +790,27 @@ bot.on("text", async (ctx) => {
   if (text.startsWith("/")) return;
   if (user.id === ADMIN_ID) return;
 
+  // During inactive: NO phone/STK flow
   if (isBotInactivePeriod()) {
     await sendAdminMessage(
-      `💬 Message from user (inactive hours):\nUser ID: ${user.id}\nUsername: @${safeText(user.username || "N/A")}\n\n${safeText(
-        text
-      )}`
+      `💬 Message from user (inactive hours):\nUser ID: ${user.id}\nUsername: @${safeText(user.username || "N/A")}\n\n${safeText(text)}`
     );
     return notifyInactivePeriod(ctx);
   }
 
   const sub = submissions[user.id];
 
-  if (sub && sub.stage === STAGE_WAIT_TILL) {
-    await sendAdminMessage(
-      `🏦 TILL USER MESSAGE:\nUser ID: ${user.id}\nUsername: @${safeText(user.username || "N/A")}\n\n${safeText(text)}`
-    );
-    await sendAdminMessageMarkdown(adminQuickCommands(user.id));
-    await ctx.reply("✅ Received. Admin will confirm shortly.", { reply_markup: mainKeyboard() });
-    return;
-  }
-
+  // If waiting payment, keep them on buttons
   if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
     await ctx.reply(MESSAGES.waitingConfirm, { reply_markup: paymentWaitKeyboard(sub).reply_markup });
     return;
   }
 
+  // Phone entry
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
     if (!phone254) {
       return ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX / 01XXXXXXXX / 2547XXXXXXXX / 2541XXXXXXXX.");
-    }
-
-    if (!PUBLIC_BASE_URL) {
-      await ctx.reply("⚠️ Payment system misconfigured. Please try again later.", { reply_markup: mainKeyboard() });
-      await sendAdminMessage("❌ STK Push blocked: PUBLIC_BASE_URL missing/invalid.");
-      return;
     }
 
     sub.phone = phone254;
@@ -878,25 +827,11 @@ bot.on("text", async (ctx) => {
         api_ref: sub.api_ref
       });
 
-      const invoiceId = safeText(resp?.invoice_id || resp?.invoice?.invoice_id || resp?.invoiceId || "");
-
-      sub.invoiceId = invoiceId;
+      sub.invoiceId = safeText(resp?.invoice_id || resp?.invoice?.invoice_id || resp?.invoiceId || "");
       sub.stage = STAGE_WAIT_PAYMENT;
       sub.stkSentAt = Date.now();
       sub.resendCount = 0;
       sub.resendFailCount = 0;
-
-      console.log("STK PUSH accepted:", {
-        userId: user.id,
-        api_ref: sub.api_ref,
-        invoiceId
-      });
-
-      await sendAdminMessage(
-        `✅ STK PUSH accepted:\nUser ID: ${user.id}\napi_ref: ${safeText(sub.api_ref)}\ninvoice_id: ${invoiceId}\nPhone: ${safeText(
-          sub.phone
-        )}\nAmount: ${safeText(sub.amount)}\n\nIf user doesn't receive prompt:\n• Ensure M-Pesa is active\n• Ensure line is Safaricom\n• Check handset has no SIM toolkit issues\n• Sometimes delays happen—try resend once.`
-      );
 
       await ctx.reply(MESSAGES.stkSent);
       await ctx.reply(MESSAGES.waitingConfirm, { reply_markup: paymentWaitKeyboard(sub).reply_markup });
@@ -905,24 +840,21 @@ bot.on("text", async (ctx) => {
     } catch (err) {
       sub.stage = STAGE_WAIT_PHONE;
 
-      const details = err?.response?.data || err?.body || err?.data || err?.message || String(err);
-
-      console.log("STK PUSH error:", details);
-
       await ctx.reply(
         "❌ STK Push failed.\n\nPlease try again in 1 minute (send your phone number again).",
         { reply_markup: mainKeyboard() }
       );
 
       await sendAdminMessage(
-        `❌ STK Push error:\nUser ID: ${user.id}\napi_ref: ${safeText(sub.api_ref)}\nTestEnv: ${INTASEND_TEST}\nDetails: ${safeText(
-          typeof details === "object" ? JSON.stringify(details) : details
-        ).slice(0, 1800)}`
+        `❌ STK Push error:\nUser ID: ${user.id}\napi_ref: ${safeText(sub.api_ref)}\nError: ${safeText(
+          err?.message || err
+        )}\nTestEnv: ${INTASEND_TEST}`
       );
     }
     return;
   }
 
+  // Forward any other text to admin (includes Till confirmations)
   await sendAdminMessage(
     `💬 Message from user:\nUser ID: ${user.id}\nUsername: @${safeText(user.username || "N/A")}\n\n${safeText(text)}`
   );
@@ -936,6 +868,7 @@ bot.on("text", async (ctx) => {
 // =====================
 const app = express();
 
+// Capture raw body (webhook parsing fallback)
 app.use(
   express.json({
     limit: "2mb",
@@ -976,6 +909,7 @@ app.get("/intasend/webhook", (req, res) => {
 
 // IntaSend webhook (POST)
 app.post("/intasend/webhook", (req, res) => {
+  // ACK fast
   res.status(200).json({ ok: true });
 
   setImmediate(async () => {
@@ -1034,7 +968,6 @@ app.post("/intasend/webhook", (req, res) => {
       const amount = ref.amount || "";
 
       const sub = submissions[userId];
-
       if (sub && sub.api_ref === apiRef) sub.invoiceId = safeText(invoiceId || sub.invoiceId);
 
       if (state === "COMPLETE") {
@@ -1061,50 +994,23 @@ app.post("/intasend/webhook", (req, res) => {
       if (["FAILED", "CANCELLED", "EXPIRED"].includes(state)) {
         if (sub && sub.api_ref === apiRef) {
           sub.paid = false;
-          sub.paymentFailCount = (sub.paymentFailCount || 0) + 1;
-
-          if (sub.stage !== STAGE_WAIT_TILL) {
-            sub.stage = STAGE_WAIT_PAYMENT;
-          }
+          sub.stage = STAGE_WAIT_PAYMENT;
         }
-
-        const failCount = sub?.paymentFailCount || 0;
-
-        if (sub?.stage === STAGE_WAIT_TILL) {
-          await sendAdminMessage(
-            `⚠️ PAYMENT ${state} (user already on TILL):\nUser ID: ${userId}\nType: ${kind}\napi_ref: ${apiRef}\ninvoice_id: ${safeText(
-              invoiceId
-            )}\nfailCount: ${failCount}`
-          );
-          await sendAdminMessageMarkdown(adminQuickCommands(userId));
-          return;
-        }
-
-        const msg =
-          failCount >= TILL_AFTER_PAYMENT_FAILS
-            ? `❌ Payment ${state.toLowerCase()} for *${kind}*.\n\nSTK has failed twice. You can now pay via Till below.`
-            : `❌ Payment ${state.toLowerCase()} for *${kind}*.\n\nTap *Resend STK Push* (once) or *Change phone number* to try again.`;
 
         try {
-          await bot.telegram.sendMessage(userId, msg, {
-            parse_mode: "Markdown",
-            reply_markup: paymentWaitKeyboard(sub).reply_markup
-          });
+          await bot.telegram.sendMessage(
+            userId,
+            `❌ Payment ${state.toLowerCase()} for *${kind}*.\n\nTap *Resend STK Push* or *Change phone number* to try again.`,
+            { parse_mode: "Markdown", reply_markup: paymentWaitKeyboard(sub).reply_markup }
+          );
         } catch (e) {
           await sendAdminMessage(`❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`);
         }
 
         await sendAdminMessage(
-          `⚠️ PAYMENT ${state}:\nUser ID: ${userId}\nType: ${kind}\napi_ref: ${apiRef}\ninvoice_id: ${safeText(
-            invoiceId
-          )}\nfailCount: ${failCount}`
+          `⚠️ PAYMENT ${state}:\nUser ID: ${userId}\nType: ${kind}\napi_ref: ${apiRef}\ninvoice_id: ${safeText(invoiceId)}`
         );
         await sendAdminMessageMarkdown(adminQuickCommands(userId));
-      }
-
-      // Optional: log pending
-      if (state === "PENDING") {
-        console.log("Payment pending:", { apiRef, invoiceId });
       }
     } catch (err) {
       console.error("Async IntaSend processing error:", err?.message || err);
@@ -1122,6 +1028,7 @@ app.listen(port, async () => {
   console.log(`IntaSend test env: ${INTASEND_TEST}`);
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL || "(missing/invalid)"}`);
 
+  // ✅ Only set Telegram webhook if we have a valid https base url
   if (!PUBLIC_BASE_URL) {
     console.error("❌ PUBLIC_BASE_URL is missing/invalid. Telegram webhook will NOT be set.");
     console.error("   Fix: set PUBLIC_BASE_URL to your Render URL, e.g. https://jk-turnitin-telegram-bot.onrender.com");
@@ -1142,4 +1049,5 @@ app.listen(port, async () => {
  * ✅ IMPORTANT:
  * In webhook mode we DO NOT call bot.launch().
  * Also do NOT call bot.stop() — it can throw "Bot is not running!"
+ * So we intentionally avoid Telegraf.stop() handlers here.
  */
