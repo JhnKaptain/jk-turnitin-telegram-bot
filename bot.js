@@ -1,10 +1,13 @@
 /**
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
- * + IntaSend STK Push (default)
+ * + IntaSend STK Push (default) + IntaSend Webhook confirmation
  *
- * FIX:
- * ✅ Removes duplicate inline buttons: buttons appear ONLY on "Waiting for payment confirmation..."
- *    - "✅ STK Push sent..." messages become plain text (no buttons)
+ * FIXES:
+ * ✅ Buttons appear ONLY on "Waiting for payment confirmation..."
+ * ✅ STK resend cooldown is configurable
+ * ✅ Proper IntaSend webhook processing: COMPLETE / FAILED / CANCELLED / EXPIRED / PENDING
+ * ✅ Notifies BOTH user and admin on COMPLETE
+ * ✅ Persists api_ref mappings to disk so confirmations still work after restarts
  */
 
 require("dotenv").config();
@@ -45,11 +48,14 @@ if (!PUBLIC_BASE_URL) {
   process.exit(1);
 }
 
+// IntaSend webhook verification challenge (optional)
 const INTASEND_WEBHOOK_CHALLENGE = process.env.INTASEND_WEBHOOK_CHALLENGE || "";
+
+// Test vs Live
 const INTASEND_TEST =
   String(process.env.INTASEND_TEST_ENVIRONMENT || "true").toLowerCase() === "true";
 
-// ✅ strict key selection by environment
+// Strict key selection by environment
 const INTASEND_PUBLISHABLE_KEY = INTASEND_TEST
   ? (process.env.INTASEND_TEST_PUBLISHABLE_KEY || "")
   : (process.env.INTASEND_LIVE_PUBLISHABLE_KEY || "");
@@ -80,7 +86,7 @@ const TILL_NUMBER = "6164915";
 const INACTIVE_START_UTC = "21:00";
 const INACTIVE_END_UTC = "03:00";
 
-// Buttons
+// Buttons (reply keyboard)
 const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Payment Help";
 const KEY_CANCEL = "❌ Cancel / New submission";
@@ -92,7 +98,8 @@ const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
 const STAGE_PAID = "PAID";
 
 // Retry behavior
-const STK_RESEND_COOLDOWN_MS = 2 * 60 * 1000;
+// ✅ If you want faster retries after cancellation, set to 45*1000 or 30*1000
+const STK_RESEND_COOLDOWN_MS = 45 * 1000; // 45 seconds
 const STK_MAX_RESENDS = 3;
 const PAYMENT_TIMEOUT_MS = 6 * 60 * 1000;
 
@@ -130,7 +137,9 @@ If urgent, WhatsApp call *0701730921*.
   stkSentSimple: "✅ STK Push sent. Pay on your phone — confirmation is automatic.",
   stkSentWithTill: (till) =>
     `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till *${till}* and send proof here.`,
-  waitingConfirm: "Waiting for payment confirmation…"
+  waitingConfirm: "Waiting for payment confirmation…",
+  paidMsg: (kind, amount) =>
+    `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n⏱ Reports take *10–20 minutes* (queue).`
 };
 
 // =====================
@@ -141,9 +150,9 @@ const bot = new Telegraf(BOT_TOKEN);
 const intasend = new IntaSend(INTASEND_PUBLISHABLE_KEY, INTASEND_SECRET_KEY, INTASEND_TEST);
 const collection = intasend.collection();
 
-const pendingFileTargets = {};
-const submissions = {};
+const submissions = {}; // userId -> submission state
 
+// paymentRefs[api_ref] = { userId, kind, amount, createdAt }
 let paymentRefs = {};
 const confirmedRefs = new Set();
 
@@ -179,6 +188,20 @@ function getPaymentRef(api_ref) {
 }
 loadStore();
 
+// Cleanup old refs (7 days)
+setInterval(() => {
+  const now = Date.now();
+  const cutoff = 7 * 24 * 60 * 60 * 1000;
+  let changed = false;
+  for (const [k, v] of Object.entries(paymentRefs)) {
+    if (v?.createdAt && now - v.createdAt > cutoff) {
+      delete paymentRefs[k];
+      changed = true;
+    }
+  }
+  if (changed) saveStore();
+}, 6 * 60 * 60 * 1000);
+
 // =====================
 // HELPERS
 // =====================
@@ -211,13 +234,6 @@ async function sendAdminMessage(text) {
   try {
     await bot.telegram.sendMessage(ADMIN_ID, text);
   } catch {}
-}
-async function sendAdminMessageMarkdown(text) {
-  try {
-    await bot.telegram.sendMessage(ADMIN_ID, text, { parse_mode: "Markdown" });
-  } catch {
-    try { await bot.telegram.sendMessage(ADMIN_ID, text); } catch {}
-  }
 }
 function makeApiRef(userId, kind) {
   return `JK_${kind}_${userId}_${Date.now()}`;
@@ -275,7 +291,44 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
 }
 
 // =====================
-// STK PUSH (no duplicate buttons)
+// INTASEND WEBHOOK HELPERS
+// =====================
+function extractApiRef(payload) {
+  return (
+    payload.api_ref ||
+    payload.apiRef ||
+    payload.invoice?.api_ref ||
+    payload.invoice?.apiRef ||
+    payload.data?.api_ref ||
+    payload.data?.apiRef ||
+    payload.payload?.api_ref ||
+    payload.payload?.apiRef
+  );
+}
+function extractState(payload) {
+  return (
+    payload.state ||
+    payload.status ||
+    payload.invoice?.state ||
+    payload.invoice?.status ||
+    payload.data?.state ||
+    payload.data?.status ||
+    payload.payload?.state ||
+    payload.payload?.status
+  );
+}
+function normalizeWebhookState(raw) {
+  const s = String(raw || "").trim().toUpperCase();
+  if (["COMPLETE", "COMPLETED", "SUCCESS", "SUCCEEDED"].includes(s)) return "COMPLETE";
+  if (["FAILED", "FAIL", "ERROR"].includes(s)) return "FAILED";
+  if (["CANCELLED", "CANCELED"].includes(s)) return "CANCELLED";
+  if (["EXPIRED", "TIMEOUT", "TIMEDOUT"].includes(s)) return "EXPIRED";
+  if (["PENDING", "PROCESSING", "IN_PROGRESS", "INPROGRESS"].includes(s)) return "PENDING";
+  return s || "UNKNOWN";
+}
+
+// =====================
+// STK PUSH (buttons only on waiting)
 // =====================
 async function attemptStkPush(ctx, sub, { mode }) {
   const userId = ctx.from.id;
@@ -288,7 +341,9 @@ async function attemptStkPush(ctx, sub, { mode }) {
 
   // cooldown for resend
   if (mode === "resend" && sub.stkSentAt && Date.now() - sub.stkSentAt < STK_RESEND_COOLDOWN_MS) {
-    await ctx.answerCbQuery?.("Please wait a bit.");
+    const remainingMs = STK_RESEND_COOLDOWN_MS - (Date.now() - sub.stkSentAt);
+    const remainingSec = Math.ceil(remainingMs / 1000);
+    await ctx.answerCbQuery?.(`Wait ${remainingSec}s`);
     return;
   }
 
@@ -298,14 +353,11 @@ async function attemptStkPush(ctx, sub, { mode }) {
       await ctx.reply(`⚠️ Resend limit reached.\n\nPay via Till *${TILL_NUMBER}* and send proof here.`, {
         parse_mode: "Markdown"
       });
-      // buttons remain on the existing "Waiting..." message only
       return;
     }
   }
 
-  if (mode === "initial") {
-    await ctx.reply(MESSAGES.stkSending);
-  }
+  if (mode === "initial") await ctx.reply(MESSAGES.stkSending);
 
   try {
     await collection.mpesaStkPush({
@@ -321,14 +373,14 @@ async function attemptStkPush(ctx, sub, { mode }) {
     sub.stage = STAGE_WAIT_PAYMENT;
     sub.stkSentAt = Date.now();
 
-    // ✅ NO BUTTONS on these messages
+    // ✅ NO BUTTONS HERE
     if (mode === "resend") {
       await ctx.reply(MESSAGES.stkSentWithTill(TILL_NUMBER), { parse_mode: "Markdown" });
     } else {
       await ctx.reply(MESSAGES.stkSentSimple);
     }
 
-    // ✅ BUTTONS ONLY HERE (single set)
+    // ✅ BUTTONS ONLY HERE
     await ctx.reply(MESSAGES.waitingConfirm, {
       reply_markup: paymentWaitKeyboard(sub).reply_markup
     });
@@ -337,7 +389,6 @@ async function attemptStkPush(ctx, sub, { mode }) {
   } catch (err) {
     sub.stage = STAGE_WAIT_PAYMENT;
 
-    // ✅ single message with buttons
     await ctx.reply("❌ STK Push failed.\nTap *Resend STK Push* to try again.", {
       parse_mode: "Markdown",
       reply_markup: paymentWaitKeyboard(sub).reply_markup
@@ -355,14 +406,10 @@ async function attemptStkPush(ctx, sub, { mode }) {
 // START
 // =====================
 bot.start(async (ctx) => {
-  const user = ctx.from;
-
-  if (user.id === ADMIN_ID) {
+  if (ctx.from.id === ADMIN_ID) {
     await replyMarkdownSafe(
       ctx,
-      "👋 Admin mode is ready.\n\n" +
-        "📩 Reply as bot:\n`/reply <userId> <message>`\n\n" +
-        "✅ Confirm Till/manual payments:\n`/markpaid <userId> <mpesaRef>`",
+      "👋 Admin mode is ready.",
       { reply_markup: mainKeyboard() }
     );
     return;
@@ -389,20 +436,18 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
 });
 
 bot.hears(KEY_CANCEL, async (ctx) => {
-  const userId = ctx.from.id;
-  delete submissions[userId];
+  delete submissions[ctx.from.id];
   await ctx.reply("❌ Cancelled. Send a new document to start again.", { reply_markup: mainKeyboard() });
 });
 
 // =====================
-// TYPE SELECTION
+// FLOW: Document -> Type -> Phone -> STK
 // =====================
 bot.on("document", async (ctx) => {
-  const user = ctx.from;
-
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
-  submissions[user.id] = {
+  const userId = ctx.from.id;
+  submissions[userId] = {
     stage: STAGE_WAIT_TYPE,
     kind: null,
     amount: null,
@@ -480,7 +525,6 @@ bot.action("STK_RESEND", async (ctx) => {
   if (!sub) return ctx.answerCbQuery("No active session.");
 
   await ctx.answerCbQuery("Resending...");
-
   if (!sub.phone) {
     sub.stage = STAGE_WAIT_PHONE;
     await ctx.reply("📞 Please send your phone number again.", { reply_markup: mainKeyboard() });
@@ -491,7 +535,7 @@ bot.action("STK_RESEND", async (ctx) => {
 });
 
 // =====================
-// TEXT HANDLER
+// TEXT HANDLER (Phone entry)
 // =====================
 bot.on("text", async (ctx) => {
   const user = ctx.from;
@@ -506,25 +550,26 @@ bot.on("text", async (ctx) => {
 
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
-    if (!phone254) return ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX / 01XXXXXXXX / 2547XXXXXXXX / 2541XXXXXXXX.");
+    if (!phone254) {
+      return ctx.reply("❌ Invalid phone. Send like 07XXXXXXXX / 01XXXXXXXX / 2547XXXXXXXX / 2541XXXXXXXX.");
+    }
     sub.phone = phone254;
     await attemptStkPush(ctx, sub, { mode: "initial" });
     return;
   }
 
-  if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
-    // do nothing; they already have the buttons on the waiting message
-    return;
-  }
+  // If waiting, do nothing: they already have the buttons
+  if (sub && sub.stage === STAGE_WAIT_PAYMENT) return;
 
   if (!sub) return ctx.reply("Send your document first to start.", { reply_markup: mainKeyboard() });
 });
 
 // =====================
-// EXPRESS SERVER + TELEGRAM WEBHOOK
+// EXPRESS SERVER + WEBHOOKS
 // =====================
 const app = express();
 
+// Capture raw body (IntaSend sometimes posts form-encoded)
 app.use(
   express.json({
     limit: "2mb",
@@ -538,6 +583,7 @@ app.use(
   })
 );
 
+// Telegram webhook endpoint
 app.use(bot.webhookCallback("/webhook"));
 
 app.get("/", (req, res) => res.status(200).send("OK"));
@@ -550,7 +596,7 @@ app.get("/health", (req, res) =>
   })
 );
 
-// IntaSend webhook challenge (GET) kept (optional)
+// IntaSend webhook challenge (GET)
 app.get("/intasend/webhook", (req, res) => {
   const qChallenge = req.query?.challenge;
   if (!qChallenge) return res.status(200).send("OK");
@@ -561,10 +607,113 @@ app.get("/intasend/webhook", (req, res) => {
   return res.status(200).send(qChallenge);
 });
 
+// ✅ IntaSend webhook (POST) — processes payment confirmation
 app.post("/intasend/webhook", (req, res) => {
+  // ACK fast
   res.status(200).json({ ok: true });
+
+  setImmediate(async () => {
+    try {
+      let payload = req.body;
+
+      const bodyIsEmptyObj =
+        payload && typeof payload === "object" && !Array.isArray(payload) && Object.keys(payload).length === 0;
+
+      if (!payload || typeof payload === "string" || bodyIsEmptyObj) {
+        const raw = (req.rawBody || "").trim();
+        if (raw) {
+          try {
+            payload = JSON.parse(raw);
+          } catch {
+            payload = qs.parse(raw);
+          }
+        } else {
+          payload = {};
+        }
+      }
+
+      // Optional challenge check
+      if (payload.challenge && INTASEND_WEBHOOK_CHALLENGE && payload.challenge !== INTASEND_WEBHOOK_CHALLENGE) {
+        await sendAdminMessage("⚠️ IntaSend webhook: invalid challenge received.");
+        return;
+      }
+
+      const apiRef = extractApiRef(payload);
+      const stateRaw = extractState(payload);
+      const state = normalizeWebhookState(stateRaw);
+
+      if (!apiRef) return;
+
+      // Dedupe repeated COMPLETE notifications
+      if (state === "COMPLETE") {
+        if (confirmedRefs.has(apiRef)) return;
+        confirmedRefs.add(apiRef);
+      }
+
+      const ref = getPaymentRef(apiRef);
+      if (!ref) {
+        await sendAdminMessage(`⚠️ IntaSend webhook: unknown api_ref ${apiRef}\nState: ${state}`);
+        return;
+      }
+
+      const userId = ref.userId;
+      const kind = ref.kind || "CHECK/RECHECK";
+      const amount = ref.amount || "";
+
+      const sub = submissions[userId];
+
+      if (state === "COMPLETE") {
+        if (sub && sub.api_ref === apiRef) {
+          sub.paid = true;
+          sub.stage = STAGE_PAID;
+        }
+
+        // Notify user
+        try {
+          await bot.telegram.sendMessage(userId, MESSAGES.paidMsg(kind, amount), {
+            parse_mode: "Markdown"
+          });
+        } catch (e) {
+          await sendAdminMessage(`❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`);
+        }
+
+        // Notify admin
+        await sendAdminMessage(
+          `✅ PAYMENT COMPLETE\nUser: ${userId}\nType: ${kind}\nAmount: ${amount ? `${amount} KES` : "N/A"}\napi_ref: ${apiRef}\nMode: ${
+            INTASEND_TEST ? "TEST" : "LIVE"
+          }`
+        );
+        return;
+      }
+
+      // Failed/Cancelled/Expired -> notify user with retry buttons
+      if (["FAILED", "CANCELLED", "EXPIRED"].includes(state)) {
+        if (sub && sub.api_ref === apiRef) {
+          sub.paid = false;
+          sub.stage = STAGE_WAIT_PAYMENT;
+        }
+
+        try {
+          await bot.telegram.sendMessage(
+            userId,
+            `❌ Payment ${state.toLowerCase()}.\nTap *Resend STK Push* to try again.`,
+            { parse_mode: "Markdown", reply_markup: paymentWaitKeyboard(sub).reply_markup }
+          );
+        } catch (e) {
+          await sendAdminMessage(`❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`);
+        }
+
+        await sendAdminMessage(`⚠️ PAYMENT ${state}\nUser: ${userId}\nType: ${kind}\napi_ref: ${apiRef}`);
+      }
+    } catch (err) {
+      console.error("Async IntaSend processing error:", err?.message || err);
+    }
+  });
 });
 
+// =====================
+// START SERVER + SET TELEGRAM WEBHOOK
+// =====================
 const port = process.env.PORT || 3000;
 
 app.listen(port, async () => {
