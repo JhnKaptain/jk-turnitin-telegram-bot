@@ -2,25 +2,20 @@
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * + IntaSend STK Push (default) + Webhook confirmation
  *
- * HARD FIXES:
+ * FIXES IN THIS VERSION:
+ * ✅ Fix Telegram webhook 400 by enforcing a valid PUBLIC_BASE_URL (https://...)
+ * ✅ Avoid crash on deploy/shutdown: do NOT call bot.stop() in webhook mode
+ * ✅ Show Till option after ONE failed STK RESEND (manual admin confirmation via /markpaid)
  * ✅ NO prompts during inactive hours (12:00 AM – 6:00 AM EAT)
- *    - users can still send docs/photos/text → forwarded to admin
- *    - bot does NOT show type buttons, does NOT accept phone, does NOT STK
  * ✅ Handles IntaSend webhook states COMPLETE + FAILED/CANCELLED/EXPIRED/PENDING
  * ✅ Adds Resend STK / Change phone / Cancel buttons
  * ✅ Adds payment timeout reminders
  * ✅ Persists payment refs to disk (reduces missed confirmations after restart)
  * ✅ Admin messages PLAIN TEXT by default
- * ✅ Admin receives ONLY key messages: start, document received, PAYMENT COMPLETE/FAILED
- *
- * TILL FALLBACK (IMPORTANT):
- * ✅ Till option appears ONLY after ONE FAILED STK RESEND (not after payment failure)
- * ✅ Till payments are MANUAL (not IntaSend) → admin confirms via /markpaid
  *
  * PRICING + SETTINGS:
  * ✅ CHECK price: 140 KES
  * ✅ RECHECK price: 130 KES
- * ✅ Inactive window: 12:00 AM – 6:00 AM EAT (resume 6:00 AM)
  * ✅ Queue message: reports take 10–20 minutes (queue)
  */
 
@@ -43,11 +38,23 @@ if (!botToken) {
   process.exit(1);
 }
 
-const PUBLIC_BASE_URL =
-  process.env.PUBLIC_BASE_URL || "https://jk-turnitin-telegram-bot-1.onrender.com";
+function normalizeBaseUrl(url) {
+  const u = String(url || "").trim().replace(/\/+$/, ""); // remove trailing slashes
+  if (!u) return "";
+  if (!/^https:\/\//i.test(u)) return ""; // Telegram requires https for webhook
+  return u;
+}
 
-const INTASEND_WEBHOOK_CHALLENGE =
-  process.env.INTASEND_WEBHOOK_CHALLENGE || "";
+const PUBLIC_BASE_URL = normalizeBaseUrl(process.env.PUBLIC_BASE_URL) ||
+  "https://jk-turnitin-telegram-bot.onrender.com"; // fallback only
+
+if (!/^https:\/\//i.test(PUBLIC_BASE_URL)) {
+  console.error("❌ PUBLIC_BASE_URL must start with https:// and be publicly reachable.");
+  console.error("   Example: https://jk-turnitin-telegram-bot.onrender.com");
+  process.exit(1);
+}
+
+const INTASEND_WEBHOOK_CHALLENGE = process.env.INTASEND_WEBHOOK_CHALLENGE || "";
 
 // IMPORTANT: For live use set INTASEND_TEST_ENVIRONMENT=false
 const INTASEND_TEST =
@@ -55,7 +62,7 @@ const INTASEND_TEST =
 
 /**
  * Render sometimes has keys stored under different names.
- * We support a few fallbacks to avoid “works then fails” after redeploy.
+ * We support a few fallbacks.
  */
 const INTASEND_PUBLISHABLE_KEY =
   process.env.INTASEND_PUBLISHABLE_KEY ||
@@ -72,18 +79,17 @@ const INTASEND_SECRET_KEY =
 if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
   console.error("❌ Missing IntaSend keys in environment variables.");
   console.error("   Needed: INTASEND_PUBLISHABLE_KEY and INTASEND_SECRET_KEY");
-  console.error("   (Add them in Render → Service → Environment)");
   process.exit(1);
 }
 
 // ⭐ Your Telegram numeric ID
 const ADMIN_ID = 6569201830;
 
-// 💰 Pricing  ✅ (CHANGE HERE WHEN NEEDED)
+// 💰 Pricing ✅ (CHANGE HERE WHEN NEEDED)
 const CHECK_PRICE_KES = 140;   // <-- edit this
 const RECHECK_PRICE_KES = 130; // <-- edit this
 
-// Till fallback
+// Till fallback (manual confirmation)
 const FALLBACK_TILL = "6164915";
 
 // Inactive window: 12:00 AM – 6:00 AM EAT (EAT = UTC+3) => UTC: 21:00 – 03:00
@@ -456,7 +462,6 @@ bot.command("markpaid", async (ctx) => {
 
   const sub = submissions[userId];
   if (!sub || !sub.kind || !sub.amount) {
-    // still allow, but warn
     await ctx.reply("⚠️ No active submission found for that user. I’ll still notify them.");
     try {
       await bot.telegram.sendMessage(
@@ -592,7 +597,6 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  // Always inform admin
   await sendAdminMessage(
     `🖼️ Photo from user:\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nUsername: @${safeText(
       user.username || "N/A"
@@ -624,9 +628,7 @@ bot.action("TYPE_CHECK", async (ctx) => {
   sub.kind = "CHECK";
   sub.amount = CHECK_PRICE_KES;
   sub.api_ref = makeApiRef(userId, "CHECK");
-
   putPaymentRef(sub.api_ref, { userId, kind: sub.kind, amount: sub.amount, createdAt: Date.now() });
-
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("CHECK selected");
@@ -646,9 +648,7 @@ bot.action("TYPE_RECHECK", async (ctx) => {
   sub.kind = "RECHECK";
   sub.amount = RECHECK_PRICE_KES;
   sub.api_ref = makeApiRef(userId, "RECHECK");
-
   putPaymentRef(sub.api_ref, { userId, kind: sub.kind, amount: sub.amount, createdAt: Date.now() });
-
   sub.stage = STAGE_WAIT_PHONE;
 
   await ctx.answerCbQuery("RECHECK selected");
@@ -692,7 +692,6 @@ bot.action("PAY_VIA_TILL", async (ctx) => {
     return notifyInactivePeriod(ctx);
   }
 
-  // only allow till if we already hit the resend-fail threshold
   if (!sub || (sub.resendFailCount || 0) < TILL_AFTER_RESEND_FAILS) {
     await ctx.answerCbQuery("Till not available yet.");
     return;
@@ -874,13 +873,15 @@ app.use(
 
 app.use(bot.webhookCallback("/webhook"));
 
+// ✅ IMPORTANT: make sure Render URL matches this service.
+// If PUBLIC_BASE_URL is wrong, Telegram will reject it with 400.
 bot.telegram.setWebhook(`${PUBLIC_BASE_URL}/webhook`).catch((e) => {
   console.error("Failed to set Telegram webhook:", e?.message || e);
 });
 
 app.get("/", (req, res) => res.status(200).send("OK"));
 app.get("/health", (req, res) =>
-  res.status(200).json({ ok: true, timeUtc: moment.utc().format(), intasendTest: INTASEND_TEST })
+  res.status(200).json({ ok: true, baseUrl: PUBLIC_BASE_URL, timeUtc: moment.utc().format(), intasendTest: INTASEND_TEST })
 );
 
 // IntaSend webhook challenge (GET)
@@ -969,9 +970,7 @@ app.post("/intasend/webhook", (req, res) => {
         }
 
         await sendAdminMessage(
-          `✅ PAYMENT COMPLETE:\nUser ID: ${userId}\nType: ${kind}\nAmount: ${amount ? `${amount} KES` : "N/A"}\napi_ref: ${apiRef}\ninvoice_id: ${safeText(
-            invoiceId
-          )}`
+          `✅ PAYMENT COMPLETE:\nUser ID: ${userId}\nType: ${kind}\nAmount: ${amount ? `${amount} KES` : "N/A"}\napi_ref: ${apiRef}\ninvoice_id: ${safeText(invoiceId)}`
         );
         await sendAdminMessageMarkdown(adminQuickCommands(userId));
         return;
@@ -997,7 +996,6 @@ app.post("/intasend/webhook", (req, res) => {
           `⚠️ PAYMENT ${state}:\nUser ID: ${userId}\nType: ${kind}\napi_ref: ${apiRef}\ninvoice_id: ${safeText(invoiceId)}`
         );
         await sendAdminMessageMarkdown(adminQuickCommands(userId));
-        return;
       }
     } catch (err) {
       console.error("Async IntaSend processing error:", err?.message || err);
@@ -1011,12 +1009,12 @@ app.post("/intasend/webhook", (req, res) => {
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Webhook server listening on port ${port}`);
+  console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
+  console.log(`Telegram webhook: ${PUBLIC_BASE_URL}/webhook`);
   console.log(`IntaSend test env: ${INTASEND_TEST}`);
 });
 
-process.once("SIGINT", () => {
-  try { bot.stop("SIGINT"); } catch {}
-});
-process.once("SIGTERM", () => {
-  try { bot.stop("SIGTERM"); } catch {}
-});
+// ✅ IMPORTANT: do NOT call bot.stop() in webhook mode on Render.
+// It can throw "Bot is not running!" during deploy/termination.
+process.once("SIGINT", () => {});
+process.once("SIGTERM", () => {});
