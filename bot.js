@@ -2,14 +2,12 @@
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * + IntaSend STK Push (default) + IntaSend Webhook confirmation
  *
- * FIXES:
- * ✅ Restores admin receiving user files/photos/messages + admin send tools (/reply, /file, /file2)
- * ✅ Buttons appear ONLY on "Waiting for payment confirmation..." (no duplicates)
- * ✅ STK resend cooldown is configurable
- * ✅ Proper IntaSend webhook processing: COMPLETE / FAILED / CANCELLED / EXPIRED / PENDING
- * ✅ Notifies BOTH user and admin on COMPLETE
- * ✅ Persists api_ref mappings to disk so confirmations still work after restarts
- * ✅ Inactive hours: no payment prompts, but still forwards user content to admin
+ * CHANGES (only what you requested):
+ * ✅ Admin quick commands are clickable (no "<message>" text)
+ * ✅ Till number is tap-to-copy (wrapped in backticks)
+ * ✅ Resend cooldown reduced to 30 seconds (only affects clicking Resend STK Push)
+ *
+ * EVERYTHING ELSE unchanged.
  */
 
 require("dotenv").config();
@@ -102,7 +100,8 @@ const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
 const STAGE_PAID = "PAID";
 
 // Retry behavior
-const STK_RESEND_COOLDOWN_MS = 45 * 1000; // 45 seconds
+// ✅ Reduced per your request (resend button only)
+const STK_RESEND_COOLDOWN_MS = 30 * 1000; // 30 seconds
 const STK_MAX_RESENDS = 3;
 const PAYMENT_TIMEOUT_MS = 6 * 60 * 1000;
 
@@ -138,8 +137,9 @@ If urgent, WhatsApp call *0701730921*.
     `${kind} (${amount} KES).\nSend phone (07XXXXXXXX or 01XXXXXXXX or 2547XXXXXXXX or 2541XXXXXXXX).`,
   stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
   stkSentSimple: "✅ STK Push sent. Pay on your phone — confirmation is automatic.",
+  // ✅ till is tap-to-copy via backticks
   stkSentWithTill: (till) =>
-    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till *${till}* and send proof here.`,
+    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till \`${till}\` and send proof here.`,
   waitingConfirm: "Waiting for payment confirmation…",
   paidMsg: (kind, amount) =>
     `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n⏱ Reports take *10–20 minutes* (queue).`
@@ -238,16 +238,24 @@ async function replyMarkdownSafe(ctx, message, extra = {}) {
 function safeText(s) {
   return (s || "").toString();
 }
-async function sendAdminMessage(text) {
+async function sendAdminMessage(text, extra = {}) {
   try {
-    await bot.telegram.sendMessage(ADMIN_ID, text);
+    // ✅ allow Markdown so backticked commands are tappable
+    await bot.telegram.sendMessage(ADMIN_ID, text, { parse_mode: "Markdown", ...extra });
   } catch (e) {
-    console.error("Admin message failed:", e?.message || e);
+    try {
+      await bot.telegram.sendMessage(ADMIN_ID, text, extra);
+    } catch (e2) {
+      console.error("Admin message failed:", e2?.message || e2);
+    }
   }
 }
+
+// ✅ clickable/tappable commands (backticks) + NO "<message>" wording
 function adminQuickCommands(userId) {
-  return `\n\n/file ${userId}\n/file2 ${userId}\n/reply ${userId} <message>`;
+  return `\n\n\`/file ${userId}\`\n\`/file2 ${userId}\`\n\`/reply ${userId}\``;
 }
+
 function makeApiRef(userId, kind) {
   return `JK_${kind}_${userId}_${Date.now()}`;
 }
@@ -363,7 +371,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
   if (mode === "resend") {
     sub.resendCount = (sub.resendCount || 0) + 1;
     if (sub.resendCount > STK_MAX_RESENDS) {
-      await ctx.reply(`⚠️ Resend limit reached.\n\nPay via Till *${TILL_NUMBER}* and send proof here.`, {
+      await ctx.reply(`⚠️ Resend limit reached.\n\nPay via Till \`${TILL_NUMBER}\` and send proof here.`, {
         parse_mode: "Markdown"
       });
       return;
@@ -690,7 +698,7 @@ bot.on("text", async (ctx) => {
   // admin text is normal; admin uses /reply to message users
   if (user.id === ADMIN_ID) return;
 
-  // always forward user messages to admin
+  // always forward user messages to admin (tappable commands)
   await sendAdminMessage(
     `💬 Message from user\nUser ID: ${user.id}\nUsername: @${safeText(user.username || "N/A")}\n\n${safeText(
       text
