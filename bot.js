@@ -1,4 +1,4 @@
-/**
+/** 
  * JK Turnitin Reports Bot — Telegraf + Express Webhook
  * + IntaSend STK Push (default) + IntaSend Webhook confirmation
  *
@@ -84,8 +84,8 @@ const RECHECK_PRICE_KES = 130;
 // Till
 const TILL_NUMBER = "6164915";
 
-// Inactive window: 12:00 AM – 6:00 AM EAT (UTC+3 => UTC 21:00–03:00)
-const INACTIVE_START_UTC = "21:00";
+// Inactive window: 03:00 AM – 6:00 AM EAT (UTC+3 => UTC 00:00–03:00)
+const INACTIVE_START_UTC = "00:00";
 const INACTIVE_END_UTC = "03:00";
 
 // Reply keyboard
@@ -139,7 +139,7 @@ If urgent, WhatsApp call *0701730921*.
   stkSentSimple: "✅ STK Push sent. Pay on your phone — confirmation is automatic.",
   // ✅ till is tap-to-copy via backticks
   stkSentWithTill: (till) =>
-    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till \`${till}\` and send proof here.`,
+    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till:\n\`\`\`\n${till}\n\`\`\`\nSend proof here.`,
   waitingConfirm: "Waiting for payment confirmation…",
   paidMsg: (kind, amount) =>
     `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n⏱ Reports take *10–20 minutes* (queue).`
@@ -253,7 +253,7 @@ async function sendAdminMessage(text, extra = {}) {
 
 // ✅ clickable/tappable commands (backticks) + NO "<message>" wording
 function adminQuickCommands(userId) {
-  return `\n\n\`/file ${userId}\`\n\`/file2 ${userId}\`\n\`/reply ${userId}\``;
+  return `\n\n\`\`\`\n/file ${userId}\n/file2 ${userId}\n/reply ${userId}\n\`\`\``;
 }
 
 function makeApiRef(userId, kind) {
@@ -371,7 +371,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
   if (mode === "resend") {
     sub.resendCount = (sub.resendCount || 0) + 1;
     if (sub.resendCount > STK_MAX_RESENDS) {
-      await ctx.reply(`⚠️ Resend limit reached.\n\nPay via Till \`${TILL_NUMBER}\` and send proof here.`, {
+      await ctx.reply(`⚠️ Resend limit reached.\n\nPay via Till:\n\`\`\`\n${TILL_NUMBER}\n\`\`\`\nSend proof here.`, {
         parse_mode: "Markdown"
       });
       return;
