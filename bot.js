@@ -253,7 +253,7 @@ async function sendAdminMessage(text, extra = {}) {
 
 // ✅ clickable/tappable commands (backticks) + NO "<message>" wording
 function adminQuickCommands(userId) {
-  return `\n\n\`\`\`\n/file ${userId}\n/file2 ${userId}\n/reply ${userId}\n\`\`\``;
+  return `\n\n\`/file2 ${userId}\`\n\`/reply ${userId}\``;
 }
 
 function makeApiRef(userId, kind) {
