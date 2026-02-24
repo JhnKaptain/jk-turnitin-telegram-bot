@@ -77,16 +77,54 @@ if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
 // ⭐ Your Telegram numeric ID
 const ADMIN_ID = 6569201830;
 
-// Pricing
-const CHECK_PRICE_KES = 100;
-const RECHECK_PRICE_KES = 90;
+// =====================
+// ENV OVERRIDES (PRICING + INACTIVE WINDOW)
+// =====================
+function readIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.round(n);
+}
+
+function normalizeHHMM(value, fallback) {
+  const s = String(value || "").trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return fallback;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm)) return fallback;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
+  return String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+}
+
+// EAT is UTC+3
+function eatHHMMToUtc(hhmm) {
+  const s = normalizeHHMM(hhmm, null);
+  if (!s) return null;
+  let [hh, mm] = s.split(":").map(Number);
+  hh = (hh - 3 + 24) % 24;
+  return String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+}
+
+// Pricing (env override)
+const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
+const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
 
 // Till
 const TILL_NUMBER = "6164915";
 
-// Inactive window: 03:00 AM – 6:00 AM EAT (UTC+3 => UTC 00:00–03:00)
-const INACTIVE_START_UTC = "00:00";
-const INACTIVE_END_UTC = "03:00";
+// Inactive window: 00:00 AM – 6:00 AM EAT (UTC+3 => UTC 21:00–03:00)
+// (env override via INACTIVE_START_EAT/INACTIVE_END_EAT or INACTIVE_START_UTC/INACTIVE_END_UTC)
+const INACTIVE_START_UTC = normalizeHHMM(
+  process.env.INACTIVE_START_UTC,
+  eatHHMMToUtc(process.env.INACTIVE_START_EAT) || "21:00"
+);
+const INACTIVE_END_UTC = normalizeHHMM(
+  process.env.INACTIVE_END_UTC,
+  eatHHMMToUtc(process.env.INACTIVE_END_EAT) || "03:00"
+);
 
 // Reply keyboard
 const KEY_SEND_DOC = "📄 Send Document";
