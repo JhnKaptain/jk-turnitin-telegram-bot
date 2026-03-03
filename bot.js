@@ -177,7 +177,7 @@ If urgent, WhatsApp call *0701730921*.
   stkSentSimple: "✅ STK Push sent. Pay on your phone — confirmation is automatic.",
   // ✅ till is tap-to-copy via backticks
   stkSentWithTill: (till) =>
-    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till:\n\`\`\`\n${till}\n\`\`\`\nSend proof here.`,
+    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till:\n\`\`\`\n${till}\n\`\`\`\nSend proof here as screenshot not text.`,
   waitingConfirm: "Waiting for payment confirmation…",
   paidMsg: (kind, amount) =>
     `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n⏱ Reports take *10–20 minutes* (queue).`
@@ -406,7 +406,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
     return;
   }
 
-  if (mode === "resend") {
+  if (mode === "resend") {''
     sub.resendCount = (sub.resendCount || 0) + 1;
     if (sub.resendCount > STK_MAX_RESENDS) {
       await ctx.reply(`⚠️ Resend limit reached.\n\nPay via Till:\n\`\`\`\n${TILL_NUMBER}\n\`\`\`\nSend proof here.`, {
