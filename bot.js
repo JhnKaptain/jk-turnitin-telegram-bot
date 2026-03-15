@@ -143,6 +143,9 @@ const STK_RESEND_COOLDOWN_MS = 30 * 1000; // 30 seconds
 const STK_MAX_RESENDS = 3;
 const PAYMENT_TIMEOUT_MS = 6 * 60 * 1000;
 
+// ✅ Post-delivery message for /file2
+const REPORTS_DELIVERED_MESSAGE = "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin.";
+
 // =====================
 // MESSAGES
 // =====================
@@ -406,7 +409,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
     return;
   }
 
-  if (mode === "resend") {''
+  if (mode === "resend") {
     sub.resendCount = (sub.resendCount || 0) + 1;
     if (sub.resendCount > STK_MAX_RESENDS) {
       await ctx.reply(`⚠️ Resend limit reached.\n\nPay via Till:\n\`\`\`\n${TILL_NUMBER}\n\`\`\`\nSend proof here.`, {
@@ -500,7 +503,7 @@ bot.command("reply", async (ctx) => {
   const replyText = parts.slice(2).join(" ");
 
   try {
-    await bot.telegram.sendMessage(userId, replyText);
+    await bot.telegram.sendMessage(userId, `✅ Support Team:\n\n${replyText}`);
     await ctx.reply(`✅ Sent to ${userId}`);
   } catch (err) {
     await ctx.reply("❌ Failed: " + (err?.message || err));
@@ -515,7 +518,7 @@ bot.command("file", async (ctx) => {
 
   const userId = parts[1];
   const caption = parts.slice(2).join(" ");
-  pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 1 };
+  pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 1, sendFinalMessage: false };
 
   await ctx.reply(`✅ Send 1 document/photo now. It will go to user ${userId}.`);
 });
@@ -528,7 +531,7 @@ bot.command("file2", async (ctx) => {
 
   const userId = parts[1];
   const caption = parts.slice(2).join(" ");
-  pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 2 };
+  pendingFileTargets[ADMIN_ID] = { userId, caption, remaining: 2, sendFinalMessage: true };
 
   await ctx.reply(`✅ Send next 2 document/photo messages now. They will go to user ${userId}.`);
 });
@@ -568,8 +571,19 @@ bot.on("document", async (ctx) => {
       await bot.telegram.sendDocument(target.userId, doc.file_id, {
         caption: target.caption || undefined
       });
+
       target.remaining -= 1;
-      if (target.remaining <= 0) delete pendingFileTargets[ADMIN_ID];
+
+      if (target.remaining <= 0) {
+        delete pendingFileTargets[ADMIN_ID];
+
+        if (target.sendFinalMessage) {
+          try {
+            await bot.telegram.sendMessage(target.userId, REPORTS_DELIVERED_MESSAGE);
+          } catch {}
+        }
+      }
+
       await ctx.reply(`✅ Document sent to ${target.userId}`);
     } catch (err) {
       await ctx.reply("❌ Failed: " + (err?.message || err));
@@ -624,8 +638,19 @@ bot.on("photo", async (ctx) => {
       await bot.telegram.sendPhoto(target.userId, largest.file_id, {
         caption: target.caption || undefined
       });
+
       target.remaining -= 1;
-      if (target.remaining <= 0) delete pendingFileTargets[ADMIN_ID];
+
+      if (target.remaining <= 0) {
+        delete pendingFileTargets[ADMIN_ID];
+
+        if (target.sendFinalMessage) {
+          try {
+            await bot.telegram.sendMessage(target.userId, REPORTS_DELIVERED_MESSAGE);
+          } catch {}
+        }
+      }
+
       await ctx.reply(`✅ Photo sent to ${target.userId}`);
     } catch (err) {
       await ctx.reply("❌ Failed: " + (err?.message || err));
