@@ -550,6 +550,16 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
 });
 
 bot.hears(KEY_CANCEL, async (ctx) => {
+  // ✅ Notify admin when user cancels (reflect on admin side)
+  if (ctx.from.id !== ADMIN_ID) {
+    const u = ctx.from;
+    await sendAdminMessage(
+      `❌ User cancelled submission\nUser ID: ${u.id}\nUsername: @${safeText(u.username || "N/A")}\nName: ${safeText(
+        u.first_name
+      )} ${safeText(u.last_name)}${adminQuickCommands(u.id)}`
+    );
+  }
+
   delete submissions[ctx.from.id];
   await ctx.reply("❌ Cancelled. Send a new document to start again.", { reply_markup: mainKeyboard() });
 });
@@ -710,6 +720,16 @@ bot.action("TYPE_RECHECK", async (ctx) => {
 });
 
 bot.action("TYPE_CANCEL", async (ctx) => {
+  // ✅ Notify admin when user cancels (reflect on admin side)
+  if (ctx.from.id !== ADMIN_ID) {
+    const u = ctx.from;
+    await sendAdminMessage(
+      `❌ User cancelled submission\nUser ID: ${u.id}\nUsername: @${safeText(u.username || "N/A")}\nName: ${safeText(
+        u.first_name
+      )} ${safeText(u.last_name)}${adminQuickCommands(u.id)}`
+    );
+  }
+
   delete submissions[ctx.from.id];
   await ctx.answerCbQuery("Cancelled");
   await ctx.reply("❌ Cancelled. Send a new document to start again.", { reply_markup: mainKeyboard() });
