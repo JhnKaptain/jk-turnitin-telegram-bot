@@ -183,7 +183,7 @@ If urgent, WhatsApp call *0701730921*.
     `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till:\n\`\`\`\n${till}\n\`\`\`\nSend proof here as screenshot not text.`,
   waitingConfirm: "Waiting for payment confirmation…",
   paidMsg: (kind, amount) =>
-    `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n⏱ Reports take *10–20 minutes* (queue).`
+    `✅ Payment confirmed${amount ? ` (${amount} KES)` : ""} for *${kind}*.\n⏱ Reports take *5–20 minutes* (queue).`
 };
 
 // =====================
