@@ -627,7 +627,7 @@ bot.on("document", async (ctx) => {
     resendCount: 0
   };
 
-  await ctx.reply("📄 File received.\n\nChoose:", typeInlineKeyboard());
+  await ctx.reply("📄 File Received.\n\nClick on the Respective Button Below for Check or Recheck.", typeInlineKeyboard());
 });
 
 // =====================
