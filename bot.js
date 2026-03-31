@@ -346,6 +346,24 @@ function getPaymentRefByInvoiceId(invoiceId) {
   return null;
 }
 
+/**
+ * IntaSend webhooks strip underscores from api_ref values.
+ * e.g. "JK_BATCH_123_456" becomes "JKBATCH123456"
+ * This does a fuzzy match by comparing with underscores removed.
+ */
+function getPaymentRefByApiRefFuzzy(webhookApiRef) {
+  if (!webhookApiRef) return null;
+
+  const normalized = String(webhookApiRef).replace(/_/g, "");
+
+  for (const value of Object.values(paymentRefs)) {
+    if (!value?.api_ref) continue;
+    const storedNormalized = String(value.api_ref).replace(/_/g, "");
+    if (storedNormalized === normalized) return value;
+  }
+  return null;
+}
+
 loadStore();
 
 setInterval(() => {
@@ -460,6 +478,7 @@ function createEmptySubmission() {
     amount: null,
     api_ref: null,
     invoice_id: null,
+    collection_id: null,   // full UUID for status polling
     phone: null,
     paid: false,
     createdAt: Date.now(),
@@ -691,12 +710,16 @@ function extractApiRef(payload) {
   return (
     payload.api_ref ||
     payload.apiRef ||
+    payload.apiref ||          // IntaSend webhook sends lowercase
     payload.invoice?.api_ref ||
     payload.invoice?.apiRef ||
+    payload.invoice?.apiref ||
     payload.data?.api_ref ||
     payload.data?.apiRef ||
+    payload.data?.apiref ||
     payload.payload?.api_ref ||
-    payload.payload?.apiRef
+    payload.payload?.apiRef ||
+    payload.payload?.apiref
   );
 }
 
@@ -738,11 +761,15 @@ function extractInvoiceIdFromStkResponse(resp) {
 function extractInvoiceIdFromPayload(payload) {
   return (
     payload?.invoice_id ||
+    payload?.invoiceid ||          // IntaSend webhook sends lowercase
     payload?.invoice?.invoice_id ||
+    payload?.invoice?.invoiceid ||
     payload?.invoice?.id ||
     payload?.data?.invoice_id ||
+    payload?.data?.invoiceid ||
     payload?.data?.invoice?.invoice_id ||
     payload?.payload?.invoice_id ||
+    payload?.payload?.invoiceid ||
     payload?.payload?.invoice?.invoice_id ||
     null
   );
@@ -844,8 +871,8 @@ invoice_id: ${extra.invoice_id || ref.invoice_id || "N/A"}`
   );
 }
 
-function scheduleInvoiceStatusPolling(userId, apiRef, invoiceId) {
-  if (!invoiceId) return;
+function scheduleInvoiceStatusPolling(userId, apiRef, collectionId, invoiceId) {
+  if (!collectionId) return;
 
   const delays = [15000, 30000, 60000, 120000, 180000];
 
@@ -857,8 +884,8 @@ function scheduleInvoiceStatusPolling(userId, apiRef, invoiceId) {
         if (sub.paid) return;
         if (sub.api_ref !== apiRef) return;
 
-        // Direct API call instead of SDK
-        const resp = await intasendCheckStatus(invoiceId);
+        // Use collection UUID for the API call (not the short invoice_id)
+        const resp = await intasendCheckStatus(collectionId);
         const invoice = extractInvoiceFromStatusResponse(resp);
         const state = normalizeWebhookState(invoice?.state || resp?.state || resp?.status);
         const ref = getPaymentRef(apiRef) || getPaymentRefByInvoiceId(invoiceId);
@@ -868,6 +895,7 @@ function scheduleInvoiceStatusPolling(userId, apiRef, invoiceId) {
         if (state === "COMPLETE") {
           updatePaymentRef(apiRef, {
             invoice_id: invoiceId,
+            collection_id: collectionId,
             last_state: state,
             last_checked_at: Date.now()
           });
@@ -882,6 +910,7 @@ function scheduleInvoiceStatusPolling(userId, apiRef, invoiceId) {
         if (["FAILED", "CANCELLED", "EXPIRED"].includes(state)) {
           updatePaymentRef(apiRef, {
             invoice_id: invoiceId,
+            collection_id: collectionId,
             last_state: state,
             last_checked_at: Date.now()
           });
@@ -895,15 +924,17 @@ function scheduleInvoiceStatusPolling(userId, apiRef, invoiceId) {
 
         updatePaymentRef(apiRef, {
           invoice_id: invoiceId,
+          collection_id: collectionId,
           last_state: state,
           last_checked_at: Date.now()
         });
       } catch (err) {
-        console.error(`[Status Poll Error] user=${userId} invoice=${invoiceId}:`, err?.message || err);
+        console.error(`[Status Poll Error] user=${userId} collection=${collectionId}:`, err?.message || err);
         await sendAdminMessage(
           `⚠️ Status poll error
 User: ${userId}
 api_ref: ${apiRef}
+collection_id: ${collectionId}
 invoice_id: ${invoiceId}
 Error: ${safeText(err?.message || err)}`
         );
@@ -962,13 +993,17 @@ async function attemptStkPush(ctx, sub, { mode }) {
     });
 
     const invoiceId = extractInvoiceIdFromStkResponse(stkResp);
+    // The top-level 'id' is the collection UUID needed for status polling
+    const collectionId = stkResp?.id || null;
 
     sub.stage = STAGE_WAIT_PAYMENT;
     sub.stkSentAt = Date.now();
     sub.invoice_id = invoiceId || null;
+    sub.collection_id = collectionId || null;
 
     updatePaymentRef(sub.api_ref, {
       invoice_id: invoiceId || null,
+      collection_id: collectionId || null,
       phone: sub.phone,
       amount: sub.amount,
       last_state: "PENDING",
@@ -980,6 +1015,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
 User: ${userId}
 api_ref: ${sub.api_ref}
 invoice_id: ${invoiceId || "N/A"}
+collection_id: ${collectionId || "N/A"}
 Amount: ${sub.amount} KES
 Phone: ${sub.phone}
 Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}
@@ -1000,11 +1036,14 @@ Raw: ${truncateText(JSON.stringify(stkResp), 2500)}`
 
     schedulePaymentTimeoutReminder(userId, sub.api_ref);
 
-    if (invoiceId) {
-      scheduleInvoiceStatusPolling(userId, sub.api_ref, invoiceId);
+    if (collectionId) {
+      scheduleInvoiceStatusPolling(userId, sub.api_ref, collectionId, invoiceId);
+    } else if (invoiceId) {
+      // Fallback: try with invoice_id if no UUID available
+      scheduleInvoiceStatusPolling(userId, sub.api_ref, invoiceId, invoiceId);
     } else {
       await sendAdminMessage(
-        `⚠️ No invoice_id returned by STK response
+        `⚠️ No invoice_id or collection_id returned by STK response
 User: ${userId}
 api_ref: ${sub.api_ref}`
       );
@@ -1639,7 +1678,8 @@ Raw: ${truncateText(JSON.stringify(payload), 2500)}`
       const invoiceId = extractInvoiceIdFromPayload(payload);
       const state = normalizeWebhookState(extractState(payload));
 
-      const ref = getPaymentRef(apiRef) || getPaymentRefByInvoiceId(invoiceId);
+      // Try exact match, then fuzzy (IntaSend strips underscores), then by invoice_id
+      const ref = getPaymentRef(apiRef) || getPaymentRefByApiRefFuzzy(apiRef) || getPaymentRefByInvoiceId(invoiceId);
 
       if (!ref) {
         await sendAdminMessage(
