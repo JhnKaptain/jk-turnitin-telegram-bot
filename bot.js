@@ -112,6 +112,7 @@ const INACTIVE_START_UTC = normalizeHHMM(
   process.env.INACTIVE_START_UTC,
   eatHHMMToUtc(process.env.INACTIVE_START_EAT) || "21:00"
 );
+
 const INACTIVE_END_UTC = normalizeHHMM(
   process.env.INACTIVE_END_UTC,
   eatHHMMToUtc(process.env.INACTIVE_END_EAT) || "03:00"
@@ -677,6 +678,10 @@ async function markPaymentFailure({ apiRef, invoiceId, state, source }) {
 
 async function queryPaymentStatus(invoiceId) {
   if (!invoiceId) throw new Error("Missing invoiceId for status query");
+
+  if (!collection || typeof collection.status !== "function") {
+    throw new Error("IntaSend SDK does not expose collection.status()");
+  }
 
   const resp = await collection.status(invoiceId);
   const state = normalizePaymentState(
