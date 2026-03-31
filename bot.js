@@ -122,15 +122,17 @@ async function intasendStkPush({ first_name, last_name, email, host, amount, pho
 
 /**
  * Direct invoice status check via IntaSend REST API
+ * Docs: POST /api/v1/payment/status/ with { invoice_id } in body
  */
 async function intasendCheckStatus(invoiceId) {
-  const url = `${INTASEND_BASE_URL}/api/v1/payment/collection/${invoiceId}/`;
+  const url = `${INTASEND_BASE_URL}/api/v1/payment/status/`;
 
-  console.log(`[IntaSend Status] GET ${url}`);
+  console.log(`[IntaSend Status] POST ${url} | invoice_id=${invoiceId}`);
 
   const resp = await fetch(url, {
-    method: "GET",
-    headers: intasendHeaders()
+    method: "POST",
+    headers: intasendHeaders(),
+    body: JSON.stringify({ invoice_id: invoiceId })
   });
 
   const text = await resp.text();
@@ -749,11 +751,15 @@ function normalizeWebhookState(raw) {
 }
 
 function extractInvoiceIdFromStkResponse(resp) {
+  // IntaSend returns keys without underscores (e.g. invoiceid not invoice_id)
+  // Prioritize the short invoice ID over the top-level UUID
   return (
     resp?.invoice_id ||
+    resp?.invoiceid ||
     resp?.invoice?.invoice_id ||
+    resp?.invoice?.invoiceid ||
     resp?.invoice?.id ||
-    resp?.id ||
+    // Do NOT fall back to resp.id — that's the collection UUID, not the invoice ID
     null
   );
 }
@@ -872,7 +878,7 @@ invoice_id: ${extra.invoice_id || ref.invoice_id || "N/A"}`
 }
 
 function scheduleInvoiceStatusPolling(userId, apiRef, collectionId, invoiceId) {
-  if (!collectionId) return;
+  if (!invoiceId) return;
 
   const delays = [15000, 30000, 60000, 120000, 180000];
 
@@ -884,8 +890,8 @@ function scheduleInvoiceStatusPolling(userId, apiRef, collectionId, invoiceId) {
         if (sub.paid) return;
         if (sub.api_ref !== apiRef) return;
 
-        // Use collection UUID for the API call (not the short invoice_id)
-        const resp = await intasendCheckStatus(collectionId);
+        // POST /api/v1/payment/status/ with invoice_id in body
+        const resp = await intasendCheckStatus(invoiceId);
         const invoice = extractInvoiceFromStatusResponse(resp);
         const state = normalizeWebhookState(invoice?.state || resp?.state || resp?.status);
         const ref = getPaymentRef(apiRef) || getPaymentRefByInvoiceId(invoiceId);
@@ -1036,14 +1042,11 @@ Raw: ${truncateText(JSON.stringify(stkResp), 2500)}`
 
     schedulePaymentTimeoutReminder(userId, sub.api_ref);
 
-    if (collectionId) {
+    if (invoiceId) {
       scheduleInvoiceStatusPolling(userId, sub.api_ref, collectionId, invoiceId);
-    } else if (invoiceId) {
-      // Fallback: try with invoice_id if no UUID available
-      scheduleInvoiceStatusPolling(userId, sub.api_ref, invoiceId, invoiceId);
     } else {
       await sendAdminMessage(
-        `⚠️ No invoice_id or collection_id returned by STK response
+        `⚠️ No invoice_id returned by STK response
 User: ${userId}
 api_ref: ${sub.api_ref}`
       );
