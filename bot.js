@@ -200,7 +200,7 @@ const submissions = {};
 // pendingFileTargets[ADMIN_ID] = { userId, caption, sentCount }
 const pendingFileTargets = {};
 
-// paymentRefs[api_ref] = { userId, kind, amount, createdAt, summary }
+// paymentRefs[api_ref] = { userId, kind, amount, createdAt, summary, invoice_id, ... }
 let paymentRefs = {};
 const confirmedRefs = new Set();
 
@@ -232,12 +232,33 @@ function saveStore() {
 }
 
 function putPaymentRef(api_ref, value) {
-  paymentRefs[api_ref] = value;
+  paymentRefs[api_ref] = {
+    ...value,
+    api_ref
+  };
+  saveStore();
+}
+
+function updatePaymentRef(api_ref, patch) {
+  if (!api_ref || !paymentRefs[api_ref]) return;
+  paymentRefs[api_ref] = {
+    ...paymentRefs[api_ref],
+    ...patch
+  };
   saveStore();
 }
 
 function getPaymentRef(api_ref) {
   return paymentRefs[api_ref] || null;
+}
+
+function getPaymentRefByInvoiceId(invoiceId) {
+  if (!invoiceId) return null;
+
+  for (const value of Object.values(paymentRefs)) {
+    if (value?.invoice_id === invoiceId) return value;
+  }
+  return null;
 }
 
 loadStore();
@@ -296,6 +317,12 @@ function safeText(s) {
   return (s || "").toString();
 }
 
+function truncateText(s, max = 3000) {
+  const text = safeText(s);
+  if (text.length <= max) return text;
+  return text.slice(0, max) + " ...[truncated]";
+}
+
 async function sendAdminMessage(text, extra = {}) {
   try {
     await bot.telegram.sendMessage(ADMIN_ID, text, {
@@ -347,6 +374,7 @@ function createEmptySubmission() {
     currentFileIndex: null,
     amount: null,
     api_ref: null,
+    invoice_id: null,
     phone: null,
     paid: false,
     createdAt: Date.now(),
@@ -449,11 +477,10 @@ async function notifyUserCancelledToAdmin(user) {
   if (user.id === ADMIN_ID) return;
 
   await sendAdminMessage(
-    `❌ User cancelled submission\nUser ID: ${user.id}\nUsername: @${safeText(
-      user.username || "N/A"
-    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
-      user.id
-    )}`
+    `❌ User cancelled submission
+User ID: ${user.id}
+Username: @${safeText(user.username || "N/A")}
+Name: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(user.id)}`
   );
 }
 
@@ -490,6 +517,7 @@ async function moveBatchToPhoneStep(ctx, sub) {
   sub.api_ref = makeApiRef(ctx.from.id, "BATCH");
   sub.stage = STAGE_WAIT_PHONE;
   sub.currentFileIndex = null;
+  sub.invoice_id = null;
 
   const summary = formatBatchSummary(sub);
 
@@ -498,7 +526,12 @@ async function moveBatchToPhoneStep(ctx, sub) {
     kind: getBatchKindLabel(sub),
     amount: sub.amount,
     createdAt: Date.now(),
-    summary
+    summary,
+    invoice_id: null,
+    phone: null,
+    last_state: "INITIATED",
+    last_checked_at: null,
+    last_webhook_at: null
   });
 
   await replyMarkdownSafe(ctx, MESSAGES.askPhoneBatch(summary, sub.amount), {
@@ -567,7 +600,7 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
 }
 
 // =====================
-// INTASEND WEBHOOK HELPERS
+// INTASEND WEBHOOK / STATUS HELPERS
 // =====================
 function extractApiRef(payload) {
   return (
@@ -605,6 +638,191 @@ function normalizeWebhookState(raw) {
   if (["PENDING", "PROCESSING", "IN_PROGRESS", "INPROGRESS"].includes(s)) return "PENDING";
 
   return s || "UNKNOWN";
+}
+
+function extractInvoiceIdFromStkResponse(resp) {
+  return (
+    resp?.invoice_id ||
+    resp?.invoice?.invoice_id ||
+    resp?.invoice?.id ||
+    resp?.id ||
+    null
+  );
+}
+
+function extractInvoiceIdFromPayload(payload) {
+  return (
+    payload?.invoice_id ||
+    payload?.invoice?.invoice_id ||
+    payload?.invoice?.id ||
+    payload?.data?.invoice_id ||
+    payload?.data?.invoice?.invoice_id ||
+    payload?.payload?.invoice_id ||
+    payload?.payload?.invoice?.invoice_id ||
+    null
+  );
+}
+
+function extractInvoiceFromStatusResponse(resp) {
+  return resp?.invoice || resp || {};
+}
+
+async function markPaymentComplete(ref, source, extra = {}) {
+  if (!ref) return;
+
+  const userId = ref.userId;
+  const apiRef = ref.api_ref || ref.apiRef || extra.api_ref || null;
+  const dedupeKey = apiRef || extra.invoice_id || `user_${userId}_complete`;
+
+  if (confirmedRefs.has(dedupeKey)) return;
+  confirmedRefs.add(dedupeKey);
+
+  const sub = submissions[userId];
+  if (sub && (!apiRef || sub.api_ref === apiRef)) {
+    sub.paid = true;
+    sub.stage = STAGE_PAID;
+    if (extra.invoice_id) sub.invoice_id = extra.invoice_id;
+  }
+
+  if (apiRef) {
+    updatePaymentRef(apiRef, {
+      last_state: "COMPLETE",
+      invoice_id: extra.invoice_id || ref.invoice_id || null,
+      last_checked_at: Date.now()
+    });
+  }
+
+  try {
+    await bot.telegram.sendMessage(
+      userId,
+      MESSAGES.paidMsgBatch(ref.amount || "", ref.summary || "Batch payment"),
+      { parse_mode: "Markdown" }
+    );
+  } catch (e) {
+    await sendAdminMessage(
+      `❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`
+    );
+  }
+
+  await sendAdminMessage(
+    `✅ PAYMENT COMPLETE (${source})
+User: ${userId}
+Type: ${ref.kind || "CHECK/RECHECK"}
+Amount: ${ref.amount ? `${ref.amount} KES` : "N/A"}
+api_ref: ${apiRef || "N/A"}
+invoice_id: ${extra.invoice_id || ref.invoice_id || "N/A"}`
+  );
+}
+
+async function markPaymentFailed(ref, state, source, extra = {}) {
+  if (!ref) return;
+
+  const userId = ref.userId;
+  const apiRef = ref.api_ref || ref.apiRef || extra.api_ref || null;
+
+  const sub = submissions[userId];
+  if (sub && (!apiRef || sub.api_ref === apiRef)) {
+    sub.paid = false;
+    sub.stage = STAGE_WAIT_PAYMENT;
+    if (extra.invoice_id) sub.invoice_id = extra.invoice_id;
+  }
+
+  if (apiRef) {
+    updatePaymentRef(apiRef, {
+      last_state: state,
+      invoice_id: extra.invoice_id || ref.invoice_id || null,
+      last_checked_at: Date.now()
+    });
+  }
+
+  try {
+    await bot.telegram.sendMessage(
+      userId,
+      `❌ Payment ${String(state).toLowerCase()}.\nTap *Resend STK Push* to try again.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: paymentWaitKeyboard().reply_markup
+      }
+    );
+  } catch (e) {
+    await sendAdminMessage(
+      `❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`
+    );
+  }
+
+  await sendAdminMessage(
+    `⚠️ PAYMENT ${state} (${source})
+User: ${userId}
+Type: ${ref.kind || "CHECK/RECHECK"}
+api_ref: ${apiRef || "N/A"}
+invoice_id: ${extra.invoice_id || ref.invoice_id || "N/A"}`
+  );
+}
+
+function scheduleInvoiceStatusPolling(userId, apiRef, invoiceId) {
+  if (!invoiceId) return;
+
+  const delays = [15000, 30000, 60000, 120000, 180000];
+
+  for (const delay of delays) {
+    setTimeout(async () => {
+      try {
+        const sub = submissions[userId];
+        if (!sub) return;
+        if (sub.paid) return;
+        if (sub.api_ref !== apiRef) return;
+
+        const resp = await collection.status(invoiceId);
+        const invoice = extractInvoiceFromStatusResponse(resp);
+        const state = normalizeWebhookState(invoice?.state || resp?.state || resp?.status);
+        const ref = getPaymentRef(apiRef) || getPaymentRefByInvoiceId(invoiceId);
+
+        if (!ref) return;
+
+        if (state === "COMPLETE") {
+          updatePaymentRef(apiRef, {
+            invoice_id: invoiceId,
+            last_state: state,
+            last_checked_at: Date.now()
+          });
+
+          await markPaymentComplete(ref, "status-poll", {
+            invoice_id: invoiceId,
+            api_ref: apiRef
+          });
+          return;
+        }
+
+        if (["FAILED", "CANCELLED", "EXPIRED"].includes(state)) {
+          updatePaymentRef(apiRef, {
+            invoice_id: invoiceId,
+            last_state: state,
+            last_checked_at: Date.now()
+          });
+
+          await markPaymentFailed(ref, state, "status-poll", {
+            invoice_id: invoiceId,
+            api_ref: apiRef
+          });
+          return;
+        }
+
+        updatePaymentRef(apiRef, {
+          invoice_id: invoiceId,
+          last_state: state,
+          last_checked_at: Date.now()
+        });
+      } catch (err) {
+        await sendAdminMessage(
+          `⚠️ Status poll error
+User: ${userId}
+api_ref: ${apiRef}
+invoice_id: ${invoiceId}
+Error: ${safeText(err?.message || err)}`
+        );
+      }
+    }, delay);
+  }
 }
 
 // =====================
@@ -645,7 +863,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
   }
 
   try {
-    await collection.mpesaStkPush({
+    const stkResp = await collection.mpesaStkPush({
       first_name: safeText(ctx.from.first_name || "Customer"),
       last_name: safeText(ctx.from.last_name || "User"),
       email: `${userId}@jkturnitin.local`,
@@ -655,8 +873,30 @@ async function attemptStkPush(ctx, sub, { mode }) {
       api_ref: sub.api_ref
     });
 
+    const invoiceId = extractInvoiceIdFromStkResponse(stkResp);
+
     sub.stage = STAGE_WAIT_PAYMENT;
     sub.stkSentAt = Date.now();
+    sub.invoice_id = invoiceId || null;
+
+    updatePaymentRef(sub.api_ref, {
+      invoice_id: invoiceId || null,
+      phone: sub.phone,
+      amount: sub.amount,
+      last_state: "PENDING",
+      stk_response_received_at: Date.now()
+    });
+
+    await sendAdminMessage(
+      `📥 STK PUSH RESPONSE
+User: ${userId}
+api_ref: ${sub.api_ref}
+invoice_id: ${invoiceId || "N/A"}
+Amount: ${sub.amount} KES
+Phone: ${sub.phone}
+Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}
+Raw: ${truncateText(JSON.stringify(stkResp), 2500)}`
+    );
 
     if (mode === "resend") {
       await ctx.reply(MESSAGES.stkSentWithTill(TILL_NUMBER), {
@@ -671,6 +911,16 @@ async function attemptStkPush(ctx, sub, { mode }) {
     });
 
     schedulePaymentTimeoutReminder(userId, sub.api_ref);
+
+    if (invoiceId) {
+      scheduleInvoiceStatusPolling(userId, sub.api_ref, invoiceId);
+    } else {
+      await sendAdminMessage(
+        `⚠️ No invoice_id returned by STK response
+User: ${userId}
+api_ref: ${sub.api_ref}`
+      );
+    }
   } catch (err) {
     sub.stage = STAGE_WAIT_PAYMENT;
 
@@ -680,11 +930,13 @@ async function attemptStkPush(ctx, sub, { mode }) {
     });
 
     await sendAdminMessage(
-      `❌ STK Push error\nUser: ${userId}\napi_ref: ${safeText(
-        sub.api_ref
-      )}\nPhone: ${safeText(sub.phone)}\nError: ${safeText(
-        err?.message || err
-      )}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}\nHost: ${PUBLIC_BASE_URL}`
+      `❌ STK Push error
+User: ${userId}
+api_ref: ${safeText(sub.api_ref)}
+Phone: ${safeText(sub.phone)}
+Error: ${safeText(err?.message || err)}
+Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}
+Host: ${PUBLIC_BASE_URL}`
     );
   }
 }
@@ -703,11 +955,10 @@ bot.start(async (ctx) => {
   }
 
   await sendAdminMessage(
-    `🔥 New user started bot\nName: ${safeText(user.first_name)} ${safeText(
-      user.last_name
-    )}\nUsername: @${safeText(user.username || "N/A")}\nUser ID: ${user.id}${adminQuickCommands(
-      user.id
-    )}`
+    `🔥 New user started bot
+Name: ${safeText(user.first_name)} ${safeText(user.last_name)}
+Username: @${safeText(user.username || "N/A")}
+User ID: ${user.id}${adminQuickCommands(user.id)}`
   );
 
   if (isBotInactivePeriod()) {
@@ -759,7 +1010,10 @@ bot.command("filebatch", async (ctx) => {
   };
 
   await ctx.reply(
-    `✅ Batch delivery opened for user ${userId}.\nNow send as many document/photo messages as needed.\nWhen finished, send /donebatch\nTo cancel, send /cancelbatch`
+    `✅ Batch delivery opened for user ${userId}.
+Now send as many document/photo messages as needed.
+When finished, send /donebatch
+To cancel, send /cancelbatch`
   );
 });
 
@@ -905,11 +1159,10 @@ bot.on("document", async (ctx) => {
   // USER -> forward to admin
   try {
     await sendAdminMessage(
-      `📨 Document received\nUser ID: ${user.id}\nUsername: @${safeText(
-        user.username || "N/A"
-      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
-        user.id
-      )}`
+      `📨 Document received
+User ID: ${user.id}
+Username: @${safeText(user.username || "N/A")}
+Name: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(user.id)}`
     );
 
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
@@ -1011,11 +1264,10 @@ bot.on("photo", async (ctx) => {
   // USER PHOTO -> forward to admin
   try {
     await sendAdminMessage(
-      `🖼️ Photo received\nUser ID: ${user.id}\nUsername: @${safeText(
-        user.username || "N/A"
-      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
-        user.id
-      )}`
+      `🖼️ Photo received
+User ID: ${user.id}
+Username: @${safeText(user.username || "N/A")}
+Name: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(user.id)}`
     );
 
     await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
@@ -1144,9 +1396,11 @@ bot.on("text", async (ctx) => {
   if (user.id === ADMIN_ID) return;
 
   await sendAdminMessage(
-    `💬 Message from user\nUser ID: ${user.id}\nUsername: @${safeText(
-      user.username || "N/A"
-    )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`
+    `💬 Message from user
+User ID: ${user.id}
+Username: @${safeText(user.username || "N/A")}
+
+${safeText(text)}${adminQuickCommands(user.id)}`
   );
 
   if (isBotInactivePeriod()) {
@@ -1278,6 +1532,11 @@ app.post("/intasend/webhook", (req, res) => {
         }
       }
 
+      await sendAdminMessage(
+        `📨 INTASEND WEBHOOK HIT
+Raw: ${truncateText(JSON.stringify(payload), 2500)}`
+      );
+
       if (
         payload.challenge &&
         INTASEND_WEBHOOK_CHALLENGE &&
@@ -1288,80 +1547,52 @@ app.post("/intasend/webhook", (req, res) => {
       }
 
       const apiRef = extractApiRef(payload);
+      const invoiceId = extractInvoiceIdFromPayload(payload);
       const state = normalizeWebhookState(extractState(payload));
 
-      if (!apiRef) return;
+      const ref = getPaymentRef(apiRef) || getPaymentRefByInvoiceId(invoiceId);
 
-      if (state === "COMPLETE") {
-        if (confirmedRefs.has(apiRef)) return;
-        confirmedRefs.add(apiRef);
-      }
-
-      const ref = getPaymentRef(apiRef);
       if (!ref) {
-        await sendAdminMessage(`⚠️ IntaSend webhook: unknown api_ref ${apiRef}\nState: ${state}`);
+        await sendAdminMessage(
+          `⚠️ IntaSend webhook: unmatched payment
+api_ref: ${apiRef || "N/A"}
+invoice_id: ${invoiceId || "N/A"}
+state: ${state}`
+        );
         return;
       }
 
-      const userId = ref.userId;
-      const amount = ref.amount || "";
-      const summary = ref.summary || "Batch payment";
-      const kind = ref.kind || "BATCH";
+      const effectiveApiRef = apiRef || ref.api_ref;
 
-      const sub = submissions[userId];
+      updatePaymentRef(effectiveApiRef, {
+        invoice_id: invoiceId || ref.invoice_id || null,
+        last_state: state,
+        last_webhook_at: Date.now()
+      });
 
       if (state === "COMPLETE") {
-        if (sub && sub.api_ref === apiRef) {
-          sub.paid = true;
-          sub.stage = STAGE_PAID;
-        }
-
-        try {
-          await bot.telegram.sendMessage(
-            userId,
-            MESSAGES.paidMsgBatch(amount, summary),
-            { parse_mode: "Markdown" }
-          );
-        } catch (e) {
-          await sendAdminMessage(
-            `❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`
-          );
-        }
-
-        await sendAdminMessage(
-          `✅ PAYMENT COMPLETE\nUser: ${userId}\nType: ${kind}\nAmount: ${
-            amount ? `${amount} KES` : "N/A"
-          }\napi_ref: ${apiRef}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}`
-        );
-
+        await markPaymentComplete(ref, "webhook", {
+          invoice_id: invoiceId,
+          api_ref: effectiveApiRef
+        });
         return;
       }
 
       if (["FAILED", "CANCELLED", "EXPIRED"].includes(state)) {
-        if (sub && sub.api_ref === apiRef) {
-          sub.paid = false;
-          sub.stage = STAGE_WAIT_PAYMENT;
-        }
-
-        try {
-          await bot.telegram.sendMessage(
-            userId,
-            `❌ Payment ${state.toLowerCase()}.\nTap *Resend STK Push* to try again.`,
-            {
-              parse_mode: "Markdown",
-              reply_markup: paymentWaitKeyboard().reply_markup
-            }
-          );
-        } catch (e) {
-          await sendAdminMessage(
-            `❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`
-          );
-        }
-
-        await sendAdminMessage(
-          `⚠️ PAYMENT ${state}\nUser: ${userId}\nType: ${kind}\napi_ref: ${apiRef}`
-        );
+        await markPaymentFailed(ref, state, "webhook", {
+          invoice_id: invoiceId,
+          api_ref: effectiveApiRef
+        });
+        return;
       }
+
+      await sendAdminMessage(
+        `ℹ️ IntaSend webhook state update
+User: ${ref.userId}
+api_ref: ${effectiveApiRef || "N/A"}
+invoice_id: ${invoiceId || "N/A"}
+state: ${state}`
+      );
     } catch (err) {
       console.error("Async IntaSend processing error:", err?.message || err);
     }
