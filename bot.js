@@ -5,7 +5,6 @@ const path = require("path");
 const { Telegraf, Markup } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
-const IntaSend = require("intasend-node");
 const qs = require("querystring");
 
 // =====================
@@ -58,6 +57,99 @@ if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
       : "Need: INTASEND_LIVE_PUBLISHABLE_KEY and INTASEND_LIVE_SECRET_KEY"
   );
   process.exit(1);
+}
+
+// =====================
+// INTASEND DIRECT API CONFIG (replaces intasend-node SDK)
+// =====================
+const INTASEND_BASE_URL = INTASEND_TEST
+  ? "https://sandbox.intasend.com"
+  : "https://payment.intasend.com";
+
+function intasendHeaders() {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${INTASEND_SECRET_KEY}`,
+    "X-IntaSend-Public-API-Key": INTASEND_PUBLISHABLE_KEY
+  };
+}
+
+/**
+ * Direct STK Push via IntaSend REST API
+ */
+async function intasendStkPush({ first_name, last_name, email, host, amount, phone_number, api_ref }) {
+  const url = `${INTASEND_BASE_URL}/api/v1/payment/mpesa-stk-push/`;
+
+  const body = {
+    first_name,
+    last_name,
+    email,
+    host,
+    amount: Number(amount),
+    phone_number: String(phone_number),
+    api_ref,
+    wallet_id: null
+  };
+
+  console.log(`[IntaSend STK] POST ${url} | api_ref=${api_ref} | phone=${phone_number} | amount=${amount}`);
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: intasendHeaders(),
+    body: JSON.stringify(body)
+  });
+
+  const text = await resp.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!resp.ok) {
+    const errMsg = data?.errors
+      ? JSON.stringify(data)
+      : `HTTP ${resp.status}: ${text.slice(0, 500)}`;
+    const err = new Error(errMsg);
+    err.status = resp.status;
+    err.responseData = data;
+    throw err;
+  }
+
+  return data;
+}
+
+/**
+ * Direct invoice status check via IntaSend REST API
+ */
+async function intasendCheckStatus(invoiceId) {
+  const url = `${INTASEND_BASE_URL}/api/v1/payment/collection/${invoiceId}/`;
+
+  console.log(`[IntaSend Status] GET ${url}`);
+
+  const resp = await fetch(url, {
+    method: "GET",
+    headers: intasendHeaders()
+  });
+
+  const text = await resp.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!resp.ok) {
+    const errMsg = `HTTP ${resp.status}: ${text.slice(0, 500)}`;
+    const err = new Error(errMsg);
+    err.status = resp.status;
+    err.responseData = data;
+    throw err;
+  }
+
+  return data;
 }
 
 const ADMIN_ID = 6569201830;
@@ -153,7 +245,7 @@ JK Turnitin Reports Bot
 
   inactive: `
 ⏳ Turnitin checks are paused right now.
-We’ll resume at *6:00 AM EAT*.
+We'll resume at *6:00 AM EAT*.
 
 ✅ You can still send your document now — it will be received.
 ⚠️ Payment prompts will only be sent after 6:00 AM.
@@ -161,7 +253,7 @@ We’ll resume at *6:00 AM EAT*.
 If urgent, WhatsApp call *0701730921*.
 `,
 
-  sendDocHelp: `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\nPlease don’t send as a photo.`,
+  sendDocHelp: `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\nPlease don't send as a photo.`,
 
   paymentHelp:
     "🧾 Payment help:\n\n✅ Default method: *STK Push*\nChoose your batch size → upload files → choose Check/Recheck for each file → enter phone number → receive *one combined STK prompt*.\n\nIf prompt delays/fails, tap *Resend STK Push*.",
@@ -185,13 +277,6 @@ If urgent, WhatsApp call *0701730921*.
 // BOT + STATE
 // =====================
 const bot = new Telegraf(BOT_TOKEN);
-
-const intasend = new IntaSend(
-  INTASEND_PUBLISHABLE_KEY,
-  INTASEND_SECRET_KEY,
-  INTASEND_TEST
-);
-const collection = intasend.collection();
 
 // userId -> submission state
 const submissions = {};
@@ -772,7 +857,8 @@ function scheduleInvoiceStatusPolling(userId, apiRef, invoiceId) {
         if (sub.paid) return;
         if (sub.api_ref !== apiRef) return;
 
-        const resp = await collection.status(invoiceId);
+        // Direct API call instead of SDK
+        const resp = await intasendCheckStatus(invoiceId);
         const invoice = extractInvoiceFromStatusResponse(resp);
         const state = normalizeWebhookState(invoice?.state || resp?.state || resp?.status);
         const ref = getPaymentRef(apiRef) || getPaymentRefByInvoiceId(invoiceId);
@@ -813,6 +899,7 @@ function scheduleInvoiceStatusPolling(userId, apiRef, invoiceId) {
           last_checked_at: Date.now()
         });
       } catch (err) {
+        console.error(`[Status Poll Error] user=${userId} invoice=${invoiceId}:`, err?.message || err);
         await sendAdminMessage(
           `⚠️ Status poll error
 User: ${userId}
@@ -863,7 +950,8 @@ async function attemptStkPush(ctx, sub, { mode }) {
   }
 
   try {
-    const stkResp = await collection.mpesaStkPush({
+    // Direct API call instead of SDK
+    const stkResp = await intasendStkPush({
       first_name: safeText(ctx.from.first_name || "Customer"),
       last_name: safeText(ctx.from.last_name || "User"),
       email: `${userId}@jkturnitin.local`,
@@ -1485,6 +1573,7 @@ app.get("/health", (req, res) =>
     ok: true,
     timeUtc: moment.utc().format(),
     intasendTest: INTASEND_TEST,
+    intasendBaseUrl: INTASEND_BASE_URL,
     publicBaseUrl: PUBLIC_BASE_URL
   })
 );
@@ -1608,6 +1697,7 @@ app.listen(port, async () => {
   console.log(`Webhook server listening on port ${port}`);
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
+  console.log(`IntaSend API Base: ${INTASEND_BASE_URL}`);
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
 
