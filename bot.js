@@ -122,29 +122,43 @@ async function intasendStkPush({ first_name, last_name, email, host, amount, pho
 
 /**
  * Direct invoice status check via IntaSend REST API
- * Docs: POST /api/v1/payment/status/ with { invoice_id } in body
+ * Docs: POST /api/v1/payment/status/
+ * Body: { invoice_id, public_key }
+ * Auth: Bearer secret_key
  */
 async function intasendCheckStatus(invoiceId) {
   const url = `${INTASEND_BASE_URL}/api/v1/payment/status/`;
+
+  // IntaSend docs require public_key in body for status endpoint
+  const body = {
+    invoice_id: invoiceId,
+    public_key: INTASEND_PUBLISHABLE_KEY
+  };
 
   console.log(`[IntaSend Status] POST ${url} | invoice_id=${invoiceId}`);
 
   const resp = await fetch(url, {
     method: "POST",
     headers: intasendHeaders(),
-    body: JSON.stringify({ invoice_id: invoiceId })
+    body: JSON.stringify(body)
   });
 
   const text = await resp.text();
+
+  // Log raw response for debugging
+  console.log(`[IntaSend Status] Response ${resp.status} for ${invoiceId}: ${text.slice(0, 300)}`);
+
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    data = { raw: text };
+    data = { raw_response: text.slice(0, 500), parse_error: true };
   }
 
   if (!resp.ok) {
-    const errMsg = `HTTP ${resp.status}: ${text.slice(0, 500)}`;
+    const errMsg = data?.detail
+      ? `HTTP ${resp.status}: ${JSON.stringify(data)}`
+      : `HTTP ${resp.status}: ${text.slice(0, 300)}`;
     const err = new Error(errMsg);
     err.status = resp.status;
     err.responseData = data;
@@ -881,17 +895,29 @@ function scheduleInvoiceStatusPolling(userId, apiRef, collectionId, invoiceId) {
   if (!invoiceId) return;
 
   const delays = [15000, 30000, 60000, 120000, 180000];
+  let pollCount = 0;
 
   for (const delay of delays) {
     setTimeout(async () => {
+      pollCount++;
       try {
         const sub = submissions[userId];
         if (!sub) return;
         if (sub.paid) return;
         if (sub.api_ref !== apiRef) return;
 
-        // POST /api/v1/payment/status/ with invoice_id in body
+        // POST /api/v1/payment/status/ with invoice_id + public_key in body
         const resp = await intasendCheckStatus(invoiceId);
+
+        // Send diagnostic on first poll so admin can see the raw response
+        if (pollCount <= 2) {
+          await sendAdminMessage(
+            `🔍 Status poll #${pollCount} response
+invoice_id: ${invoiceId}
+Raw: ${truncateText(JSON.stringify(resp), 1500)}`
+          );
+        }
+
         const invoice = extractInvoiceFromStatusResponse(resp);
         const state = normalizeWebhookState(invoice?.state || resp?.state || resp?.status);
         const ref = getPaymentRef(apiRef) || getPaymentRefByInvoiceId(invoiceId);
