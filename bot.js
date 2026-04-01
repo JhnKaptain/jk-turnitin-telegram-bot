@@ -5,7 +5,6 @@ const path = require("path");
 const { Telegraf, Markup } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
-const IntaSend = require("intasend-node");
 const qs = require("querystring");
 
 // =====================
@@ -26,20 +25,6 @@ function sanitizeBaseUrl(raw) {
   return u;
 }
 
-const PUBLIC_BASE_URL = sanitizeBaseUrl(
-  process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || ""
-);
-
-if (!PUBLIC_BASE_URL) {
-  console.error("PUBLIC_BASE_URL is missing or invalid.");
-  console.error("Set: PUBLIC_BASE_URL=https://your-service.onrender.com");
-  process.exit(1);
-}
-
-const INTASEND_WEBHOOK_CHALLENGE = String(
-  process.env.INTASEND_WEBHOOK_CHALLENGE || ""
-).trim();
-
 function readBoolEnv(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
@@ -49,35 +34,6 @@ function readBoolEnv(name, fallback) {
   return fallback;
 }
 
-// Default to LIVE if env missing
-const INTASEND_TEST = readBoolEnv("INTASEND_TEST_ENVIRONMENT", false);
-
-const INTASEND_PUBLISHABLE_KEY = INTASEND_TEST
-  ? String(process.env.INTASEND_TEST_PUBLISHABLE_KEY || "")
-  : String(process.env.INTASEND_LIVE_PUBLISHABLE_KEY || "");
-
-const INTASEND_SECRET_KEY = INTASEND_TEST
-  ? String(process.env.INTASEND_TEST_SECRET_KEY || "")
-  : String(process.env.INTASEND_LIVE_SECRET_KEY || "");
-
-if (!INTASEND_PUBLISHABLE_KEY || !INTASEND_SECRET_KEY) {
-  console.error("Missing IntaSend keys for selected environment.");
-  console.error(`INTASEND_TEST_ENVIRONMENT=${INTASEND_TEST}`);
-  console.error(
-    INTASEND_TEST
-      ? "Need INTASEND_TEST_PUBLISHABLE_KEY and INTASEND_TEST_SECRET_KEY"
-      : "Need INTASEND_LIVE_PUBLISHABLE_KEY and INTASEND_LIVE_SECRET_KEY"
-  );
-  process.exit(1);
-}
-
-const ADMIN_ID = Number(process.env.ADMIN_ID || 6569201830);
-const MAX_BATCH_FILES = 5;
-const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915");
-
-// =====================
-// ENV OVERRIDES
-// =====================
 function readIntEnv(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
@@ -104,6 +60,41 @@ function eatHHMMToUtc(hhmm) {
   hh = (hh - 3 + 24) % 24;
   return String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
 }
+
+const PUBLIC_BASE_URL = sanitizeBaseUrl(
+  process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || ""
+);
+
+if (!PUBLIC_BASE_URL) {
+  console.error("PUBLIC_BASE_URL is missing or invalid.");
+  console.error("Set: PUBLIC_BASE_URL=https://your-service.onrender.com");
+  process.exit(1);
+}
+
+const INTASEND_TEST = readBoolEnv("INTASEND_TEST_ENVIRONMENT", false);
+const INTASEND_WEBHOOK_CHALLENGE = String(process.env.INTASEND_WEBHOOK_CHALLENGE || "").trim();
+
+const INTASEND_PUBLISHABLE_KEY = INTASEND_TEST
+  ? String(process.env.INTASEND_TEST_PUBLISHABLE_KEY || "")
+  : String(process.env.INTASEND_LIVE_PUBLISHABLE_KEY || "");
+
+const INTASEND_SECRET_KEY = INTASEND_TEST
+  ? String(process.env.INTASEND_TEST_SECRET_KEY || "")
+  : String(process.env.INTASEND_LIVE_SECRET_KEY || "");
+
+if (!INTASEND_SECRET_KEY) {
+  console.error("Missing IntaSend secret key for selected environment.");
+  process.exit(1);
+}
+
+if (!INTASEND_PUBLISHABLE_KEY) {
+  console.warn("Warning: IntaSend publishable key missing.");
+}
+
+const INTASEND_API_BASE = "https://api.intasend.com/api/v1";
+const ADMIN_ID = Number(process.env.ADMIN_ID || 6569201830);
+const MAX_BATCH_FILES = 5;
+const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915");
 
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
 const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
@@ -132,7 +123,7 @@ const STK_RESEND_COOLDOWN_MS = 30 * 1000;
 const STK_MAX_RESENDS = 3;
 const PAYMENT_TIMEOUT_MS = 6 * 60 * 1000;
 const STATUS_POLL_INTERVAL_MS = 10 * 1000;
-const STATUS_POLL_MAX_ATTEMPTS = 36;
+const STATUS_POLL_MAX_ATTEMPTS = 48;
 
 // =====================
 // UI TEXT
@@ -187,14 +178,6 @@ If urgent, WhatsApp call *0701730921*.
 // BOT STATE
 // =====================
 const bot = new Telegraf(BOT_TOKEN);
-
-const intasend = new IntaSend(
-  INTASEND_PUBLISHABLE_KEY,
-  INTASEND_SECRET_KEY,
-  INTASEND_TEST
-);
-const collection = intasend.collection();
-
 const submissions = {};
 const pendingFileTargets = {};
 const activePollers = {};
@@ -343,7 +326,7 @@ function makeBatchId(userId) {
 }
 
 function makePaymentAttemptRef(userId) {
-  return `JK_PAY_${userId}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+  return `JKPAY${userId}${Date.now()}${Math.floor(Math.random() * 100000)}`;
 }
 
 function createEmptySubmission() {
@@ -492,8 +475,40 @@ async function notifyUserCancelledToAdmin(user) {
 }
 
 // =====================
-// PAYMENT / STATUS EXTRACTION
+// INTASEND REST HELPERS
 // =====================
+async function intasendRequest(endpoint, body) {
+  const res = await fetch(`${INTASEND_API_BASE}${endpoint}`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      Authorization: `Bearer ${INTASEND_SECRET_KEY}`
+    },
+    body: JSON.stringify(body || {})
+  });
+
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok) {
+    const err = new Error(
+      (data && (data.detail || data.message || JSON.stringify(data))) ||
+        `HTTP ${res.status}`
+    );
+    err.status = res.status;
+    err.payload = data;
+    throw err;
+  }
+
+  return data;
+}
+
 function extractApiRef(payload) {
   return (
     payload?.api_ref ||
@@ -512,6 +527,7 @@ function extractInvoiceId(payload) {
   return (
     payload?.invoice_id ||
     payload?.invoiceId ||
+    payload?.id ||
     payload?.invoice?.invoice_id ||
     payload?.invoice?.invoiceId ||
     payload?.invoice?.id ||
@@ -563,6 +579,20 @@ function normalizePaymentState(raw) {
   ) return "PENDING";
 
   return s || "UNKNOWN";
+}
+
+async function intasendSendStkPush({ amount, phone_number, api_ref }) {
+  return intasendRequest("/payment/mpesa-stk-push/", {
+    amount: String(amount),
+    phone_number,
+    api_ref
+  });
+}
+
+async function intasendCheckPaymentStatus({ invoice_id }) {
+  return intasendRequest("/payment/status/", {
+    invoice_id
+  });
 }
 
 function getBatchById(batchId) {
@@ -626,7 +656,7 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   return true;
 }
 
-async function markPaymentFailure({ apiRef, invoiceId, state, source }) {
+async function markPaymentFailure({ apiRef, invoiceId, state, source, reason }) {
   const ref = getPaymentRef(apiRef);
   if (!ref) return false;
   if (ref.status === "COMPLETE") return false;
@@ -635,7 +665,8 @@ async function markPaymentFailure({ apiRef, invoiceId, state, source }) {
     status: state || "FAILED",
     invoiceId: invoiceId || ref.invoiceId || null,
     lastState: state || "FAILED",
-    failureSource: source || "unknown"
+    failureSource: source || "unknown",
+    failureReason: reason || null
   });
 
   stopStatusPolling(apiRef);
@@ -670,7 +701,7 @@ async function markPaymentFailure({ apiRef, invoiceId, state, source }) {
       apiRef
     )}\ninvoice_id: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nSource: ${safeText(
       source || "unknown"
-    )}`
+    )}\nReason: ${safeText(reason || "N/A")}`
   );
 
   return true;
@@ -678,21 +709,20 @@ async function markPaymentFailure({ apiRef, invoiceId, state, source }) {
 
 async function queryPaymentStatus(invoiceId) {
   if (!invoiceId) throw new Error("Missing invoiceId for status query");
-
-  if (!collection || typeof collection.status !== "function") {
-    throw new Error("IntaSend SDK does not expose collection.status()");
-  }
-
-  const resp = await collection.status(invoiceId);
-  const state = normalizePaymentState(
-    extractState(resp) || resp?.invoice?.state || resp?.state
-  );
+  const resp = await intasendCheckPaymentStatus({ invoice_id: invoiceId });
+  const state = normalizePaymentState(extractState(resp));
 
   return {
     raw: resp,
     invoiceId: extractInvoiceId(resp) || invoiceId,
     apiRef: extractApiRef(resp) || resp?.invoice?.api_ref || null,
-    state
+    state,
+    failedReason:
+      resp?.invoice?.failed_reason ||
+      resp?.failed_reason ||
+      resp?.detail ||
+      resp?.message ||
+      null
   };
 }
 
@@ -748,17 +778,25 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
           apiRef,
           invoiceId: statusResp.invoiceId,
           state: statusResp.state,
-          source: "status-poll"
+          source: "status-poll",
+          reason: statusResp.failedReason
         });
       }
     } catch (err) {
+      updatePaymentRef(apiRef, {
+        lastPolledAt: Date.now(),
+        pollAttempts: attempts,
+        lastPollError: safeText(err?.message || err),
+        lastPollStatus: err?.status || null
+      });
+
       if (attempts === 1 || attempts % 6 === 0) {
         await sendAdminMessage(
           `⚠️ IntaSend status poll failed\nUser: ${userId}\napi_ref: ${safeText(
             apiRef
-          )}\ninvoice_id: ${safeText(invoiceId)}\nAttempt: ${attempts}\nError: ${safeText(
-            err?.message || err
-          )}`
+          )}\ninvoice_id: ${safeText(invoiceId)}\nAttempt: ${attempts}\nHTTP: ${safeText(
+            err?.status || "N/A"
+          )}\nError: ${safeText(err?.message || err)}`
         );
       }
     }
@@ -778,7 +816,7 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
     try {
       await bot.telegram.sendMessage(
         userId,
-        "⏳ Still waiting for payment confirmation.\n\nIf you already paid, the bot is also checking IntaSend status automatically. If prompt never came, tap *Resend STK Push*.",
+        "⏳ Still waiting for payment confirmation.\n\nIf you already paid, the bot is still checking IntaSend automatically. If the prompt never came, tap *Resend STK Push*.",
         {
           parse_mode: "Markdown",
           reply_markup: paymentWaitKeyboard().reply_markup
@@ -953,11 +991,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
   });
 
   try {
-    const resp = await collection.mpesaStkPush({
-      first_name: safeText(ctx.from.first_name || "Customer"),
-      last_name: safeText(ctx.from.last_name || "User"),
-      email: `${userId}@jkturnitin.local`,
-      host: PUBLIC_BASE_URL,
+    const resp = await intasendSendStkPush({
       amount: sub.amount,
       phone_number: sub.phone,
       api_ref: apiRef
@@ -1001,7 +1035,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
       await sendAdminMessage(
         `⚠️ STK response had no invoice_id\nUser: ${userId}\napi_ref: ${apiRef}\nMode: ${
           INTASEND_TEST ? "TEST" : "LIVE"
-        }\nThe webhook may still confirm, but status polling cannot start without invoice_id.`
+        }\nWebhook may still confirm, but polling cannot start without invoice_id.`
       );
     }
 
@@ -1012,7 +1046,9 @@ async function attemptStkPush(ctx, sub, { mode }) {
     updatePaymentRef(apiRef, {
       status: "FAILED_TO_INITIATE",
       failureSource: "stk-init",
-      failureMessage: safeText(err?.message || err)
+      failureMessage: safeText(err?.message || err),
+      failureStatus: err?.status || null,
+      failurePayload: err?.payload || null
     });
 
     await ctx.reply("❌ STK Push failed.\nTap *Resend STK Push* to try again.", {
@@ -1023,7 +1059,9 @@ async function attemptStkPush(ctx, sub, { mode }) {
     await sendAdminMessage(
       `❌ STK Push error\nUser: ${userId}\napi_ref: ${safeText(apiRef)}\nPhone: ${safeText(
         sub.phone
-      )}\nError: ${safeText(err?.message || err)}\nMode: ${
+      )}\nHTTP: ${safeText(err?.status || "N/A")}\nError: ${safeText(
+        err?.message || err
+      )}\nPayload: ${safeText(JSON.stringify(err?.payload || {}))}\nMode: ${
         INTASEND_TEST ? "TEST" : "LIVE"
       }\nHost: ${PUBLIC_BASE_URL}`
     );
@@ -1510,6 +1548,10 @@ app.get("/health", (req, res) => {
     timeUtc: moment.utc().format(),
     intasendTest: INTASEND_TEST,
     publicBaseUrl: PUBLIC_BASE_URL,
+    secretKeyPresent: Boolean(INTASEND_SECRET_KEY),
+    secretKeyLooksValid: String(INTASEND_SECRET_KEY).startsWith("ISSecretKey_"),
+    publishableKeyPresent: Boolean(INTASEND_PUBLISHABLE_KEY),
+    publishableKeyLooksValid: String(INTASEND_PUBLISHABLE_KEY).startsWith("ISPubKey_"),
     pendingSubmissions: Object.keys(submissions).length,
     activePollers: Object.keys(activePollers).length
   });
@@ -1564,6 +1606,12 @@ app.post("/intasend/webhook", (req, res) => {
       let apiRef = extractApiRef(payload);
       const invoiceId = extractInvoiceId(payload);
       const state = normalizePaymentState(extractState(payload));
+      const reason =
+        payload?.failed_reason ||
+        payload?.invoice?.failed_reason ||
+        payload?.detail ||
+        payload?.message ||
+        null;
 
       if (!apiRef && invoiceId) {
         const found = findPaymentRefByInvoiceId(invoiceId);
@@ -1610,17 +1658,18 @@ app.post("/intasend/webhook", (req, res) => {
           apiRef,
           invoiceId: invoiceId || ref.invoiceId || null,
           state,
-          source: "webhook"
+          source: "webhook",
+          reason
         });
       }
     } catch (err) {
-      console.error("Async IntaSend processing error:", err?.message || err);
+      console.error("Async IntaSend webhook processing error:", err?.message || err);
     }
   });
 });
 
 // =====================
-// START SERVER + SET TELEGRAM WEBHOOK
+// START SERVER + TELEGRAM WEBHOOK
 // =====================
 const port = Number(process.env.PORT || 3000);
 
