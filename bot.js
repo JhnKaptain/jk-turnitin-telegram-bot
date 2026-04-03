@@ -280,6 +280,44 @@ function startInlineKeyboard() {
   ]);
 }
 
+function batchSizeKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback("1", "BATCH_COUNT_1"),
+      Markup.button.callback("2", "BATCH_COUNT_2"),
+      Markup.button.callback("3", "BATCH_COUNT_3")
+    ],
+    [
+      Markup.button.callback("4", "BATCH_COUNT_4"),
+      Markup.button.callback("5", "BATCH_COUNT_5")
+    ],
+    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
+  ]);
+}
+
+function typeInlineKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback(`✅ CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")],
+    [Markup.button.callback(`🔁 RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")],
+    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
+  ]);
+}
+
+function uploadContinueKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("✅ Done Uploading", "DONE_UPLOADING")],
+    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
+  ]);
+}
+
+function paymentWaitKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("🔁 Resend STK Push", "STK_RESEND")],
+    [Markup.button.callback("📞 Change phone number", "STK_CHANGE_PHONE")],
+    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
+  ]);
+}
+
 async function replyMarkdownSafe(ctx, message, extra = {}) {
   try {
     await ctx.reply(message, { parse_mode: "Markdown", ...extra });
@@ -344,46 +382,9 @@ function createEmptySubmission() {
     createdAt: Date.now(),
     stkSentAt: null,
     resendCount: 0,
-    paymentAttempts: []
+    paymentAttempts: [],
+    pendingInitialDocument: null
   };
-}
-
-function batchSizeKeyboard() {
-  return Markup.inlineKeyboard([
-    [
-      Markup.button.callback("1", "BATCH_COUNT_1"),
-      Markup.button.callback("2", "BATCH_COUNT_2"),
-      Markup.button.callback("3", "BATCH_COUNT_3")
-    ],
-    [
-      Markup.button.callback("4", "BATCH_COUNT_4"),
-      Markup.button.callback("5", "BATCH_COUNT_5")
-    ],
-    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
-  ]);
-}
-
-function typeInlineKeyboard() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback(`✅ CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")],
-    [Markup.button.callback(`🔁 RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")],
-    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
-  ]);
-}
-
-function uploadContinueKeyboard() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("✅ Done Uploading", "DONE_UPLOADING")],
-    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
-  ]);
-}
-
-function paymentWaitKeyboard() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("🔁 Resend STK Push", "STK_RESEND")],
-    [Markup.button.callback("📞 Change phone number", "STK_CHANGE_PHONE")],
-    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
-  ]);
 }
 
 function isTimeInWindowUTC(currentHHMM, startHHMM, endHHMM) {
@@ -471,6 +472,155 @@ async function notifyUserCancelledToAdmin(user) {
     )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
       user.id
     )}`
+  );
+}
+
+function hasActiveSubmissionForUploads(sub) {
+  return !!sub && [
+    STAGE_WAIT_UPLOADS,
+    STAGE_WAIT_FILE_TYPE,
+    STAGE_WAIT_PHONE,
+    STAGE_WAIT_PAYMENT
+  ].includes(sub.stage);
+}
+
+function ensureFreshSubmission(userId) {
+  if (!submissions[userId]) {
+    submissions[userId] = createEmptySubmission();
+  }
+  return submissions[userId];
+}
+
+async function forwardAcceptedDocumentByIds(userId, chatId, messageId, username, firstName, lastName) {
+  try {
+    await sendAdminMessage(
+      `📨 Document received\nUser ID: ${userId}\nUsername: @${safeText(
+        username || "N/A"
+      )}\nName: ${safeText(firstName)} ${safeText(lastName)}${adminQuickCommands(userId)}`
+    );
+    await bot.telegram.forwardMessage(ADMIN_ID, chatId, messageId);
+  } catch {}
+}
+
+async function beginSubmissionFlow(ctx) {
+  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
+    return notifyInactivePeriod(ctx);
+  }
+
+  if (ctx.from.id === ADMIN_ID) {
+    return replyMarkdownSafe(ctx, MESSAGES.sendDocHelp, {
+      reply_markup: mainKeyboard()
+    });
+  }
+
+  const userId = ctx.from.id;
+  const existing = submissions[userId];
+
+  if (existing && existing.stage === STAGE_WAIT_BATCH_SIZE) {
+    await ctx.reply(
+      `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: batchSizeKeyboard().reply_markup
+      }
+    );
+    return;
+  }
+
+  submissions[userId] = createEmptySubmission();
+
+  await ctx.reply(
+    `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: batchSizeKeyboard().reply_markup
+    }
+  );
+}
+
+async function showPaymentHelp(ctx) {
+  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
+    return notifyInactivePeriod(ctx);
+  }
+
+  await replyMarkdownSafe(ctx, MESSAGES.paymentHelp, {
+    reply_markup: mainKeyboard()
+  });
+}
+
+async function askForFileType(ctx, sub) {
+  const file = getCurrentPendingFile(sub);
+  if (!file) return;
+
+  const fileNumber = sub.currentFileIndex + 1;
+
+  await ctx.reply(
+    `📄 File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\nClick the button below for Check or Recheck.`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: typeInlineKeyboard().reply_markup
+    }
+  );
+}
+
+async function moveBatchToPhoneStep(ctx, sub) {
+  const counts = getSubmissionCounts(sub);
+
+  if (counts.total === 0) {
+    await ctx.reply("❌ Please upload at least one file first.", {
+      reply_markup: mainKeyboard()
+    });
+    return;
+  }
+
+  sub.amount = calculateSubmissionAmount(sub);
+  sub.batchId = sub.batchId || makeBatchId(ctx.from.id);
+  sub.stage = STAGE_WAIT_PHONE;
+  sub.currentFileIndex = null;
+
+  const summary = formatBatchSummary(sub);
+
+  await replyMarkdownSafe(ctx, MESSAGES.askPhoneBatch(summary, sub.amount), {
+    reply_markup: mainKeyboard()
+  });
+}
+
+async function handleFileTypeSelected(ctx, kind) {
+  const userId = ctx.from.id;
+  const sub = submissions[userId];
+
+  if (!sub || sub.stage !== STAGE_WAIT_FILE_TYPE) {
+    return ctx.answerCbQuery("No pending file type selection.");
+  }
+
+  const file = getCurrentPendingFile(sub);
+  if (!file) {
+    sub.stage = STAGE_WAIT_UPLOADS;
+    sub.currentFileIndex = null;
+    return ctx.answerCbQuery("No pending file.");
+  }
+
+  file.type = kind;
+  file.price = kind === "CHECK" ? CHECK_PRICE_KES : RECHECK_PRICE_KES;
+  const justCompletedNumber = sub.currentFileIndex + 1;
+  sub.currentFileIndex = null;
+
+  await ctx.answerCbQuery(`${kind} selected`);
+
+  if (sub.files.length >= sub.expectedFiles) {
+    await moveBatchToPhoneStep(ctx, sub);
+    return;
+  }
+
+  sub.stage = STAGE_WAIT_UPLOADS;
+  await ctx.reply(
+    `✅ ${kind} saved for file ${justCompletedNumber}.\n\nNow send file ${
+      sub.files.length + 1
+    } of ${sub.expectedFiles}.\nIf you are finished early, tap *Done Uploading*.`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: uploadContinueKeyboard().reply_markup
+    }
   );
 }
 
@@ -653,6 +803,7 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
     )}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}`
   );
 
+  resetSubmission(userId);
   return true;
 }
 
@@ -824,114 +975,6 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
       );
     } catch {}
   }, PAYMENT_TIMEOUT_MS);
-}
-
-async function askForFileType(ctx, sub) {
-  const file = getCurrentPendingFile(sub);
-  if (!file) return;
-
-  const fileNumber = sub.currentFileIndex + 1;
-
-  await ctx.reply(
-    `📄 File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\nClick the button below for Check or Recheck.`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: typeInlineKeyboard().reply_markup
-    }
-  );
-}
-
-async function moveBatchToPhoneStep(ctx, sub) {
-  const counts = getSubmissionCounts(sub);
-
-  if (counts.total === 0) {
-    await ctx.reply("❌ Please upload at least one file first.", {
-      reply_markup: mainKeyboard()
-    });
-    return;
-  }
-
-  sub.amount = calculateSubmissionAmount(sub);
-  sub.batchId = sub.batchId || makeBatchId(ctx.from.id);
-  sub.stage = STAGE_WAIT_PHONE;
-  sub.currentFileIndex = null;
-
-  const summary = formatBatchSummary(sub);
-
-  await replyMarkdownSafe(ctx, MESSAGES.askPhoneBatch(summary, sub.amount), {
-    reply_markup: mainKeyboard()
-  });
-}
-
-async function handleFileTypeSelected(ctx, kind) {
-  const userId = ctx.from.id;
-  const sub = submissions[userId];
-
-  if (!sub || sub.stage !== STAGE_WAIT_FILE_TYPE) {
-    return ctx.answerCbQuery("No pending file type selection.");
-  }
-
-  const file = getCurrentPendingFile(sub);
-  if (!file) {
-    sub.stage = STAGE_WAIT_UPLOADS;
-    sub.currentFileIndex = null;
-    return ctx.answerCbQuery("No pending file.");
-  }
-
-  file.type = kind;
-  file.price = kind === "CHECK" ? CHECK_PRICE_KES : RECHECK_PRICE_KES;
-  const justCompletedNumber = sub.currentFileIndex + 1;
-  sub.currentFileIndex = null;
-
-  await ctx.answerCbQuery(`${kind} selected`);
-
-  if (sub.files.length >= sub.expectedFiles) {
-    await moveBatchToPhoneStep(ctx, sub);
-    return;
-  }
-
-  sub.stage = STAGE_WAIT_UPLOADS;
-  await ctx.reply(
-    `✅ ${kind} saved for file ${justCompletedNumber}.\n\nNow send file ${
-      sub.files.length + 1
-    } of ${sub.expectedFiles}.\nIf you are finished early, tap *Done Uploading*.`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: uploadContinueKeyboard().reply_markup
-    }
-  );
-}
-
-async function beginSubmissionFlow(ctx) {
-  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
-    return notifyInactivePeriod(ctx);
-  }
-
-  if (ctx.from.id === ADMIN_ID) {
-    return replyMarkdownSafe(ctx, MESSAGES.sendDocHelp, {
-      reply_markup: mainKeyboard()
-    });
-  }
-
-  submissions[ctx.from.id] = createEmptySubmission();
-
-  await ctx.reply(
-    `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: batchSizeKeyboard().reply_markup
-    }
-  );
-}
-
-async function showPaymentHelp(ctx) {
-  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
-    return notifyInactivePeriod(ctx);
-  }
-
-  await replyMarkdownSafe(ctx, MESSAGES.paymentHelp, {
-    reply_markup: mainKeyboard()
-  });
 }
 
 // =====================
@@ -1210,15 +1253,54 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
   const userId = ctx.from.id;
 
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+
   if (count < 1 || count > MAX_BATCH_FILES) {
     return ctx.answerCbQuery("Invalid number.");
   }
 
-  submissions[userId] = createEmptySubmission();
-  submissions[userId].expectedFiles = count;
-  submissions[userId].stage = STAGE_WAIT_UPLOADS;
+  const sub = ensureFreshSubmission(userId);
+  sub.expectedFiles = count;
+  sub.stage = STAGE_WAIT_UPLOADS;
 
   await ctx.answerCbQuery(`Selected ${count} file(s)`);
+
+  if (sub.pendingInitialDocument) {
+    const pending = sub.pendingInitialDocument;
+
+    sub.files.push({
+      file_id: pending.fileId,
+      file_name: pending.fileName || `file_${Date.now()}`,
+      type: null,
+      price: null,
+      uploadedAt: Date.now()
+    });
+
+    sub.currentFileIndex = sub.files.length - 1;
+    sub.stage = STAGE_WAIT_FILE_TYPE;
+
+    sub.pendingInitialDocument = null;
+
+    await ctx.reply(
+      `✅ You selected *${count}* file(s).\n\nYour first document has been captured as *file 1*.\nNow choose *Check* or *Recheck* for it.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: mainKeyboard()
+      }
+    );
+
+    await forwardAcceptedDocumentByIds(
+      pending.userId,
+      pending.chatId,
+      pending.messageId,
+      pending.username,
+      pending.firstName,
+      pending.lastName
+    );
+
+    await askForFileType(ctx, sub);
+    return;
+  }
+
   await ctx.reply(
     `✅ You selected *${count}* file(s).\n\nNow send file *1* of *${count}* as a *document*.`,
     {
@@ -1234,6 +1316,7 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
 bot.on("document", async (ctx) => {
   const user = ctx.from;
 
+  // ADMIN SENDING REPORT FILES
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -1254,29 +1337,71 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  try {
-    await sendAdminMessage(
-      `📨 Document received\nUser ID: ${user.id}\nUsername: @${safeText(
-        user.username || "N/A"
-      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
-        user.id
-      )}`
-    );
-    await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
-  } catch {}
-
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
-  const sub = submissions[user.id];
+  let sub = submissions[user.id];
 
-  if (!sub || sub.stage === STAGE_WAIT_BATCH_SIZE) {
-    return ctx.reply(
-      `📄 File received.\n\nPlease tap *Send Document* first and choose how many files you want to upload (1-${MAX_BATCH_FILES}).`,
+  // Fresh start after completed/old state
+  if (sub && sub.stage === STAGE_PAID) {
+    resetSubmission(user.id);
+    sub = null;
+  }
+
+  // No session yet: HOLD first document, do not forward yet, ask for batch count
+  if (!sub) {
+    submissions[user.id] = createEmptySubmission();
+    submissions[user.id].pendingInitialDocument = {
+      userId: user.id,
+      chatId: ctx.chat.id,
+      messageId: ctx.message.message_id,
+      fileId: ctx.message.document.file_id,
+      fileName: ctx.message.document.file_name || `file_${Date.now()}`,
+      username: user.username || "N/A",
+      firstName: user.first_name || "",
+      lastName: user.last_name || ""
+    };
+
+    await ctx.reply(
+      `📦 First document received.\n\nNow choose how many files you want to upload.\nYour first document will be used as *file 1* after you choose the number.`,
       {
         parse_mode: "Markdown",
-        reply_markup: startInlineKeyboard().reply_markup
+        reply_markup: batchSizeKeyboard().reply_markup
       }
     );
+    return;
+  }
+
+  // Waiting for batch size and first document already held
+  if (sub.stage === STAGE_WAIT_BATCH_SIZE) {
+    if (sub.pendingInitialDocument) {
+      await ctx.reply(
+        "📦 Please choose the number of files first. Your first document is already held and will be used as file 1.",
+        {
+          reply_markup: batchSizeKeyboard().reply_markup
+        }
+      );
+      return;
+    }
+
+    sub.pendingInitialDocument = {
+      userId: user.id,
+      chatId: ctx.chat.id,
+      messageId: ctx.message.message_id,
+      fileId: ctx.message.document.file_id,
+      fileName: ctx.message.document.file_name || `file_${Date.now()}`,
+      username: user.username || "N/A",
+      firstName: user.first_name || "",
+      lastName: user.last_name || ""
+    };
+
+    await ctx.reply(
+      `📦 First document received.\n\nNow choose how many files you want to upload.\nYour first document will be used as *file 1* after you choose the number.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: batchSizeKeyboard().reply_markup
+      }
+    );
+    return;
   }
 
   if (sub.stage === STAGE_WAIT_FILE_TYPE) {
@@ -1286,9 +1411,9 @@ bot.on("document", async (ctx) => {
     });
   }
 
-  if ([STAGE_WAIT_PHONE, STAGE_WAIT_PAYMENT, STAGE_PAID].includes(sub.stage)) {
+  if (sub.stage === STAGE_WAIT_PHONE || sub.stage === STAGE_WAIT_PAYMENT) {
     return ctx.reply(
-      "⚠️ This batch is already in payment/completed state. Tap *Cancel / New submission* to start another batch.",
+      "⚠️ This batch is already in payment state. Please finish payment or tap *Cancel / New submission* to start another batch.",
       {
         parse_mode: "Markdown",
         reply_markup: mainKeyboard()
@@ -1313,9 +1438,17 @@ bot.on("document", async (ctx) => {
     price: null,
     uploadedAt: Date.now()
   });
-
   sub.currentFileIndex = sub.files.length - 1;
   sub.stage = STAGE_WAIT_FILE_TYPE;
+
+  await forwardAcceptedDocumentByIds(
+    user.id,
+    ctx.chat.id,
+    ctx.message.message_id,
+    user.username || "N/A",
+    user.first_name || "",
+    user.last_name || ""
+  );
 
   await askForFileType(ctx, sub);
 });
@@ -1326,6 +1459,7 @@ bot.on("document", async (ctx) => {
 bot.on("photo", async (ctx) => {
   const user = ctx.from;
 
+  // ADMIN SENDING PHOTO REPORTS
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
     if (!target) {
@@ -1348,20 +1482,27 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  try {
-    await sendAdminMessage(
-      `🖼️ Photo received\nUser ID: ${user.id}\nUsername: @${safeText(
-        user.username || "N/A"
-      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
-        user.id
-      )}`
-    );
-    await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
-  } catch {}
-
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
   const sub = submissions[user.id];
+
+  // Only forward photo proof during payment stage
+  if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
+    try {
+      await sendAdminMessage(
+        `🖼️ Payment proof received\nUser ID: ${user.id}\nUsername: @${safeText(
+          user.username || "N/A"
+        )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
+          user.id
+        )}`
+      );
+      await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
+    } catch {}
+
+    await ctx.reply("✅ Payment proof received.", { reply_markup: mainKeyboard() });
+    return;
+  }
+
   if (
     sub &&
     [STAGE_WAIT_BATCH_SIZE, STAGE_WAIT_UPLOADS, STAGE_WAIT_FILE_TYPE].includes(sub.stage)
@@ -1372,7 +1513,10 @@ bot.on("photo", async (ctx) => {
     });
   }
 
-  await ctx.reply("✅ Received.", { reply_markup: mainKeyboard() });
+  await ctx.reply("⚠️ Please tap *Send Document* and upload your file as a *document*, not a photo.", {
+    parse_mode: "Markdown",
+    reply_markup: startInlineKeyboard().reply_markup
+  });
 });
 
 // =====================
@@ -1463,15 +1607,18 @@ bot.on("text", async (ctx) => {
   if (text.startsWith("/")) return;
   if (user.id === ADMIN_ID) return;
 
-  await sendAdminMessage(
-    `💬 Message from user\nUser ID: ${user.id}\nUsername: @${safeText(
-      user.username || "N/A"
-    )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`
-  );
+  const sub = submissions[user.id];
+
+  // Forward user texts only when there is an active real session
+  if (hasActiveSubmissionForUploads(sub)) {
+    await sendAdminMessage(
+      `💬 Message from user\nUser ID: ${user.id}\nUsername: @${safeText(
+        user.username || "N/A"
+      )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`
+    );
+  }
 
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
-
-  const sub = submissions[user.id];
 
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
