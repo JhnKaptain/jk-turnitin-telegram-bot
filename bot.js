@@ -133,7 +133,7 @@ const KEY_SEND_MPESA = "🧾 Payment Help";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
 const REPORTS_DELIVERED_MESSAGE =
-  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. But not MustGo for Sure Mehn";
+  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. WANTAM";
 
 const MESSAGES = {
   welcome: (check, recheck) => `
