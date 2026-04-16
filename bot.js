@@ -133,7 +133,7 @@ const KEY_SEND_MPESA = "🧾 Payment Help";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
 const REPORTS_DELIVERED_MESSAGE =
-  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. WANTAM";
+  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access other Writing Serices Here https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
 const MESSAGES = {
   welcome: (check, recheck) => `
