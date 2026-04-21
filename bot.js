@@ -130,6 +130,7 @@ const STATUS_POLL_MAX_ATTEMPTS = 48;
 // =====================
 const KEY_SEND_DOC = "📄 Send Document";
 const KEY_SEND_MPESA = "🧾 Payment Help";
+const KEY_CONTACT_SUPPORT = "💬 Contact Support Team";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
 const REPORTS_DELIVERED_MESSAGE =
@@ -181,6 +182,7 @@ const bot = new Telegraf(BOT_TOKEN);
 const submissions = {};
 const pendingFileTargets = {};
 const activePollers = {};
+const supportRequests = {};
 let paymentRefs = {};
 
 const STORE_FILE = path.join(__dirname, "paymentRefs.store.json");
@@ -266,6 +268,7 @@ function mainKeyboard() {
     keyboard: [
       [{ text: KEY_SEND_DOC }],
       [{ text: KEY_SEND_MPESA }],
+      [{ text: KEY_CONTACT_SUPPORT }],
       [{ text: KEY_CANCEL }]
     ],
     resize_keyboard: true,
@@ -461,6 +464,7 @@ function resetSubmission(userId) {
     for (const apiRef of sub.paymentAttempts) stopStatusPolling(apiRef);
   }
   delete submissions[userId];
+  delete supportRequests[userId];
 }
 
 async function notifyUserCancelledToAdmin(user) {
@@ -1237,6 +1241,14 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
   await showPaymentHelp(ctx);
 });
 
+bot.hears(KEY_CONTACT_SUPPORT, async (ctx) => {
+  supportRequests[ctx.from.id] = true;
+  await ctx.reply(
+    "💬 Please type your message for the Support Team. It will be delivered to admin.",
+    { reply_markup: mainKeyboard() }
+  );
+});
+
 bot.hears(KEY_CANCEL, async (ctx) => {
   await notifyUserCancelledToAdmin(ctx.from);
   resetSubmission(ctx.from.id);
@@ -1606,6 +1618,28 @@ bot.on("text", async (ctx) => {
 
   if (text.startsWith("/")) return;
   if (user.id === ADMIN_ID) return;
+
+  if (supportRequests[user.id]) {
+    supportRequests[user.id] = false;
+
+    try {
+      await sendAdminMessage(
+        `💬 Support message from user\nUser ID: ${user.id}\nUsername: @${safeText(
+          user.username || "N/A"
+        )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\n${safeText(
+          text
+        )}${adminQuickCommands(user.id)}`
+      );
+      await ctx.reply("✅ Your message has been sent to the Support Team.", {
+        reply_markup: mainKeyboard()
+      });
+    } catch {
+      await ctx.reply("❌ Failed to send your message. Please try again.", {
+        reply_markup: mainKeyboard()
+      });
+    }
+    return;
+  }
 
   const sub = submissions[user.id];
 
