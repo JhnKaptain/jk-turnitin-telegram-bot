@@ -1160,7 +1160,19 @@ bot.command("reply", async (ctx) => {
   const replyText = parts.slice(2).join(" ");
 
   try {
-    await bot.telegram.sendMessage(userId, `✅ Support Team:\n\n${replyText}`);
+    await bot.telegram.sendMessage(
+      userId,
+      `━━━━━━━━━━━━━━━
+💬 *JK Turnitin Support*
+━━━━━━━━━━━━━━━
+
+${replyText}
+
+━━━━━━━━━━━━━━━
+_We’re here if you need anything else._`,
+      { parse_mode: "Markdown" }
+    );
+
     await ctx.reply(`✅ Sent to ${userId}`);
   } catch (err) {
     await ctx.reply("❌ Failed: " + (err?.message || err));
