@@ -152,10 +152,10 @@ JK Turnitin Reports Bot
 `,
   inactive: `
 ⏳ Turnitin checks are paused right now.
-We’ll resume at *6:00 AM EAT*.
+We’ll resume at *6:45 AM EAT*.
 
 ✅ You can still send your document now — it will be received.
-⚠️ Payment prompts will only be sent after 6:00 AM.
+⚠️ Payment prompts will only be sent after 6:45 AM.
 
 If urgent, WhatsApp call *0701730921*.
 `,
@@ -164,7 +164,7 @@ If urgent, WhatsApp call *0701730921*.
   paymentHelp:
     "🧾 Payment help:\n\n✅ Default method: *STK Push*\nChoose your batch size → upload files → choose Check/Recheck for each file → enter phone number → receive *one combined STK prompt*.\n\nIf prompt delays/fails, tap *Resend STK Push*.",
   askPhoneBatch: (summary, amount) =>
-    `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX / 2547XXXXXXXX / 2541XXXXXXXX).`,
+    `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
   stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
   stkSentSimple: "✅ STK Push sent. Pay on your phone — confirmation is automatic.",
   stkSentWithTill: (till) =>
@@ -351,14 +351,7 @@ function adminQuickCommands(userId) {
 function normalizePhoneTo254(phoneRaw) {
   const t = String(phoneRaw || "").trim().replace(/\s+/g, "");
   if (!t) return null;
-  if (t.startsWith("+")) {
-    const x = t.slice(1);
-    if (/^254(?:7|1)\d{8}$/.test(x)) return x;
-    return null;
-  }
-  if (/^254(?:7|1)\d{8}$/.test(t)) return t;
   if (/^0(?:7|1)\d{8}$/.test(t)) return "254" + t.slice(1);
-  if (/^(?:7|1)\d{8}$/.test(t)) return "254" + t;
   return null;
 }
 
@@ -1596,7 +1589,7 @@ bot.action("STK_CHANGE_PHONE", async (ctx) => {
 
   await ctx.answerCbQuery("Send new phone");
   await ctx.reply(
-    "📞 Send your phone number again (07XXXXXXXX / 01XXXXXXXX / 2547XXXXXXXX / 2541XXXXXXXX).",
+    "📞 Send your phone number again (07XXXXXXXX / 01XXXXXXXX).",
     {
       reply_markup: mainKeyboard()
     }
@@ -1670,7 +1663,7 @@ bot.on("text", async (ctx) => {
     const phone254 = normalizePhoneTo254(text);
     if (!phone254) {
       return ctx.reply(
-        "❌ Invalid phone. Send like 07XXXXXXXX / 01XXXXXXXX or 2547XXXXXXXX / 2541XXXXXXXX."
+        "❌ Invalid phone. Send like 07XXXXXXXX or 01XXXXXXXX."
       );
     }
 
