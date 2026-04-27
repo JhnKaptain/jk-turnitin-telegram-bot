@@ -5,7 +5,6 @@ const path = require("path");
 const { Telegraf, Markup } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
-const qs = require("querystring");
 
 // =====================
 // ENV + CONSTANTS
@@ -23,15 +22,6 @@ function sanitizeBaseUrl(raw) {
   if (u.startsWith("http://")) u = "https://" + u.slice("http://".length);
   if (!u.startsWith("https://")) return "";
   return u;
-}
-
-function readBoolEnv(name, fallback) {
-  const raw = process.env[name];
-  if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
-  const v = String(raw).trim().toLowerCase();
-  if (["true", "1", "yes", "on"].includes(v)) return true;
-  if (["false", "0", "no", "off"].includes(v)) return false;
-  return fallback;
 }
 
 function readIntEnv(name, fallback) {
@@ -71,33 +61,17 @@ if (!PUBLIC_BASE_URL) {
   process.exit(1);
 }
 
-const INTASEND_TEST = readBoolEnv("INTASEND_TEST_ENVIRONMENT", false);
-const INTASEND_WEBHOOK_CHALLENGE = String(process.env.INTASEND_WEBHOOK_CHALLENGE || "").trim();
-
-const INTASEND_PUBLISHABLE_KEY = INTASEND_TEST
-  ? String(process.env.INTASEND_TEST_PUBLISHABLE_KEY || "")
-  : String(process.env.INTASEND_LIVE_PUBLISHABLE_KEY || "");
-
-const INTASEND_SECRET_KEY = INTASEND_TEST
-  ? String(process.env.INTASEND_TEST_SECRET_KEY || "")
-  : String(process.env.INTASEND_LIVE_SECRET_KEY || "");
-
-if (!INTASEND_SECRET_KEY) {
-  console.error("Missing IntaSend secret key for selected environment.");
-  process.exit(1);
-}
-
-if (!INTASEND_PUBLISHABLE_KEY) {
-  console.warn("Warning: IntaSend publishable key missing.");
-}
-
-const INTASEND_API_BASE = "https://api.intasend.com/api/v1";
 const ADMIN_ID = Number(process.env.ADMIN_ID || 6569201830);
 const MAX_BATCH_FILES = 5;
+
 const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915");
+const BUSINESS_NAME = String(process.env.BUSINESS_NAME || "JOHNKAPTAIN SOLUTIONS HUB");
 
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
 const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
+
+const AUTO_VERIFICATION_RESUME_DATE =
+  process.env.AUTO_VERIFICATION_RESUME_DATE || "29 April 2026";
 
 const INACTIVE_START_UTC = normalizeHHMM(
   process.env.INACTIVE_START_UTC,
@@ -110,20 +84,13 @@ const INACTIVE_END_UTC = normalizeHHMM(
 );
 
 // =====================
-// STAGES / PAYMENT
+// STAGES
 // =====================
 const STAGE_WAIT_BATCH_SIZE = "WAIT_BATCH_SIZE";
 const STAGE_WAIT_UPLOADS = "WAIT_UPLOADS";
 const STAGE_WAIT_FILE_TYPE = "WAIT_FILE_TYPE";
-const STAGE_WAIT_PHONE = "WAIT_PHONE";
 const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
 const STAGE_PAID = "PAID";
-
-const STK_RESEND_COOLDOWN_MS = 30 * 1000;
-const STK_MAX_RESENDS = 3;
-const PAYMENT_TIMEOUT_MS = 6 * 60 * 1000;
-const STATUS_POLL_INTERVAL_MS = 10 * 1000;
-const STATUS_POLL_MAX_ATTEMPTS = 48;
 
 // =====================
 // UI TEXT
@@ -144,33 +111,31 @@ JK Turnitin Reports Bot
 2️⃣ Choose how many files you want to upload (1-${MAX_BATCH_FILES})
 3️⃣ Upload your files one by one as *documents*
 4️⃣ Choose *CHECK* or *RECHECK* for each file
-5️⃣ Pay *once* for the whole batch
+5️⃣ Pay via M-PESA Till and send proof
 
 💰 Pricing
 • Check: ${check} KES
 • Recheck: ${recheck} KES
+
+⚠️ Automatic verification is temporarily unavailable and will resume on *${AUTO_VERIFICATION_RESUME_DATE}*.
 `,
   inactive: `
 ⏳ Turnitin checks are paused right now.
 We’ll resume at *6:45 AM EAT*.
 
 ✅ You can still send your document now — it will be received.
-⚠️ Payment prompts will only be sent after 6:45 AM.
+⚠️ Payment verification is currently manual.
 
 If urgent, WhatsApp call *0701730921*.
 `,
   sendDocHelp:
     `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\nPlease don’t send as a photo.`,
   paymentHelp:
-    "🧾 Payment help:\n\n✅ Default method: *STK Push*\nChoose your batch size → upload files → choose Check/Recheck for each file → enter phone number → receive *one combined STK prompt*.\n\nIf prompt delays/fails, tap *Resend STK Push*.",
-  askPhoneBatch: (summary, amount) =>
-    `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
-  stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
-  stkSentSimple: "✅ STK Push sent. Pay on your phone — confirmation is automatic.",
-  stkSentWithTill: (till) =>
-    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till:\n\n\`${till}\`\n\nSend proof here as screenshot not text.`,
-  waitingConfirm:
-    "Waiting for payment confirmation…\n\nIf webhook delays, the bot will also check IntaSend status automatically.",
+    `🧾 Payment help:\n\nAutomatic STK verification is temporarily unavailable and will resume on *${AUTO_VERIFICATION_RESUME_DATE}*.\n\nFor now, pay via M-PESA Buy Goods Till:\n\nTill Number: *${TILL_NUMBER}*\nBusiness Name: *${BUSINESS_NAME}*\n\nAfter payment, send your M-PESA confirmation screenshot or transaction message here.`,
+  manualPaymentInstructions: (summary, amount) =>
+    `🧾 *Manual Payment Required*\n\n📦 Batch summary\n\n${summary}\n\n💰 Total amount: *KES ${amount}*\n\nPay via M-PESA Buy Goods Till:\n\nTill Number: *${TILL_NUMBER}*\nBusiness Name: *${BUSINESS_NAME}*\nAmount: *KES ${amount}*\n\nAfter payment, send your M-PESA confirmation screenshot or transaction message here.\n\n⚠️ Automatic verification is temporarily unavailable and will resume on *${AUTO_VERIFICATION_RESUME_DATE}*.`,
+  proofReceived:
+    "✅ Payment proof received.\n\nWe will verify it manually and confirm shortly.",
   paidMsgBatch: (amount, summary) =>
     `✅ Payment confirmed (${amount} KES).\n\n${summary}\n\n⏱ Reports take *5–20 minutes* (queue).`
 };
@@ -181,11 +146,10 @@ If urgent, WhatsApp call *0701730921*.
 const bot = new Telegraf(BOT_TOKEN);
 const submissions = {};
 const pendingFileTargets = {};
-const activePollers = {};
 const supportRequests = {};
-let paymentRefs = {};
+let manualPayments = {};
 
-const STORE_FILE = path.join(__dirname, "paymentRefs.store.json");
+const STORE_FILE = path.join(__dirname, "manualPayments.store.json");
 
 // =====================
 // PERSISTENCE
@@ -195,48 +159,37 @@ function loadStore() {
     if (!fs.existsSync(STORE_FILE)) return;
     const raw = fs.readFileSync(STORE_FILE, "utf8");
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") paymentRefs = parsed;
+    if (parsed && typeof parsed === "object") manualPayments = parsed;
   } catch (e) {
-    console.error("Failed to load payment store:", e?.message || e);
+    console.error("Failed to load manual payment store:", e?.message || e);
   }
 }
 
 function saveStore() {
   try {
-    fs.writeFileSync(STORE_FILE, JSON.stringify(paymentRefs, null, 2), "utf8");
+    fs.writeFileSync(STORE_FILE, JSON.stringify(manualPayments, null, 2), "utf8");
   } catch (e) {
-    console.error("Failed to save payment store:", e?.message || e);
+    console.error("Failed to save manual payment store:", e?.message || e);
   }
 }
 
-function putPaymentRef(apiRef, value) {
-  paymentRefs[apiRef] = value;
+function putManualPayment(userId, value) {
+  manualPayments[String(userId)] = value;
   saveStore();
 }
 
-function updatePaymentRef(apiRef, patch) {
-  paymentRefs[apiRef] = {
-    ...(paymentRefs[apiRef] || {}),
+function updateManualPayment(userId, patch) {
+  const key = String(userId);
+  manualPayments[key] = {
+    ...(manualPayments[key] || {}),
     ...patch,
     updatedAt: Date.now()
   };
   saveStore();
 }
 
-function getPaymentRef(apiRef) {
-  return paymentRefs[apiRef] || null;
-}
-
-function findPaymentRefByInvoiceId(invoiceId) {
-  const wanted = String(invoiceId || "").trim();
-  if (!wanted) return null;
-
-  for (const [apiRef, value] of Object.entries(paymentRefs)) {
-    if (String(value?.invoiceId || "").trim() === wanted) {
-      return { apiRef, value };
-    }
-  }
-  return null;
+function getManualPayment(userId) {
+  return manualPayments[String(userId)] || null;
 }
 
 loadStore();
@@ -246,9 +199,9 @@ setInterval(() => {
   const cutoff = 7 * 24 * 60 * 60 * 1000;
   let changed = false;
 
-  for (const [apiRef, value] of Object.entries(paymentRefs)) {
+  for (const [userId, value] of Object.entries(manualPayments)) {
     if (value?.createdAt && now - value.createdAt > cutoff) {
-      delete paymentRefs[apiRef];
+      delete manualPayments[userId];
       changed = true;
     }
   }
@@ -313,10 +266,8 @@ function uploadContinueKeyboard() {
   ]);
 }
 
-function paymentWaitKeyboard() {
+function paymentProofKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🔁 Resend STK Push", "STK_RESEND")],
-    [Markup.button.callback("📞 Change phone number", "STK_CHANGE_PHONE")],
     [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
   ]);
 }
@@ -348,19 +299,12 @@ function adminQuickCommands(userId) {
   return `\n\n\`/filebatch ${userId}\`\n\`/reply ${userId}\``;
 }
 
-function normalizePhoneTo254(phoneRaw) {
-  const t = String(phoneRaw || "").trim().replace(/\s+/g, "");
-  if (!t) return null;
-  if (/^0(?:7|1)\d{8}$/.test(t)) return "254" + t.slice(1);
-  return null;
+function paymentAdminCommands(userId) {
+  return `\n\nApprove:\n\`/approvepay ${userId}\`\n\nReject:\n\`/rejectpay ${userId} reason\``;
 }
 
 function makeBatchId(userId) {
   return `JK_BATCH_${userId}_${Date.now()}`;
-}
-
-function makePaymentAttemptRef(userId) {
-  return `JKPAY${userId}${Date.now()}${Math.floor(Math.random() * 100000)}`;
 }
 
 function createEmptySubmission() {
@@ -371,15 +315,10 @@ function createEmptySubmission() {
     currentFileIndex: null,
     amount: null,
     batchId: null,
-    api_ref: null,
-    phone: null,
-    invoiceId: null,
     paid: false,
     createdAt: Date.now(),
-    stkSentAt: null,
-    resendCount: 0,
-    paymentAttempts: [],
-    pendingInitialDocument: null
+    pendingInitialDocument: null,
+    proofReceived: false
   };
 }
 
@@ -444,18 +383,7 @@ function canAcceptMoreFiles(sub) {
   return sub.files.length < (sub.expectedFiles || 0);
 }
 
-function stopStatusPolling(apiRef) {
-  if (activePollers[apiRef]) {
-    clearInterval(activePollers[apiRef]);
-    delete activePollers[apiRef];
-  }
-}
-
 function resetSubmission(userId) {
-  const sub = submissions[userId];
-  if (sub?.paymentAttempts?.length) {
-    for (const apiRef of sub.paymentAttempts) stopStatusPolling(apiRef);
-  }
   delete submissions[userId];
   delete supportRequests[userId];
 }
@@ -475,9 +403,7 @@ async function notifyUserCancelledToAdmin(user) {
 function hasActiveSubmissionForUploads(sub) {
   return !!sub && [
     STAGE_WAIT_UPLOADS,
-    STAGE_WAIT_FILE_TYPE,
-    STAGE_WAIT_PHONE,
-    STAGE_WAIT_PAYMENT
+    STAGE_WAIT_FILE_TYPE
   ].includes(sub.stage);
 }
 
@@ -560,7 +486,7 @@ async function askForFileType(ctx, sub) {
   );
 }
 
-async function moveBatchToPhoneStep(ctx, sub) {
+async function moveBatchToManualPaymentStep(ctx, sub) {
   const counts = getSubmissionCounts(sub);
 
   if (counts.total === 0) {
@@ -572,14 +498,36 @@ async function moveBatchToPhoneStep(ctx, sub) {
 
   sub.amount = calculateSubmissionAmount(sub);
   sub.batchId = sub.batchId || makeBatchId(ctx.from.id);
-  sub.stage = STAGE_WAIT_PHONE;
+  sub.stage = STAGE_WAIT_PAYMENT;
   sub.currentFileIndex = null;
+  sub.proofReceived = false;
 
   const summary = formatBatchSummary(sub);
+  const userId = ctx.from.id;
 
-  await replyMarkdownSafe(ctx, MESSAGES.askPhoneBatch(summary, sub.amount), {
-    reply_markup: mainKeyboard()
+  putManualPayment(userId, {
+    userId,
+    batchId: sub.batchId,
+    kind: getBatchKindLabel(sub),
+    amount: sub.amount,
+    summary,
+    status: "WAITING_FOR_PROOF",
+    proofReceived: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    tillNumber: TILL_NUMBER,
+    businessName: BUSINESS_NAME
   });
+
+  await replyMarkdownSafe(ctx, MESSAGES.manualPaymentInstructions(summary, sub.amount), {
+    reply_markup: paymentProofKeyboard().reply_markup
+  });
+
+  await sendAdminMessage(
+    `🧾 Manual payment requested\nUser: ${userId}\nAmount: KES ${sub.amount}\nTill: ${TILL_NUMBER}\nBusiness: ${BUSINESS_NAME}\nType: ${getBatchKindLabel(
+      sub
+    )}\n\nWaiting for user payment proof.${paymentAdminCommands(userId)}`
+  );
 }
 
 async function handleFileTypeSelected(ctx, kind) {
@@ -605,7 +553,7 @@ async function handleFileTypeSelected(ctx, kind) {
   await ctx.answerCbQuery(`${kind} selected`);
 
   if (sub.files.length >= sub.expectedFiles) {
-    await moveBatchToPhoneStep(ctx, sub);
+    await moveBatchToManualPaymentStep(ctx, sub);
     return;
   }
 
@@ -621,491 +569,132 @@ async function handleFileTypeSelected(ctx, kind) {
   );
 }
 
-// =====================
-// INTASEND REST HELPERS
-// =====================
-async function intasendRequest(endpoint, body) {
-  const res = await fetch(`${INTASEND_API_BASE}${endpoint}`, {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      Authorization: `Bearer ${INTASEND_SECRET_KEY}`
-    },
-    body: JSON.stringify(body || {})
+async function notifyAdminPaymentProof({ ctx, proofType, text }) {
+  const user = ctx.from;
+  const userId = user.id;
+  const sub = submissions[userId];
+  const manual = getManualPayment(userId);
+
+  const amount = sub?.amount || manual?.amount || "N/A";
+  const summary = sub ? formatBatchSummary(sub) : manual?.summary || "N/A";
+  const kind = sub ? getBatchKindLabel(sub) : manual?.kind || "N/A";
+
+  updateManualPayment(userId, {
+    status: "PROOF_RECEIVED",
+    proofReceived: true,
+    proofType,
+    lastProofAt: Date.now()
   });
 
-  const text = await res.text();
-  let data;
+  if (sub) {
+    sub.proofReceived = true;
+  }
+
+  await sendAdminMessage(
+    `🧾 Manual payment proof received\n\nUser ID: ${userId}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\nName: ${safeText(user.first_name)} ${safeText(
+      user.last_name
+    )}\n\nExpected amount: *KES ${amount}*\nExpected Till: *${TILL_NUMBER}*\nBusiness: *${BUSINESS_NAME}*\nBatch: ${safeText(
+      kind
+    )}\n\nSummary:\n${safeText(summary)}\n\nProof type: ${safeText(proofType)}${
+      text ? `\n\nText proof:\n${safeText(text)}` : ""
+    }\n\nPlease verify manually in M-PESA Business records, then approve or reject.${paymentAdminCommands(
+      userId
+    )}`
+  );
+
   try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
+    await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
+  } catch {}
 
-  if (!res.ok) {
-    const err = new Error(
-      (data && (data.detail || data.message || JSON.stringify(data))) ||
-        `HTTP ${res.status}`
-    );
-    err.status = res.status;
-    err.payload = data;
-    throw err;
-  }
-
-  return data;
-}
-
-function extractApiRef(payload) {
-  return (
-    payload?.api_ref ||
-    payload?.apiRef ||
-    payload?.invoice?.api_ref ||
-    payload?.invoice?.apiRef ||
-    payload?.data?.api_ref ||
-    payload?.data?.apiRef ||
-    payload?.payload?.api_ref ||
-    payload?.payload?.apiRef ||
-    null
-  );
-}
-
-function extractInvoiceId(payload) {
-  return (
-    payload?.invoice_id ||
-    payload?.invoiceId ||
-    payload?.id ||
-    payload?.invoice?.invoice_id ||
-    payload?.invoice?.invoiceId ||
-    payload?.invoice?.id ||
-    payload?.data?.invoice_id ||
-    payload?.data?.invoiceId ||
-    payload?.data?.invoice?.invoice_id ||
-    payload?.data?.invoice?.invoiceId ||
-    payload?.data?.invoice?.id ||
-    payload?.payload?.invoice_id ||
-    payload?.payload?.invoiceId ||
-    payload?.payload?.invoice?.invoice_id ||
-    payload?.payload?.invoice?.invoiceId ||
-    payload?.payload?.invoice?.id ||
-    null
-  );
-}
-
-function extractState(payload) {
-  return (
-    payload?.state ||
-    payload?.status ||
-    payload?.invoice?.state ||
-    payload?.invoice?.status ||
-    payload?.data?.state ||
-    payload?.data?.status ||
-    payload?.data?.invoice?.state ||
-    payload?.data?.invoice?.status ||
-    payload?.payload?.state ||
-    payload?.payload?.status ||
-    payload?.payload?.invoice?.state ||
-    payload?.payload?.invoice?.status ||
-    null
-  );
-}
-
-function normalizePaymentState(raw) {
-  const s = String(raw || "").trim().toUpperCase();
-
-  if (
-    ["COMPLETE", "COMPLETED", "SUCCESS", "SUCCEEDED", "PAID", "TS100"].includes(s)
-  ) return "COMPLETE";
-
-  if (["FAILED", "FAIL", "ERROR", "TF103", "TF106"].includes(s)) return "FAILED";
-  if (["CANCELLED", "CANCELED", "TC108"].includes(s)) return "CANCELLED";
-  if (["EXPIRED", "TIMEOUT", "TIMEDOUT"].includes(s)) return "EXPIRED";
-
-  if (
-    ["PENDING", "PROCESSING", "IN_PROGRESS", "INPROGRESS", "TP101", "TP102", "BP101", "BP103"].includes(s)
-  ) return "PENDING";
-
-  return s || "UNKNOWN";
-}
-
-async function intasendSendStkPush({ amount, phone_number, api_ref }) {
-  return intasendRequest("/payment/mpesa-stk-push/", {
-    amount: String(amount),
-    phone_number,
-    api_ref
+  await ctx.reply(MESSAGES.proofReceived, {
+    reply_markup: mainKeyboard()
   });
 }
 
-async function intasendCheckPaymentStatus({ invoice_id }) {
-  return intasendRequest("/payment/status/", {
-    invoice_id
-  });
-}
+async function approveManualPayment(adminCtx, userIdRaw) {
+  const userId = String(userIdRaw || "").trim();
+  if (!userId) return adminCtx.reply("Usage: /approvepay <userId>");
 
-function getBatchById(batchId) {
-  for (const [userId, sub] of Object.entries(submissions)) {
-    if (String(sub?.batchId || "") === String(batchId || "")) {
-      return { userId: Number(userId), sub };
-    }
+  const sub = submissions[userId];
+  const manual = getManualPayment(userId);
+
+  if (!sub && !manual) {
+    return adminCtx.reply(`❌ No pending payment record found for ${userId}.`);
   }
-  return null;
-}
 
-async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
-  const ref = getPaymentRef(apiRef);
-  if (!ref) return false;
-  if (ref.status === "COMPLETE") return false;
+  const amount = sub?.amount || manual?.amount || "N/A";
+  const summary = sub ? formatBatchSummary(sub) : manual?.summary || "Batch payment";
 
-  updatePaymentRef(apiRef, {
-    status: "COMPLETE",
-    invoiceId: invoiceId || ref.invoiceId || null,
-    completedAt: Date.now(),
-    lastState: state || "COMPLETE",
-    completionSource: source || "unknown"
+  updateManualPayment(userId, {
+    status: "APPROVED",
+    approvedAt: Date.now(),
+    approvedBy: adminCtx.from.id
   });
-
-  stopStatusPolling(apiRef);
-
-  const batchLookup = getBatchById(ref.batchId);
-  const userId = batchLookup?.userId || ref.userId;
-  const sub = batchLookup?.sub || submissions[userId];
 
   if (sub) {
     sub.paid = true;
     sub.stage = STAGE_PAID;
-    sub.invoiceId = invoiceId || sub.invoiceId || ref.invoiceId || null;
   }
 
   try {
     await bot.telegram.sendMessage(
       userId,
-      MESSAGES.paidMsgBatch(ref.amount, ref.summary || "Batch payment"),
+      MESSAGES.paidMsgBatch(amount, summary),
       { parse_mode: "Markdown" }
     );
   } catch (e) {
     await sendAdminMessage(
-      `❌ Could not message user ${userId} after payment completion. Error: ${safeText(
+      `❌ Could not message user ${userId} after manual payment approval. Error: ${safeText(
         e?.message || e
       )}`
     );
   }
 
+  await adminCtx.reply(`✅ Payment approved for ${userId}.`);
   await sendAdminMessage(
-    `✅ PAYMENT COMPLETE\nUser: ${userId}\nType: ${safeText(
-      ref.kind || "BATCH"
-    )}\nAmount: ${safeText(ref.amount)} KES\napi_ref: ${safeText(
-      apiRef
-    )}\ninvoice_id: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nSource: ${safeText(
-      source || "unknown"
-    )}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}`
+    `✅ MANUAL PAYMENT APPROVED\nUser: ${userId}\nAmount: KES ${amount}\nApproved by admin.`
   );
 
   resetSubmission(userId);
-  return true;
 }
 
-async function markPaymentFailure({ apiRef, invoiceId, state, source, reason }) {
-  const ref = getPaymentRef(apiRef);
-  if (!ref) return false;
-  if (ref.status === "COMPLETE") return false;
+async function rejectManualPayment(adminCtx, userIdRaw, reasonRaw) {
+  const userId = String(userIdRaw || "").trim();
+  const reason = String(reasonRaw || "").trim() || "Payment could not be verified.";
 
-  updatePaymentRef(apiRef, {
-    status: state || "FAILED",
-    invoiceId: invoiceId || ref.invoiceId || null,
-    lastState: state || "FAILED",
-    failureSource: source || "unknown",
-    failureReason: reason || null
-  });
+  if (!userId) return adminCtx.reply("Usage: /rejectpay <userId> <reason>");
 
-  stopStatusPolling(apiRef);
+  const sub = submissions[userId];
+  const manual = getManualPayment(userId);
 
-  const batchLookup = getBatchById(ref.batchId);
-  const userId = batchLookup?.userId || ref.userId;
-  const sub = batchLookup?.sub || submissions[userId];
-
-  if (sub && !sub.paid) {
-    sub.stage = STAGE_WAIT_PAYMENT;
+  if (!sub && !manual) {
+    return adminCtx.reply(`❌ No pending payment record found for ${userId}.`);
   }
+
+  updateManualPayment(userId, {
+    status: "REJECTED",
+    rejectedAt: Date.now(),
+    rejectedBy: adminCtx.from.id,
+    rejectionReason: reason
+  });
 
   try {
     await bot.telegram.sendMessage(
       userId,
-      `❌ Payment ${String(state || "failed").toLowerCase()}.\nTap *Resend STK Push* to try again.`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: paymentWaitKeyboard().reply_markup
-      }
+      `⚠️ Payment proof could not be verified.\n\nReason: ${reason}\n\nPlease send the correct M-PESA confirmation screenshot or transaction message again.\n\nExpected payment:\nTill Number: ${TILL_NUMBER}\nBusiness Name: ${BUSINESS_NAME}`,
+      { reply_markup: mainKeyboard() }
     );
   } catch (e) {
     await sendAdminMessage(
-      `❌ Could not message user ${userId} after payment failure. Error: ${safeText(
+      `❌ Could not message user ${userId} after manual payment rejection. Error: ${safeText(
         e?.message || e
       )}`
     );
   }
 
-  await sendAdminMessage(
-    `⚠️ PAYMENT ${safeText(state || "FAILED")}\nUser: ${userId}\napi_ref: ${safeText(
-      apiRef
-    )}\ninvoice_id: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nSource: ${safeText(
-      source || "unknown"
-    )}\nReason: ${safeText(reason || "N/A")}`
-  );
-
-  return true;
-}
-
-async function queryPaymentStatus(invoiceId) {
-  if (!invoiceId) throw new Error("Missing invoiceId for status query");
-  const resp = await intasendCheckPaymentStatus({ invoice_id: invoiceId });
-  const state = normalizePaymentState(extractState(resp));
-
-  return {
-    raw: resp,
-    invoiceId: extractInvoiceId(resp) || invoiceId,
-    apiRef: extractApiRef(resp) || resp?.invoice?.api_ref || null,
-    state,
-    failedReason:
-      resp?.invoice?.failed_reason ||
-      resp?.failed_reason ||
-      resp?.detail ||
-      resp?.message ||
-      null
-  };
-}
-
-function startStatusPolling({ userId, apiRef, invoiceId }) {
-  if (!apiRef || !invoiceId) return;
-
-  stopStatusPolling(apiRef);
-
-  let attempts = 0;
-
-  activePollers[apiRef] = setInterval(async () => {
-    attempts += 1;
-
-    if (attempts > STATUS_POLL_MAX_ATTEMPTS) {
-      stopStatusPolling(apiRef);
-      return;
-    }
-
-    const ref = getPaymentRef(apiRef);
-    if (!ref || ref.status === "COMPLETE") {
-      stopStatusPolling(apiRef);
-      return;
-    }
-
-    const sub = submissions[userId];
-    if (sub?.paid) {
-      stopStatusPolling(apiRef);
-      return;
-    }
-
-    try {
-      const statusResp = await queryPaymentStatus(invoiceId);
-
-      updatePaymentRef(apiRef, {
-        invoiceId: statusResp.invoiceId || invoiceId,
-        lastState: statusResp.state,
-        lastPolledAt: Date.now(),
-        pollAttempts: attempts
-      });
-
-      if (statusResp.state === "COMPLETE") {
-        await markPaymentComplete({
-          apiRef,
-          invoiceId: statusResp.invoiceId,
-          state: statusResp.state,
-          source: "status-poll"
-        });
-        return;
-      }
-
-      if (["FAILED", "CANCELLED", "EXPIRED"].includes(statusResp.state)) {
-        await markPaymentFailure({
-          apiRef,
-          invoiceId: statusResp.invoiceId,
-          state: statusResp.state,
-          source: "status-poll",
-          reason: statusResp.failedReason
-        });
-      }
-    } catch (err) {
-      updatePaymentRef(apiRef, {
-        lastPolledAt: Date.now(),
-        pollAttempts: attempts,
-        lastPollError: safeText(err?.message || err),
-        lastPollStatus: err?.status || null
-      });
-
-      if (attempts === 1 || attempts % 6 === 0) {
-        await sendAdminMessage(
-          `⚠️ IntaSend status poll failed\nUser: ${userId}\napi_ref: ${safeText(
-            apiRef
-          )}\ninvoice_id: ${safeText(invoiceId)}\nAttempt: ${attempts}\nHTTP: ${safeText(
-            err?.status || "N/A"
-          )}\nError: ${safeText(err?.message || err)}`
-        );
-      }
-    }
-  }, STATUS_POLL_INTERVAL_MS);
-}
-
-function schedulePaymentTimeoutReminder(userId, apiRef) {
-  setTimeout(async () => {
-    const ref = getPaymentRef(apiRef);
-    const sub = submissions[userId];
-
-    if (!ref) return;
-    if (ref.status === "COMPLETE") return;
-    if (!sub || sub.paid) return;
-    if (sub.stage !== STAGE_WAIT_PAYMENT) return;
-
-    try {
-      await bot.telegram.sendMessage(
-        userId,
-        "⏳ Still waiting for payment confirmation.\n\nIf you already paid, the bot is still checking IntaSend automatically. If the prompt never came, tap *Resend STK Push*.",
-        {
-          parse_mode: "Markdown",
-          reply_markup: paymentWaitKeyboard().reply_markup
-        }
-      );
-    } catch {}
-  }, PAYMENT_TIMEOUT_MS);
-}
-
-// =====================
-// STK PUSH
-// =====================
-async function attemptStkPush(ctx, sub, { mode }) {
-  const userId = ctx.from.id;
-
-  if (!sub?.phone || !sub?.amount || !sub?.batchId) {
-    sub.stage = STAGE_WAIT_PHONE;
-    await ctx.reply("⚠️ Missing payment details. Please send your phone number again.", {
-      reply_markup: mainKeyboard()
-    });
-    return;
-  }
-
-  if (
-    mode === "resend" &&
-    sub.stkSentAt &&
-    Date.now() - sub.stkSentAt < STK_RESEND_COOLDOWN_MS
-  ) {
-    const remainingMs = STK_RESEND_COOLDOWN_MS - (Date.now() - sub.stkSentAt);
-    const remainingSec = Math.ceil(remainingMs / 1000);
-    if (ctx.answerCbQuery) await ctx.answerCbQuery(`Wait ${remainingSec}s`);
-    return;
-  }
-
-  if (mode === "resend") {
-    sub.resendCount = (sub.resendCount || 0) + 1;
-    if (sub.resendCount > STK_MAX_RESENDS) {
-      await ctx.reply(
-        `⚠️ Resend limit reached.\n\nPay via Till:\n\n\`${TILL_NUMBER}\`\n\nSend proof here.`,
-        { parse_mode: "Markdown" }
-      );
-      return;
-    }
-  }
-
-  if (mode === "initial") await ctx.reply(MESSAGES.stkSending);
-
-  const apiRef = makePaymentAttemptRef(userId);
-  const summary = formatBatchSummary(sub);
-
-  putPaymentRef(apiRef, {
-    userId,
-    batchId: sub.batchId,
-    kind: getBatchKindLabel(sub),
-    amount: sub.amount,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    summary,
-    phone: sub.phone,
-    invoiceId: null,
-    status: "PENDING",
-    lastState: "PENDING",
-    mode: INTASEND_TEST ? "TEST" : "LIVE"
-  });
-
-  try {
-    const resp = await intasendSendStkPush({
-      amount: sub.amount,
-      phone_number: sub.phone,
-      api_ref: apiRef
-    });
-
-    const invoiceId = extractInvoiceId(resp);
-    const state = normalizePaymentState(extractState(resp) || "PENDING");
-
-    sub.api_ref = apiRef;
-    sub.invoiceId = invoiceId || null;
-    sub.stage = STAGE_WAIT_PAYMENT;
-    sub.stkSentAt = Date.now();
-    sub.paymentAttempts.push(apiRef);
-
-    updatePaymentRef(apiRef, {
-      invoiceId: invoiceId || null,
-      lastState: state,
-      stkResponseAt: Date.now(),
-      rawResponseSnapshot: {
-        invoice_id: invoiceId || null,
-        state,
-        api_ref: apiRef
-      }
-    });
-
-    if (mode === "resend") {
-      await ctx.reply(MESSAGES.stkSentWithTill(TILL_NUMBER), {
-        parse_mode: "Markdown"
-      });
-    } else {
-      await ctx.reply(MESSAGES.stkSentSimple);
-    }
-
-    await ctx.reply(MESSAGES.waitingConfirm, {
-      reply_markup: paymentWaitKeyboard().reply_markup
-    });
-
-    if (invoiceId) {
-      startStatusPolling({ userId, apiRef, invoiceId });
-    } else {
-      await sendAdminMessage(
-        `⚠️ STK response had no invoice_id\nUser: ${userId}\napi_ref: ${apiRef}\nMode: ${
-          INTASEND_TEST ? "TEST" : "LIVE"
-        }\nWebhook may still confirm, but polling cannot start without invoice_id.`
-      );
-    }
-
-    schedulePaymentTimeoutReminder(userId, apiRef);
-  } catch (err) {
-    sub.stage = STAGE_WAIT_PAYMENT;
-
-    updatePaymentRef(apiRef, {
-      status: "FAILED_TO_INITIATE",
-      failureSource: "stk-init",
-      failureMessage: safeText(err?.message || err),
-      failureStatus: err?.status || null,
-      failurePayload: err?.payload || null
-    });
-
-    await ctx.reply("❌ STK Push failed.\nTap *Resend STK Push* to try again.", {
-      parse_mode: "Markdown",
-      reply_markup: paymentWaitKeyboard().reply_markup
-    });
-
-    await sendAdminMessage(
-      `❌ STK Push error\nUser: ${userId}\napi_ref: ${safeText(apiRef)}\nPhone: ${safeText(
-        sub.phone
-      )}\nHTTP: ${safeText(err?.status || "N/A")}\nError: ${safeText(
-        err?.message || err
-      )}\nPayload: ${safeText(JSON.stringify(err?.payload || {}))}\nMode: ${
-        INTASEND_TEST ? "TEST" : "LIVE"
-      }\nHost: ${PUBLIC_BASE_URL}`
-    );
-  }
+  await adminCtx.reply(`⚠️ Payment rejected for ${userId}.`);
 }
 
 // =====================
@@ -1172,6 +761,22 @@ _We’re here if you need anything else._`,
   }
 });
 
+bot.command("approvepay", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  const parts = (ctx.message.text || "").trim().split(/\s+/);
+  await approveManualPayment(ctx, parts[1]);
+});
+
+bot.command("rejectpay", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  const parts = (ctx.message.text || "").trim().split(/\s+/);
+  const userId = parts[1];
+  const reason = parts.slice(2).join(" ");
+  await rejectManualPayment(ctx, userId, reason);
+});
+
 bot.command("filebatch", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -1233,6 +838,26 @@ bot.action("START_SEND_DOC", async (ctx) => {
 bot.action("START_PAYMENT_HELP", async (ctx) => {
   await ctx.answerCbQuery("Opening payment help");
   await showPaymentHelp(ctx);
+});
+
+// Old STK buttons may still exist in previous chats.
+// These handlers prevent stuck callback errors during manual-payment mode.
+bot.action("STK_RESEND", async (ctx) => {
+  await ctx.answerCbQuery("Manual payment mode");
+  await replyMarkdownSafe(
+    ctx,
+    `⚠️ Automatic STK verification is temporarily unavailable and will resume on *${AUTO_VERIFICATION_RESUME_DATE}*.\n\nPlease pay via Till *${TILL_NUMBER}* and send your M-PESA confirmation screenshot or transaction message.`,
+    { reply_markup: mainKeyboard() }
+  );
+});
+
+bot.action("STK_CHANGE_PHONE", async (ctx) => {
+  await ctx.answerCbQuery("Manual payment mode");
+  await replyMarkdownSafe(
+    ctx,
+    `⚠️ Phone number/STK prompt is temporarily disabled.\n\nPlease pay via Till *${TILL_NUMBER}* and send your M-PESA confirmation screenshot or transaction message.`,
+    { reply_markup: mainKeyboard() }
+  );
 });
 
 // =====================
@@ -1358,6 +983,16 @@ bot.on("document", async (ctx) => {
 
   let sub = submissions[user.id];
 
+  // If user sends document as proof during payment stage
+  if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
+    await notifyAdminPaymentProof({
+      ctx,
+      proofType: "document/screenshot proof",
+      text: ""
+    });
+    return;
+  }
+
   // Fresh start after completed/old state
   if (sub && sub.stage === STAGE_PAID) {
     resetSubmission(user.id);
@@ -1428,16 +1063,6 @@ bot.on("document", async (ctx) => {
     });
   }
 
-  if (sub.stage === STAGE_WAIT_PHONE || sub.stage === STAGE_WAIT_PAYMENT) {
-    return ctx.reply(
-      "⚠️ This batch is already in payment state. Please finish payment or tap *Cancel / New submission* to start another batch.",
-      {
-        parse_mode: "Markdown",
-        reply_markup: mainKeyboard()
-      }
-    );
-  }
-
   if (!canAcceptMoreFiles(sub)) {
     return ctx.reply(
       "✅ You have already uploaded the selected number of files.\nIf you are ready, continue with the next prompt.",
@@ -1503,20 +1128,13 @@ bot.on("photo", async (ctx) => {
 
   const sub = submissions[user.id];
 
-  // Only forward photo proof during payment stage
+  // Payment proof screenshot
   if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
-    try {
-      await sendAdminMessage(
-        `🖼️ Payment proof received\nUser ID: ${user.id}\nUsername: @${safeText(
-          user.username || "N/A"
-        )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
-          user.id
-        )}`
-      );
-      await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
-    } catch {}
-
-    await ctx.reply("✅ Payment proof received.", { reply_markup: mainKeyboard() });
+    await notifyAdminPaymentProof({
+      ctx,
+      proofType: "photo/screenshot proof",
+      text: ""
+    });
     return;
   }
 
@@ -1564,7 +1182,7 @@ bot.action("DONE_UPLOADING", async (ctx) => {
   }
 
   await ctx.answerCbQuery("Finishing batch");
-  await moveBatchToPhoneStep(ctx, sub);
+  await moveBatchToManualPaymentStep(ctx, sub);
 });
 
 bot.action("TYPE_CANCEL", async (ctx) => {
@@ -1574,44 +1192,6 @@ bot.action("TYPE_CANCEL", async (ctx) => {
   await ctx.reply("❌ Cancelled. Send a new document to start again.", {
     reply_markup: mainKeyboard()
   });
-});
-
-// =====================
-// STK CONTROLS
-// =====================
-bot.action("STK_CHANGE_PHONE", async (ctx) => {
-  const userId = ctx.from.id;
-  const sub = submissions[userId];
-  if (!sub) return ctx.answerCbQuery("No active session.");
-
-  sub.stage = STAGE_WAIT_PHONE;
-  sub.phone = null;
-
-  await ctx.answerCbQuery("Send new phone");
-  await ctx.reply(
-    "📞 Send your phone number again (07XXXXXXXX / 01XXXXXXXX).",
-    {
-      reply_markup: mainKeyboard()
-    }
-  );
-});
-
-bot.action("STK_RESEND", async (ctx) => {
-  const userId = ctx.from.id;
-  const sub = submissions[userId];
-  if (!sub) return ctx.answerCbQuery("No active session.");
-
-  await ctx.answerCbQuery("Resending...");
-
-  if (!sub.phone) {
-    sub.stage = STAGE_WAIT_PHONE;
-    await ctx.reply("📞 Please send your phone number again.", {
-      reply_markup: mainKeyboard()
-    });
-    return;
-  }
-
-  await attemptStkPush(ctx, sub, { mode: "resend" });
 });
 
 // =====================
@@ -1648,7 +1228,16 @@ bot.on("text", async (ctx) => {
 
   const sub = submissions[user.id];
 
-  // Forward user texts only when there is an active real session
+  if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
+    await notifyAdminPaymentProof({
+      ctx,
+      proofType: "text transaction message",
+      text
+    });
+    return;
+  }
+
+  // Forward user texts only when there is an active upload/file-selection session
   if (hasActiveSubmissionForUploads(sub)) {
     await sendAdminMessage(
       `💬 Message from user\nUser ID: ${user.id}\nUsername: @${safeText(
@@ -1658,19 +1247,6 @@ bot.on("text", async (ctx) => {
   }
 
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
-
-  if (sub && sub.stage === STAGE_WAIT_PHONE) {
-    const phone254 = normalizePhoneTo254(text);
-    if (!phone254) {
-      return ctx.reply(
-        "❌ Invalid phone. Send like 07XXXXXXXX or 01XXXXXXXX."
-      );
-    }
-
-    sub.phone = phone254;
-    await attemptStkPush(ctx, sub, { mode: "initial" });
-    return;
-  }
 
   if (sub && sub.stage === STAGE_WAIT_UPLOADS) {
     return ctx.reply(
@@ -1691,8 +1267,6 @@ bot.on("text", async (ctx) => {
     });
   }
 
-  if (sub && sub.stage === STAGE_WAIT_PAYMENT) return;
-
   if (!sub) {
     return ctx.reply("Tap *Send Document* below to start your submission.", {
       parse_mode: "Markdown",
@@ -1706,23 +1280,8 @@ bot.on("text", async (ctx) => {
 // =====================
 const app = express();
 
-app.use(
-  express.json({
-    limit: "2mb",
-    verify: (req, res, buf) => {
-      req.rawBody = buf?.toString() || "";
-    }
-  })
-);
-
-app.use(
-  express.urlencoded({
-    extended: true,
-    verify: (req, res, buf) => {
-      req.rawBody = buf?.toString() || "";
-    }
-  })
-);
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true }));
 
 app.use(bot.webhookCallback("/webhook"));
 
@@ -1731,126 +1290,29 @@ app.get("/", (req, res) => res.status(200).send("OK"));
 app.get("/health", (req, res) => {
   res.status(200).json({
     ok: true,
+    mode: "MANUAL_TILL_PAYMENT",
+    manualPayment: true,
+    automaticVerificationResumeDate: AUTO_VERIFICATION_RESUME_DATE,
+    tillNumber: TILL_NUMBER,
+    businessName: BUSINESS_NAME,
     timeUtc: moment.utc().format(),
-    intasendTest: INTASEND_TEST,
     publicBaseUrl: PUBLIC_BASE_URL,
-    secretKeyPresent: Boolean(INTASEND_SECRET_KEY),
-    secretKeyLooksValid: String(INTASEND_SECRET_KEY).startsWith("ISSecretKey_"),
-    publishableKeyPresent: Boolean(INTASEND_PUBLISHABLE_KEY),
-    publishableKeyLooksValid: String(INTASEND_PUBLISHABLE_KEY).startsWith("ISPubKey_"),
     pendingSubmissions: Object.keys(submissions).length,
-    activePollers: Object.keys(activePollers).length
+    pendingManualPayments: Object.keys(manualPayments).length
   });
 });
 
+// Old IntaSend endpoint kept harmless during temporary manual mode.
+// It simply acknowledges anything sent there so external retries do not crash the app.
 app.get("/intasend/webhook", (req, res) => {
-  const qChallenge = req.query?.challenge;
-  if (!qChallenge) return res.status(200).send("OK");
-
-  if (INTASEND_WEBHOOK_CHALLENGE && qChallenge !== INTASEND_WEBHOOK_CHALLENGE) {
-    return res.status(401).send("Invalid challenge");
-  }
-
-  return res.status(200).send(qChallenge);
+  res.status(200).send("Manual payment mode active");
 });
 
 app.post("/intasend/webhook", (req, res) => {
-  res.status(200).json({ ok: true });
-
-  setImmediate(async () => {
-    try {
-      let payload = req.body;
-
-      const bodyIsEmptyObject =
-        payload &&
-        typeof payload === "object" &&
-        !Array.isArray(payload) &&
-        Object.keys(payload).length === 0;
-
-      if (!payload || typeof payload === "string" || bodyIsEmptyObject) {
-        const raw = String(req.rawBody || "").trim();
-        if (raw) {
-          try {
-            payload = JSON.parse(raw);
-          } catch {
-            payload = qs.parse(raw);
-          }
-        } else {
-          payload = {};
-        }
-      }
-
-      if (
-        payload?.challenge &&
-        INTASEND_WEBHOOK_CHALLENGE &&
-        String(payload.challenge).trim() !== INTASEND_WEBHOOK_CHALLENGE
-      ) {
-        await sendAdminMessage("⚠️ IntaSend webhook: invalid challenge received.");
-        return;
-      }
-
-      let apiRef = extractApiRef(payload);
-      const invoiceId = extractInvoiceId(payload);
-      const state = normalizePaymentState(extractState(payload));
-      const reason =
-        payload?.failed_reason ||
-        payload?.invoice?.failed_reason ||
-        payload?.detail ||
-        payload?.message ||
-        null;
-
-      if (!apiRef && invoiceId) {
-        const found = findPaymentRefByInvoiceId(invoiceId);
-        if (found) apiRef = found.apiRef;
-      }
-
-      if (!apiRef) {
-        await sendAdminMessage(
-          `⚠️ IntaSend webhook received but api_ref not matched.\ninvoice_id: ${safeText(
-            invoiceId || "N/A"
-          )}\nstate: ${safeText(state)}`
-        );
-        return;
-      }
-
-      const ref = getPaymentRef(apiRef);
-      if (!ref) {
-        await sendAdminMessage(
-          `⚠️ IntaSend webhook: unknown api_ref ${safeText(apiRef)}\ninvoice_id: ${safeText(
-            invoiceId || "N/A"
-          )}\nstate: ${safeText(state)}`
-        );
-        return;
-      }
-
-      updatePaymentRef(apiRef, {
-        invoiceId: invoiceId || ref.invoiceId || null,
-        lastState: state,
-        lastWebhookAt: Date.now()
-      });
-
-      if (state === "COMPLETE") {
-        await markPaymentComplete({
-          apiRef,
-          invoiceId: invoiceId || ref.invoiceId || null,
-          state,
-          source: "webhook"
-        });
-        return;
-      }
-
-      if (["FAILED", "CANCELLED", "EXPIRED"].includes(state)) {
-        await markPaymentFailure({
-          apiRef,
-          invoiceId: invoiceId || ref.invoiceId || null,
-          state,
-          source: "webhook",
-          reason
-        });
-      }
-    } catch (err) {
-      console.error("Async IntaSend webhook processing error:", err?.message || err);
-    }
+  res.status(200).json({
+    ok: true,
+    ignored: true,
+    mode: "MANUAL_TILL_PAYMENT"
   });
 });
 
@@ -1862,7 +1324,10 @@ const port = Number(process.env.PORT || 3000);
 app.listen(port, async () => {
   console.log(`Webhook server listening on port ${port}`);
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
-  console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
+  console.log(`Payment Mode: MANUAL_TILL_PAYMENT`);
+  console.log(`Till Number: ${TILL_NUMBER}`);
+  console.log(`Business Name: ${BUSINESS_NAME}`);
+  console.log(`Automatic verification resumes on: ${AUTO_VERIFICATION_RESUME_DATE}`);
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
 
