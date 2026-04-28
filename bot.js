@@ -153,7 +153,7 @@ JK Turnitin Reports Bot
 • Check: ${check} KES
 • Recheck: ${recheck} KES
 
-🔁 Recheck is only available for the same file checked and paid within the last 24 hours.
+🔁 Recheck is only available when the same visible file name was checked and paid within the last 24 hours.
 `,
   inactive: `
 ⏳ Turnitin checks are paused right now.
@@ -167,7 +167,7 @@ If urgent, WhatsApp call *0701730921*.
   sendDocHelp:
     `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\nPlease don’t send as a photo.`,
   paymentHelp:
-    "🧾 Payment help:\n\n✅ Default method: *STK Push*\nChoose your batch size → upload files → choose Check/Recheck where eligible → enter phone number → receive *one combined STK prompt*.\n\n🔁 Recheck is only available for the same file checked and paid within the last 24 hours.\n\nIf prompt delays/fails, tap *Resend STK Push*.",
+    "🧾 Payment help:\n\n✅ Default method: *STK Push*\nChoose your batch size → upload files → choose Check/Recheck where eligible → enter phone number → receive *one combined STK prompt*.\n\n🔁 Recheck is only available when the same visible file name was checked and paid within the last 24 hours.\n\nIf prompt delays/fails, tap *Resend STK Push*.",
   askPhoneBatch: (summary, amount) =>
     `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
   stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
@@ -310,18 +310,26 @@ function cleanupCheckHistory() {
   if (checkHistory.length !== before) saveCheckHistory();
 }
 
+function normalizeFileNameForRecheck(name) {
+  return String(name || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
 function sameFileIdentity(record, userId, fileName, fileUniqueId) {
   if (!record) return false;
   if (String(record.userId) !== String(userId)) return false;
-  if (String(record.fileName || "") !== String(fileName || "")) return false;
 
-  const currentUnique = String(fileUniqueId || "").trim();
-  const historyUnique = String(record.fileUniqueId || "").trim();
+  const historyName = normalizeFileNameForRecheck(record.fileName);
+  const currentName = normalizeFileNameForRecheck(fileName);
 
-  if (currentUnique && historyUnique && currentUnique !== historyUnique) {
-    return false;
-  }
+  if (!historyName || !currentName) return false;
+  if (historyName !== currentName) return false;
 
+  // file_unique_id is stored only for reference.
+  // It is not used to reject recheck eligibility because re-uploading
+  // the same visible document can produce a different Telegram file_unique_id.
   return true;
 }
 
@@ -362,16 +370,19 @@ function rememberPaidChecks({ userId, files, batchId, source }) {
     if (!fileName) continue;
 
     const fileUniqueId = String(file.file_unique_id || file.fileUniqueId || "").trim();
+    const normalizedName = normalizeFileNameForRecheck(fileName);
 
     const existing = checkHistory.find((record) => {
       return (
         String(record.userId) === String(userId) &&
-        String(record.fileName || "") === fileName &&
-        String(record.fileUniqueId || "") === fileUniqueId
+        normalizeFileNameForRecheck(record.fileName) === normalizedName
       );
     });
 
     if (existing) {
+      existing.fileName = fileName;
+      existing.fileUniqueId = fileUniqueId || existing.fileUniqueId || null;
+      existing.normalizedFileName = normalizedName;
       existing.lastPaidCheckAt = paidAt;
       existing.batchId = batchId || existing.batchId || null;
       existing.source = source || "payment-confirmed";
@@ -380,6 +391,7 @@ function rememberPaidChecks({ userId, files, batchId, source }) {
       checkHistory.push({
         userId,
         fileName,
+        normalizedFileName: normalizedName,
         fileUniqueId: fileUniqueId || null,
         lastPaidCheckAt: paidAt,
         batchId: batchId || null,
@@ -716,8 +728,8 @@ async function askForFileType(ctx, sub) {
   const fileNumber = sub.currentFileIndex + 1;
 
   const recheckNote = file.recheckEligible
-    ? `✅ This exact file qualifies for *RECHECK* because it was checked and paid within the last 24 hours.\n\nYou may choose *CHECK* or *RECHECK*.`
-    : `ℹ️ This file does not have a matching paid *CHECK* within the last 24 hours.\n\nIt will be treated as *CHECK*.`;
+    ? `✅ This file qualifies for *RECHECK* because the same file name was checked and paid within the last 24 hours.\n\nYou may choose *CHECK* or *RECHECK*.`
+    : `ℹ️ This file name does not have a matching paid *CHECK* within the last 24 hours.\n\nIt will be treated as *CHECK*.`;
 
   await ctx.reply(
     `📄 File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\n\n${recheckNote}`,
@@ -769,7 +781,7 @@ async function handleFileTypeSelected(ctx, kind) {
     kind = "CHECK";
     await ctx.answerCbQuery("Recheck not available; treated as CHECK.");
     await ctx.reply(
-      "⚠️ Recheck is only available when the same file was checked and paid within the last 24 hours.\n\nThis file has been treated as *CHECK*.",
+      "⚠️ Recheck is only available when the same file name was checked and paid within the last 24 hours.\n\nThis file has been treated as *CHECK*.",
       { parse_mode: "Markdown" }
     );
   } else {
@@ -2059,7 +2071,7 @@ app.listen(port, async () => {
   console.log(`Webhook server listening on port ${port}`);
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
-  console.log(`Recheck rule: same user + exact file name + file_unique_id if available, within 24 hours`);
+  console.log("Recheck rule: same user + same visible file name within 24 hours");
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
 
