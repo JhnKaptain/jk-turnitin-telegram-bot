@@ -99,6 +99,9 @@ const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915");
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
 const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
 
+const RECHECK_WINDOW_MS = 24 * 60 * 60 * 1000;
+const CHECK_HISTORY_RETENTION_MS = 72 * 60 * 60 * 1000;
+
 const INACTIVE_START_UTC = normalizeHHMM(
   process.env.INACTIVE_START_UTC,
   eatHHMMToUtc(process.env.INACTIVE_START_EAT) || "21:00"
@@ -143,12 +146,14 @@ JK Turnitin Reports Bot
 1️⃣ Tap *Send Document*
 2️⃣ Choose how many files you want to upload (1-${MAX_BATCH_FILES})
 3️⃣ Upload your files one by one as *documents*
-4️⃣ Choose *CHECK* or *RECHECK* for each file
+4️⃣ Choose *CHECK* or *RECHECK* where eligible
 5️⃣ Pay *once* for the whole batch
 
 💰 Pricing
 • Check: ${check} KES
 • Recheck: ${recheck} KES
+
+🔁 Recheck is only available for the same file checked and paid within the last 24 hours.
 `,
   inactive: `
 ⏳ Turnitin checks are paused right now.
@@ -162,7 +167,7 @@ If urgent, WhatsApp call *0701730921*.
   sendDocHelp:
     `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\nPlease don’t send as a photo.`,
   paymentHelp:
-    "🧾 Payment help:\n\n✅ Default method: *STK Push*\nChoose your batch size → upload files → choose Check/Recheck for each file → enter phone number → receive *one combined STK prompt*.\n\nIf prompt delays/fails, tap *Resend STK Push*.",
+    "🧾 Payment help:\n\n✅ Default method: *STK Push*\nChoose your batch size → upload files → choose Check/Recheck where eligible → enter phone number → receive *one combined STK prompt*.\n\n🔁 Recheck is only available for the same file checked and paid within the last 24 hours.\n\nIf prompt delays/fails, tap *Resend STK Push*.",
   askPhoneBatch: (summary, amount) =>
     `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
   stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
@@ -184,11 +189,13 @@ const pendingFileTargets = {};
 const activePollers = {};
 const supportRequests = {};
 let paymentRefs = {};
+let checkHistory = [];
 
 const STORE_FILE = path.join(__dirname, "paymentRefs.store.json");
+const CHECK_HISTORY_FILE = path.join(__dirname, "checkHistory.store.json");
 
 // =====================
-// PERSISTENCE
+// PAYMENT REF PERSISTENCE
 // =====================
 function loadStore() {
   try {
@@ -257,6 +264,141 @@ setInterval(() => {
 }, 6 * 60 * 60 * 1000);
 
 // =====================
+// CHECK HISTORY PERSISTENCE
+// =====================
+function loadCheckHistory() {
+  try {
+    if (!fs.existsSync(CHECK_HISTORY_FILE)) return;
+    const raw = fs.readFileSync(CHECK_HISTORY_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+
+    if (Array.isArray(parsed)) {
+      checkHistory = parsed;
+      return;
+    }
+
+    if (parsed && Array.isArray(parsed.records)) {
+      checkHistory = parsed.records;
+      return;
+    }
+
+    if (parsed && typeof parsed === "object") {
+      checkHistory = Object.values(parsed).filter(Boolean);
+    }
+  } catch (e) {
+    console.error("Failed to load check history:", e?.message || e);
+  }
+}
+
+function saveCheckHistory() {
+  try {
+    fs.writeFileSync(CHECK_HISTORY_FILE, JSON.stringify(checkHistory, null, 2), "utf8");
+  } catch (e) {
+    console.error("Failed to save check history:", e?.message || e);
+  }
+}
+
+function cleanupCheckHistory() {
+  const now = Date.now();
+  const before = checkHistory.length;
+
+  checkHistory = checkHistory.filter((record) => {
+    const t = Number(record?.lastPaidCheckAt || 0);
+    return t > 0 && now - t <= CHECK_HISTORY_RETENTION_MS;
+  });
+
+  if (checkHistory.length !== before) saveCheckHistory();
+}
+
+function sameFileIdentity(record, userId, fileName, fileUniqueId) {
+  if (!record) return false;
+  if (String(record.userId) !== String(userId)) return false;
+  if (String(record.fileName || "") !== String(fileName || "")) return false;
+
+  const currentUnique = String(fileUniqueId || "").trim();
+  const historyUnique = String(record.fileUniqueId || "").trim();
+
+  if (currentUnique && historyUnique && currentUnique !== historyUnique) {
+    return false;
+  }
+
+  return true;
+}
+
+function getRecheckEligibility(userId, fileName, fileUniqueId) {
+  const now = Date.now();
+
+  const match = checkHistory
+    .filter((record) => sameFileIdentity(record, userId, fileName, fileUniqueId))
+    .filter((record) => now - Number(record.lastPaidCheckAt || 0) <= RECHECK_WINDOW_MS)
+    .sort((a, b) => Number(b.lastPaidCheckAt || 0) - Number(a.lastPaidCheckAt || 0))[0];
+
+  if (!match) {
+    return {
+      eligible: false,
+      matchedAt: null,
+      hoursLeft: 0
+    };
+  }
+
+  const expiresAt = Number(match.lastPaidCheckAt) + RECHECK_WINDOW_MS;
+  const hoursLeft = Math.max(0, Math.ceil((expiresAt - now) / (60 * 60 * 1000)));
+
+  return {
+    eligible: true,
+    matchedAt: Number(match.lastPaidCheckAt),
+    hoursLeft
+  };
+}
+
+function rememberPaidChecks({ userId, files, batchId, source }) {
+  const paidAt = Date.now();
+  let changed = false;
+
+  for (const file of files || []) {
+    if (file?.type !== "CHECK") continue;
+
+    const fileName = String(file.file_name || file.fileName || "").trim();
+    if (!fileName) continue;
+
+    const fileUniqueId = String(file.file_unique_id || file.fileUniqueId || "").trim();
+
+    const existing = checkHistory.find((record) => {
+      return (
+        String(record.userId) === String(userId) &&
+        String(record.fileName || "") === fileName &&
+        String(record.fileUniqueId || "") === fileUniqueId
+      );
+    });
+
+    if (existing) {
+      existing.lastPaidCheckAt = paidAt;
+      existing.batchId = batchId || existing.batchId || null;
+      existing.source = source || "payment-confirmed";
+      changed = true;
+    } else {
+      checkHistory.push({
+        userId,
+        fileName,
+        fileUniqueId: fileUniqueId || null,
+        lastPaidCheckAt: paidAt,
+        batchId: batchId || null,
+        source: source || "payment-confirmed"
+      });
+      changed = true;
+    }
+  }
+
+  cleanupCheckHistory();
+  if (changed) saveCheckHistory();
+}
+
+loadCheckHistory();
+cleanupCheckHistory();
+
+setInterval(cleanupCheckHistory, 60 * 60 * 1000);
+
+// =====================
 // HELPERS
 // =====================
 function safeText(s) {
@@ -298,12 +440,16 @@ function batchSizeKeyboard() {
   ]);
 }
 
-function typeInlineKeyboard() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback(`✅ CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")],
-    [Markup.button.callback(`🔁 RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")],
-    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
-  ]);
+function typeInlineKeyboard(allowRecheck) {
+  const rows = [[Markup.button.callback(`✅ CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")]];
+
+  if (allowRecheck) {
+    rows.push([Markup.button.callback(`🔁 RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")]);
+  }
+
+  rows.push([Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]);
+
+  return Markup.inlineKeyboard(rows);
 }
 
 function uploadContinueKeyboard() {
@@ -488,6 +634,24 @@ function ensureFreshSubmission(userId) {
   return submissions[userId];
 }
 
+function createStoredFileFromDocument(userId, doc) {
+  const fileName = doc.file_name || `file_${Date.now()}`;
+  const fileUniqueId = doc.file_unique_id || null;
+  const eligibility = getRecheckEligibility(userId, fileName, fileUniqueId);
+
+  return {
+    file_id: doc.file_id,
+    file_unique_id: fileUniqueId,
+    file_name: fileName,
+    type: null,
+    price: null,
+    uploadedAt: Date.now(),
+    recheckEligible: eligibility.eligible,
+    recheckMatchedAt: eligibility.matchedAt,
+    recheckHoursLeft: eligibility.hoursLeft
+  };
+}
+
 async function forwardAcceptedDocumentByIds(userId, chatId, messageId, username, firstName, lastName) {
   try {
     await sendAdminMessage(
@@ -551,11 +715,15 @@ async function askForFileType(ctx, sub) {
 
   const fileNumber = sub.currentFileIndex + 1;
 
+  const recheckNote = file.recheckEligible
+    ? `✅ This exact file qualifies for *RECHECK* because it was checked and paid within the last 24 hours.\n\nYou may choose *CHECK* or *RECHECK*.`
+    : `ℹ️ This file does not have a matching paid *CHECK* within the last 24 hours.\n\nIt will be treated as *CHECK*.`;
+
   await ctx.reply(
-    `📄 File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\nClick the button below for Check or Recheck.`,
+    `📄 File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\n\n${recheckNote}`,
     {
       parse_mode: "Markdown",
-      reply_markup: typeInlineKeyboard().reply_markup
+      reply_markup: typeInlineKeyboard(Boolean(file.recheckEligible)).reply_markup
     }
   );
 }
@@ -597,12 +765,21 @@ async function handleFileTypeSelected(ctx, kind) {
     return ctx.answerCbQuery("No pending file.");
   }
 
+  if (kind === "RECHECK" && !file.recheckEligible) {
+    kind = "CHECK";
+    await ctx.answerCbQuery("Recheck not available; treated as CHECK.");
+    await ctx.reply(
+      "⚠️ Recheck is only available when the same file was checked and paid within the last 24 hours.\n\nThis file has been treated as *CHECK*.",
+      { parse_mode: "Markdown" }
+    );
+  } else {
+    await ctx.answerCbQuery(`${kind} selected`);
+  }
+
   file.type = kind;
   file.price = kind === "CHECK" ? CHECK_PRICE_KES : RECHECK_PRICE_KES;
   const justCompletedNumber = sub.currentFileIndex + 1;
   sub.currentFileIndex = null;
-
-  await ctx.answerCbQuery(`${kind} selected`);
 
   if (sub.files.length >= sub.expectedFiles) {
     await moveBatchToPhoneStep(ctx, sub);
@@ -775,6 +952,15 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
     sub.stage = STAGE_PAID;
     sub.invoiceId = invoiceId || sub.invoiceId || ref.invoiceId || null;
   }
+
+  const filesForHistory = sub?.files || ref.files || [];
+
+  rememberPaidChecks({
+    userId,
+    files: filesForHistory,
+    batchId: ref.batchId || sub?.batchId || null,
+    source: source || "payment-confirmed"
+  });
 
   try {
     await bot.telegram.sendMessage(
@@ -1027,7 +1213,15 @@ async function attemptStkPush(ctx, sub, { mode }) {
     invoiceId: null,
     status: "PENDING",
     lastState: "PENDING",
-    mode: INTASEND_TEST ? "TEST" : "LIVE"
+    mode: INTASEND_TEST ? "TEST" : "LIVE",
+    files: (sub.files || []).map((file) => ({
+      file_id: file.file_id || null,
+      file_unique_id: file.file_unique_id || null,
+      file_name: file.file_name || null,
+      type: file.type || null,
+      price: file.price || null,
+      recheckEligible: Boolean(file.recheckEligible)
+    }))
   });
 
   try {
@@ -1284,21 +1478,19 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
   if (sub.pendingInitialDocument) {
     const pending = sub.pendingInitialDocument;
 
-    sub.files.push({
+    const storedFile = createStoredFileFromDocument(userId, {
       file_id: pending.fileId,
-      file_name: pending.fileName || `file_${Date.now()}`,
-      type: null,
-      price: null,
-      uploadedAt: Date.now()
+      file_unique_id: pending.fileUniqueId,
+      file_name: pending.fileName
     });
 
+    sub.files.push(storedFile);
     sub.currentFileIndex = sub.files.length - 1;
     sub.stage = STAGE_WAIT_FILE_TYPE;
-
     sub.pendingInitialDocument = null;
 
     await ctx.reply(
-      `✅ You selected *${count}* file(s).\n\nYour first document has been captured as *file 1*.\nNow choose *Check* or *Recheck* for it.`,
+      `✅ You selected *${count}* file(s).\n\nYour first document has been captured as *file 1*.`,
       {
         parse_mode: "Markdown",
         reply_markup: mainKeyboard()
@@ -1366,13 +1558,16 @@ bot.on("document", async (ctx) => {
 
   // No session yet: HOLD first document, do not forward yet, ask for batch count
   if (!sub) {
+    const doc = ctx.message.document;
+
     submissions[user.id] = createEmptySubmission();
     submissions[user.id].pendingInitialDocument = {
       userId: user.id,
       chatId: ctx.chat.id,
       messageId: ctx.message.message_id,
-      fileId: ctx.message.document.file_id,
-      fileName: ctx.message.document.file_name || `file_${Date.now()}`,
+      fileId: doc.file_id,
+      fileUniqueId: doc.file_unique_id || null,
+      fileName: doc.file_name || `file_${Date.now()}`,
       username: user.username || "N/A",
       firstName: user.first_name || "",
       lastName: user.last_name || ""
@@ -1400,12 +1595,15 @@ bot.on("document", async (ctx) => {
       return;
     }
 
+    const doc = ctx.message.document;
+
     sub.pendingInitialDocument = {
       userId: user.id,
       chatId: ctx.chat.id,
       messageId: ctx.message.message_id,
-      fileId: ctx.message.document.file_id,
-      fileName: ctx.message.document.file_name || `file_${Date.now()}`,
+      fileId: doc.file_id,
+      fileUniqueId: doc.file_unique_id || null,
+      fileName: doc.file_name || `file_${Date.now()}`,
       username: user.username || "N/A",
       firstName: user.first_name || "",
       lastName: user.last_name || ""
@@ -1424,7 +1622,7 @@ bot.on("document", async (ctx) => {
   if (sub.stage === STAGE_WAIT_FILE_TYPE) {
     return ctx.reply("⚠️ Please choose *Check* or *Recheck* for the previous file first.", {
       parse_mode: "Markdown",
-      reply_markup: typeInlineKeyboard().reply_markup
+      reply_markup: typeInlineKeyboard(Boolean(getCurrentPendingFile(sub)?.recheckEligible)).reply_markup
     });
   }
 
@@ -1448,13 +1646,9 @@ bot.on("document", async (ctx) => {
   }
 
   const doc = ctx.message.document;
-  sub.files.push({
-    file_id: doc.file_id,
-    file_name: doc.file_name || `file_${Date.now()}`,
-    type: null,
-    price: null,
-    uploadedAt: Date.now()
-  });
+  const storedFile = createStoredFileFromDocument(user.id, doc);
+
+  sub.files.push(storedFile);
   sub.currentFileIndex = sub.files.length - 1;
   sub.stage = STAGE_WAIT_FILE_TYPE;
 
@@ -1687,7 +1881,7 @@ bot.on("text", async (ctx) => {
   if (sub && sub.stage === STAGE_WAIT_FILE_TYPE) {
     return ctx.reply("⚠️ Please choose *Check* or *Recheck* for the last uploaded file first.", {
       parse_mode: "Markdown",
-      reply_markup: typeInlineKeyboard().reply_markup
+      reply_markup: typeInlineKeyboard(Boolean(getCurrentPendingFile(sub)?.recheckEligible)).reply_markup
     });
   }
 
@@ -1739,7 +1933,9 @@ app.get("/health", (req, res) => {
     publishableKeyPresent: Boolean(INTASEND_PUBLISHABLE_KEY),
     publishableKeyLooksValid: String(INTASEND_PUBLISHABLE_KEY).startsWith("ISPubKey_"),
     pendingSubmissions: Object.keys(submissions).length,
-    activePollers: Object.keys(activePollers).length
+    activePollers: Object.keys(activePollers).length,
+    checkHistoryRecords: checkHistory.length,
+    recheckWindowHours: 24
   });
 });
 
@@ -1863,6 +2059,7 @@ app.listen(port, async () => {
   console.log(`Webhook server listening on port ${port}`);
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
+  console.log(`Recheck rule: same user + exact file name + file_unique_id if available, within 24 hours`);
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
 
