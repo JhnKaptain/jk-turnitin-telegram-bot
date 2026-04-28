@@ -728,7 +728,7 @@ async function askForFileType(ctx, sub) {
   const fileNumber = sub.currentFileIndex + 1;
 
   const recheckNote = file.recheckEligible
-    ? `✅ This file qualifies for *RECHECK* because the same file name was checked and paid within the last 24 hours.\n\nYou may choose *CHECK* or *RECHECK*.`
+    ? `✅ This file qualifies for *RECHECK* because the same file was checked and paid within the last 24 hours.\n\nYou may choose *CHECK* or *RECHECK*.`
     : `ℹ️ This file name does not have a matching paid *CHECK* within the last 24 hours.\n\nIt will be treated as *CHECK*.`;
 
   await ctx.reply(
