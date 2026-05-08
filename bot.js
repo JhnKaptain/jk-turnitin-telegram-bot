@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 const { Telegraf, Markup, Input } = require("telegraf");
 const pdfParse = require("pdf-parse");
+const PDFParser = require("pdf2json");
 const mammoth = require("mammoth");
 const express = require("express");
 const moment = require("moment");
@@ -463,6 +464,50 @@ async function downloadTelegramDocument(fileId, originalFileName) {
   return localPath;
 }
 
+function extractPdfTextWithPdf2Json(localPath) {
+  return new Promise((resolve) => {
+    try {
+      const pdfParser = new PDFParser();
+
+      pdfParser.on("pdfParser_dataError", (errData) => {
+        console.warn("pdf2json extraction failed:", errData?.parserError || errData);
+        resolve("");
+      });
+
+      pdfParser.on("pdfParser_dataReady", (pdfData) => {
+        try {
+          const pages = pdfData?.Pages || [];
+          const textParts = [];
+
+          for (const page of pages) {
+            for (const textItem of page.Texts || []) {
+              for (const run of textItem.R || []) {
+                if (run.T) {
+                  try {
+                    textParts.push(decodeURIComponent(run.T));
+                  } catch {
+                    textParts.push(run.T);
+                  }
+                }
+              }
+            }
+          }
+
+          resolve(textParts.join(" "));
+        } catch (err) {
+          console.warn("pdf2json parse-read failed:", err?.message || err);
+          resolve("");
+        }
+      });
+
+      pdfParser.loadPDF(localPath);
+    } catch (err) {
+      console.warn("pdf2json setup failed:", err?.message || err);
+      resolve("");
+    }
+  });
+}
+
 async function extractReportText(localPath, originalFileName, mimeType) {
   const ext = path.extname(originalFileName || "").toLowerCase();
   const mime = String(mimeType || "").toLowerCase();
@@ -471,19 +516,26 @@ async function extractReportText(localPath, originalFileName, mimeType) {
     const fileBuffer = fs.readFileSync(localPath);
 
     if (ext === ".pdf" || mime.includes("pdf")) {
-      let parsedText = "";
+      let pdfParseText = "";
+      let pdf2JsonText = "";
 
       try {
         const data = await pdfParse(fileBuffer);
-        parsedText = data.text || "";
+        pdfParseText = data.text || "";
       } catch (err) {
-        console.warn("PDF text extraction failed:", err?.message || err);
+        console.warn("pdf-parse extraction failed:", err?.message || err);
+      }
+
+      try {
+        pdf2JsonText = await extractPdfTextWithPdf2Json(localPath);
+      } catch (err) {
+        console.warn("pdf2json extraction wrapper failed:", err?.message || err);
       }
 
       const rawUtf8 = fileBuffer.toString("utf8");
       const rawLatin1 = fileBuffer.toString("latin1");
 
-      return `${parsedText}\n${rawUtf8}\n${rawLatin1}`;
+      return `${pdfParseText}\n${pdf2JsonText}\n${rawUtf8}\n${rawLatin1}`;
     }
 
     if (ext === ".docx" || mime.includes("wordprocessingml.document")) {
@@ -545,79 +597,77 @@ ${text || ""}
   const { loose, compact } = normalizeReportDetectionText(rawCombined);
 
   const aiLoosePatterns = [
-    { pattern: /\bai writing overview\b/i, weight: 12 },
-    { pattern: /\bai writing report\b/i, weight: 10 },
-    { pattern: /\b\d{1,3}\s*%?\s*detected as ai\b/i, weight: 12 },
-    { pattern: /\*?\s*%\s*detected as ai\b/i, weight: 12 },
-    { pattern: /\bdetected as ai\b/i, weight: 10 },
-    { pattern: /\bai-generated only\b/i, weight: 9 },
-    { pattern: /\bai generated only\b/i, weight: 9 },
-    { pattern: /\bai-generated text that was ai-paraphrased\b/i, weight: 9 },
-    { pattern: /\bai generated text that was ai paraphrased\b/i, weight: 9 },
-    { pattern: /\bai-paraphrased\b/i, weight: 7 },
-    { pattern: /\bai paraphrased\b/i, weight: 7 },
-    { pattern: /\bqualifying text\b/i, weight: 7 },
-    { pattern: /\blarge-language model\b/i, weight: 6 },
-    { pattern: /\blarge language model\b/i, weight: 6 },
-    { pattern: /\bai writing assessment\b/i, weight: 6 },
-    { pattern: /\bturnitin'?s ai detection\b/i, weight: 6 },
-    { pattern: /\bai detection capabilities\b/i, weight: 5 },
-    { pattern: /\bfalse positives\b/i, weight: 4 },
-    { pattern: /\bai score\b/i, weight: 4 },
-    { pattern: /\bchatgpt\b/i, weight: 2 }
+    { pattern: /\bai writing overview\b/i, weight: 20 },
+    { pattern: /\bai writing report\b/i, weight: 18 },
+    { pattern: /\b\d{1,3}\s*%?\s*detected as ai\b/i, weight: 20 },
+    { pattern: /\*?\s*%\s*detected as ai\b/i, weight: 18 },
+    { pattern: /\bdetected as ai\b/i, weight: 18 },
+    { pattern: /\bai-generated only\b/i, weight: 16 },
+    { pattern: /\bai generated only\b/i, weight: 16 },
+    { pattern: /\bai-generated text that was ai-paraphrased\b/i, weight: 16 },
+    { pattern: /\bai generated text that was ai paraphrased\b/i, weight: 16 },
+    { pattern: /\bai-paraphrased\b/i, weight: 12 },
+    { pattern: /\bai paraphrased\b/i, weight: 12 },
+    { pattern: /\bqualifying text\b/i, weight: 10 },
+    { pattern: /\blarge-language model\b/i, weight: 10 },
+    { pattern: /\blarge language model\b/i, weight: 10 },
+    { pattern: /\bai writing assessment\b/i, weight: 10 },
+    { pattern: /\bturnitin'?s ai detection\b/i, weight: 10 },
+    { pattern: /\bai detection capabilities\b/i, weight: 8 },
+    { pattern: /\bfalse positives\b/i, weight: 6 }
   ];
 
   const aiCompactTerms = [
-    { term: "aiwritingoverview", weight: 12 },
-    { term: "aiwritingreport", weight: 10 },
-    { term: "detectedasai", weight: 12 },
-    { term: "aigeneratedonly", weight: 9 },
-    { term: "aigeneratedtextthatwasaiparaphrased", weight: 9 },
-    { term: "aiparaphrased", weight: 7 },
-    { term: "qualifyingtext", weight: 7 },
-    { term: "largelanguagemodel", weight: 6 },
-    { term: "aiwritingassessment", weight: 6 },
-    { term: "turnitinsaidetection", weight: 6 },
-    { term: "aidetectioncapabilities", weight: 5 },
-    { term: "falsepositives", weight: 4 }
+    { term: "aiwritingoverview", weight: 20 },
+    { term: "aiwritingreport", weight: 18 },
+    { term: "detectedasai", weight: 20 },
+    { term: "aigeneratedonly", weight: 16 },
+    { term: "aigeneratedtextthatwasaiparaphrased", weight: 16 },
+    { term: "aiparaphrased", weight: 12 },
+    { term: "qualifyingtext", weight: 10 },
+    { term: "largelanguagemodel", weight: 10 },
+    { term: "aiwritingassessment", weight: 10 },
+    { term: "turnitinsaidetection", weight: 10 },
+    { term: "aidetectioncapabilities", weight: 8 },
+    { term: "falsepositives", weight: 6 }
   ];
 
   const plagLoosePatterns = [
-    { pattern: /\bintegrity overview\b/i, weight: 12 },
-    { pattern: /\boverall similarity\b/i, weight: 12 },
-    { pattern: /\bsimilarity report\b/i, weight: 10 },
-    { pattern: /\boriginality report\b/i, weight: 10 },
-    { pattern: /\bsimilarity index\b/i, weight: 10 },
-    { pattern: /\bmatch groups\b/i, weight: 9 },
-    { pattern: /\bmatched sources\b/i, weight: 8 },
-    { pattern: /\bmatch overview\b/i, weight: 8 },
-    { pattern: /\bsource overview\b/i, weight: 8 },
-    { pattern: /\btop sources\b/i, weight: 8 },
-    { pattern: /\binternet sources\b/i, weight: 7 },
-    { pattern: /\bpublications\b/i, weight: 6 },
-    { pattern: /\bsubmitted works\b/i, weight: 7 },
-    { pattern: /\bstudent papers\b/i, weight: 7 },
-    { pattern: /\bprimary sources\b/i, weight: 8 },
-    { pattern: /\bexcluded sources\b/i, weight: 4 }
+    { pattern: /\bintegrity overview\b/i, weight: 20 },
+    { pattern: /\boverall similarity\b/i, weight: 20 },
+    { pattern: /\bsimilarity report\b/i, weight: 18 },
+    { pattern: /\boriginality report\b/i, weight: 18 },
+    { pattern: /\bsimilarity index\b/i, weight: 18 },
+    { pattern: /\bmatch groups\b/i, weight: 14 },
+    { pattern: /\bmatched sources\b/i, weight: 14 },
+    { pattern: /\bmatch overview\b/i, weight: 14 },
+    { pattern: /\bsource overview\b/i, weight: 14 },
+    { pattern: /\btop sources\b/i, weight: 14 },
+    { pattern: /\binternet sources\b/i, weight: 12 },
+    { pattern: /\bpublications\b/i, weight: 10 },
+    { pattern: /\bsubmitted works\b/i, weight: 12 },
+    { pattern: /\bstudent papers\b/i, weight: 12 },
+    { pattern: /\bprimary sources\b/i, weight: 12 },
+    { pattern: /\bexcluded sources\b/i, weight: 6 }
   ];
 
   const plagCompactTerms = [
-    { term: "integrityoverview", weight: 12 },
-    { term: "overallsimilarity", weight: 12 },
-    { term: "similarityreport", weight: 10 },
-    { term: "originalityreport", weight: 10 },
-    { term: "similarityindex", weight: 10 },
-    { term: "matchgroups", weight: 9 },
-    { term: "matchedsources", weight: 8 },
-    { term: "matchoverview", weight: 8 },
-    { term: "sourceoverview", weight: 8 },
-    { term: "topsources", weight: 8 },
-    { term: "internetsources", weight: 7 },
-    { term: "publications", weight: 6 },
-    { term: "submittedworks", weight: 7 },
-    { term: "studentpapers", weight: 7 },
-    { term: "primarysources", weight: 8 },
-    { term: "excludedsources", weight: 4 }
+    { term: "integrityoverview", weight: 20 },
+    { term: "overallsimilarity", weight: 20 },
+    { term: "similarityreport", weight: 18 },
+    { term: "originalityreport", weight: 18 },
+    { term: "similarityindex", weight: 18 },
+    { term: "matchgroups", weight: 14 },
+    { term: "matchedsources", weight: 14 },
+    { term: "matchoverview", weight: 14 },
+    { term: "sourceoverview", weight: 14 },
+    { term: "topsources", weight: 14 },
+    { term: "internetsources", weight: 12 },
+    { term: "publications", weight: 10 },
+    { term: "submittedworks", weight: 12 },
+    { term: "studentpapers", weight: 12 },
+    { term: "primarysources", weight: 12 },
+    { term: "excludedsources", weight: 6 }
   ];
 
   const aiScore =
@@ -628,7 +678,7 @@ ${text || ""}
     scoreLoosePatterns(loose, plagLoosePatterns) +
     scoreCompactTerms(compact, plagCompactTerms);
 
-  if (aiScore >= 10 && aiScore > plagScore) {
+  if (aiScore >= 12 && aiScore > plagScore) {
     return {
       kind: "AI",
       prefix: "AI",
@@ -638,7 +688,7 @@ ${text || ""}
     };
   }
 
-  if (plagScore >= 10 && plagScore >= aiScore) {
+  if (plagScore >= 12 && plagScore >= aiScore) {
     return {
       kind: "PLAG",
       prefix: "Plag",
@@ -1879,6 +1929,7 @@ bot.on("document", async (ctx) => {
     };
 
     let finalFileName = safeFileName(doc.file_name || `document_${Date.now()}`);
+    let sentWithPrefix = false;
 
     try {
       try {
@@ -1923,11 +1974,19 @@ bot.on("document", async (ctx) => {
           Input.fromLocalFile(localPath, finalFileName),
           sendOptions
         );
+
+        sentWithPrefix = true;
       } else {
         await bot.telegram.sendDocument(target.userId, doc.file_id, sendOptions);
       }
 
       target.sentCount += 1;
+
+      if (sentWithPrefix) {
+        await ctx.reply(`✅ Document with prefix sent to ${target.userId}`);
+      } else {
+        await ctx.reply(`✅ Document without prefix sent to ${target.userId}`);
+      }
     } catch (err) {
       await ctx.reply("❌ Failed: " + (err?.message || err));
     } finally {
