@@ -103,6 +103,9 @@ const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915");
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
 const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
 
+const REPORT_DETECTION_MAX_MB = readIntEnv("REPORT_DETECTION_MAX_MB", 4);
+const REPORT_DETECTION_MAX_BYTES = REPORT_DETECTION_MAX_MB * 1024 * 1024;
+
 const RECHECK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const CHECK_HISTORY_RETENTION_MS = 72 * 60 * 60 * 1000;
 
@@ -1919,6 +1922,8 @@ bot.on("document", async (ctx) => {
     }
 
     const doc = ctx.message.document;
+    const docSize = Number(doc.file_size || 0);
+
     let localPath = null;
     let detection = {
       kind: "NORMAL",
@@ -1930,60 +1935,81 @@ bot.on("document", async (ctx) => {
 
     let finalFileName = safeFileName(doc.file_name || `document_${Date.now()}`);
     let sentWithPrefix = false;
+    let skippedDetectionBecauseLarge = false;
 
     try {
-      try {
-        localPath = await downloadTelegramDocument(doc.file_id, finalFileName);
-
-        const extractedText = await extractReportText(
-          localPath,
-          finalFileName,
-          doc.mime_type
-        );
-
-        detection = detectTurnitinReportType({
-          fileName: finalFileName,
-          caption: ctx.message.caption || target.caption || "",
-          text: extractedText
-        });
-
-        console.log("Report detection:", {
-          fileName: finalFileName,
-          extractedChars: extractedText.length,
-          kind: detection.kind,
-          aiScore: detection.aiScore,
-          plagScore: detection.plagScore
-        });
-      } catch (err) {
-        console.warn("Report detection failed; using normal send route:", err?.message || err);
-      }
-
       const sendOptions = {
         caption: target.sentCount === 0 ? target.caption || undefined : undefined
       };
 
-      if (detection.kind === "AI" || detection.kind === "PLAG") {
-        if (!localPath) {
-          throw new Error("Report was detected, but the local file was not available for renaming.");
-        }
-
-        finalFileName = addReportPrefix(finalFileName, detection.prefix);
+      if (docSize > REPORT_DETECTION_MAX_BYTES) {
+        skippedDetectionBecauseLarge = true;
 
         await bot.telegram.sendDocument(
           target.userId,
-          Input.fromLocalFile(localPath, finalFileName),
+          doc.file_id,
           sendOptions
         );
-
-        sentWithPrefix = true;
       } else {
-        await bot.telegram.sendDocument(target.userId, doc.file_id, sendOptions);
+        try {
+          localPath = await downloadTelegramDocument(doc.file_id, finalFileName);
+
+          const extractedText = await extractReportText(
+            localPath,
+            finalFileName,
+            doc.mime_type
+          );
+
+          detection = detectTurnitinReportType({
+            fileName: finalFileName,
+            caption: ctx.message.caption || target.caption || "",
+            text: extractedText
+          });
+
+          console.log("Report detection:", {
+            fileName: finalFileName,
+            fileSizeBytes: docSize,
+            maxDetectionBytes: REPORT_DETECTION_MAX_BYTES,
+            extractedChars: extractedText.length,
+            kind: detection.kind,
+            aiScore: detection.aiScore,
+            plagScore: detection.plagScore
+          });
+        } catch (err) {
+          console.warn("Report detection failed; using normal send route:", err?.message || err);
+        }
+
+        if (detection.kind === "AI" || detection.kind === "PLAG") {
+          if (!localPath) {
+            throw new Error("Report was detected, but the local file was not available for renaming.");
+          }
+
+          finalFileName = addReportPrefix(finalFileName, detection.prefix);
+
+          await bot.telegram.sendDocument(
+            target.userId,
+            Input.fromLocalFile(localPath, finalFileName),
+            sendOptions
+          );
+
+          sentWithPrefix = true;
+        } else {
+          await bot.telegram.sendDocument(
+            target.userId,
+            doc.file_id,
+            sendOptions
+          );
+        }
       }
 
       target.sentCount += 1;
 
       if (sentWithPrefix) {
         await ctx.reply(`✅ Document with prefix sent to ${target.userId}`);
+      } else if (skippedDetectionBecauseLarge) {
+        await ctx.reply(
+          `✅ Large document sent without prefix to ${target.userId}\nSkipped detection because file is above ${REPORT_DETECTION_MAX_MB} MB.`
+        );
       } else {
         await ctx.reply(`✅ Document without prefix sent to ${target.userId}`);
       }
@@ -2407,7 +2433,8 @@ app.get("/health", (req, res) => {
     pendingSubmissions: Object.keys(submissions).length,
     activePollers: Object.keys(activePollers).length,
     checkHistoryRecords: checkHistory.length,
-    recheckWindowHours: 24
+    recheckWindowHours: 24,
+    reportDetectionMaxMb: REPORT_DETECTION_MAX_MB
   });
 });
 
@@ -2531,6 +2558,7 @@ app.listen(port, async () => {
   console.log(`Webhook server listening on port ${port}`);
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
+  console.log(`Report detection max: ${REPORT_DETECTION_MAX_MB} MB`);
   console.log("Recheck rule: same user + same visible file name within 24 hours");
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
