@@ -535,10 +535,7 @@ async function extractReportText(localPath, originalFileName, mimeType) {
         console.warn("pdf2json extraction wrapper failed:", err?.message || err);
       }
 
-      const rawUtf8 = fileBuffer.toString("utf8");
-      const rawLatin1 = fileBuffer.toString("latin1");
-
-      return `${pdfParseText}\n${pdf2JsonText}\n${rawUtf8}\n${rawLatin1}`;
+      return `${pdfParseText}\n${pdf2JsonText}`;
     }
 
     if (ext === ".docx" || mime.includes("wordprocessingml.document")) {
