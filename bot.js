@@ -65,6 +65,22 @@ function eatHHMMToUtc(hhmm) {
   return String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
 }
 
+function utcHHMMToEat(hhmm) {
+  const s = normalizeHHMM(hhmm, "03:45");
+  let [hh, mm] = s.split(":").map(Number);
+  hh = (hh + 3) % 24;
+  return String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+}
+
+function formatHHMMTo12Hour(hhmm) {
+  const s = normalizeHHMM(hhmm, "06:45");
+  let [hh, mm] = s.split(":").map(Number);
+  const suffix = hh >= 12 ? "PM" : "AM";
+  let hour12 = hh % 12;
+  if (hour12 === 0) hour12 = 12;
+  return `${hour12}:${String(mm).padStart(2, "0")} ${suffix}`;
+}
+
 const PUBLIC_BASE_URL = sanitizeBaseUrl(
   process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || ""
 );
@@ -102,6 +118,16 @@ const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915");
 
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
 const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
+const RESALE_PRICE_KES = readIntEnv(
+  "RESALE_PRICE_KES",
+  readIntEnv("RESALE_AMOUNT_KES", 100)
+);
+
+const RESELLER_CODE = String(
+  process.env.RESELLER_CODE || process.env.RESALE_CODE || ""
+).trim();
+
+const RESALE_ENABLED = RESELLER_CODE.length > 0;
 
 const REPORT_DETECTION_MAX_MB = readIntEnv("REPORT_DETECTION_MAX_MB", 4);
 const REPORT_DETECTION_MAX_BYTES = REPORT_DETECTION_MAX_MB * 1024 * 1024;
@@ -116,8 +142,11 @@ const INACTIVE_START_UTC = normalizeHHMM(
 
 const INACTIVE_END_UTC = normalizeHHMM(
   process.env.INACTIVE_END_UTC,
-  eatHHMMToUtc(process.env.INACTIVE_END_EAT) || "03:00"
+  eatHHMMToUtc(process.env.INACTIVE_END_EAT) || "03:45"
 );
+
+const INACTIVE_END_EAT = utcHHMMToEat(INACTIVE_END_UTC);
+const INACTIVE_END_EAT_DISPLAY = formatHHMMTo12Hour(INACTIVE_END_EAT);
 
 // =====================
 // STAGES / PAYMENT
@@ -125,6 +154,7 @@ const INACTIVE_END_UTC = normalizeHHMM(
 const STAGE_WAIT_BATCH_SIZE = "WAIT_BATCH_SIZE";
 const STAGE_WAIT_UPLOADS = "WAIT_UPLOADS";
 const STAGE_WAIT_FILE_TYPE = "WAIT_FILE_TYPE";
+const STAGE_WAIT_RESELLER_CODE = "WAIT_RESELLER_CODE";
 const STAGE_WAIT_PHONE = "WAIT_PHONE";
 const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
 const STAGE_PAID = "PAID";
@@ -147,34 +177,41 @@ const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access other Writing Serices Here https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
 const MESSAGES = {
-  welcome: (check, recheck) => `
+  welcome: (check, recheck, resale) => `
 JK Turnitin Reports Bot
 
 1️⃣ Tap *Send Document*
 2️⃣ Choose how many files you want to upload (1-${MAX_BATCH_FILES})
 3️⃣ Upload your files one by one as *documents*
-4️⃣ Choose *CHECK* or *RECHECK* where eligible
+4️⃣ Choose *CHECK*, *RECHECK* or *RESALE* where eligible
 5️⃣ Pay *once* for the whole batch
 
 💰 Pricing
 • Check: ${check} KES
-• Recheck: ${recheck} KES
+• Recheck: ${recheck} KES${RESALE_ENABLED ? `\n• Resale: ${resale} KES` : ""}
 
-🔁 Recheck is only available when the same visible file name was checked and paid within the last 24 hours.
+🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.
+${RESALE_ENABLED ? "\n🏷️ Resale requires a reseller code." : ""}
 `,
-  inactive: `
+  inactive: () => `
 ⏳ Turnitin checks are paused right now.
-We’ll resume at *6:45 AM EAT*.
+We’ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
 
-✅ You can still send your document now — it will be received.
-⚠️ Payment prompts will only be sent after 6:45 AM.
+⚠️ Payment prompts will only be sent after ${INACTIVE_END_EAT_DISPLAY}.
 
 If urgent, WhatsApp call *0701730921*.
 `,
   sendDocHelp:
     `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\nPlease don’t send as a photo.`,
   paymentHelp:
-    "🧾 Payment help:\n\n✅ Default method: *STK Push*\nChoose your batch size → upload files → choose Check/Recheck where eligible → enter phone number → receive *one combined STK prompt*.\n\n🔁 Recheck is only available when the same visible file name was checked and paid within the last 24 hours.\n\nIf prompt delays/fails, tap *Resend STK Push*.",
+    `🧾 Payment help:
+
+✅ Default method: *STK Push*
+Choose your batch size → upload files → choose Check/Recheck${RESALE_ENABLED ? "/Resale" : ""} where eligible → enter phone number → receive *one combined STK prompt*.
+
+🔁 Recheck is only available when the same visible file name was checked and paid within the last 24 hours.${RESALE_ENABLED ? "\n\n🏷️ Resale requires a reseller code." : ""}
+
+If prompt delays/fails, tap *Resend STK Push*.`,
   askPhoneBatch: (summary, amount) =>
     `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
   stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
@@ -196,11 +233,59 @@ const pendingFileTargets = {};
 const activePollers = {};
 const supportRequests = {};
 const pendingAdminReplies = {};
+
+const processedUpdateCache = new Map();
+const PROCESSED_UPDATE_TTL_MS = 30 * 60 * 1000;
+
 let paymentRefs = {};
 let checkHistory = [];
 
 const STORE_FILE = path.join(__dirname, "paymentRefs.store.json");
 const CHECK_HISTORY_FILE = path.join(__dirname, "checkHistory.store.json");
+
+// =====================
+// DUPLICATE UPDATE GUARD
+// =====================
+function cleanupProcessedUpdateCache() {
+  const now = Date.now();
+
+  for (const [key, value] of processedUpdateCache.entries()) {
+    if (now - Number(value?.ts || 0) > PROCESSED_UPDATE_TTL_MS) {
+      processedUpdateCache.delete(key);
+    }
+  }
+}
+
+bot.use(async (ctx, next) => {
+  cleanupProcessedUpdateCache();
+
+  const updateId = ctx.update?.update_id;
+  if (updateId === undefined || updateId === null) {
+    return next();
+  }
+
+  const key = `update:${updateId}`;
+  if (processedUpdateCache.has(key)) {
+    console.log(`Duplicate Telegram update skipped: ${key}`);
+    return;
+  }
+
+  processedUpdateCache.set(key, {
+    ts: Date.now(),
+    status: "processing"
+  });
+
+  try {
+    await next();
+    processedUpdateCache.set(key, {
+      ts: Date.now(),
+      status: "done"
+    });
+  } catch (err) {
+    processedUpdateCache.delete(key);
+    throw err;
+  }
+});
 
 // =====================
 // PAYMENT REF PERSISTENCE
@@ -369,7 +454,7 @@ function rememberPaidChecks({ userId, files, batchId, source }) {
   let changed = false;
 
   for (const file of files || []) {
-    if (file?.type !== "CHECK") continue;
+    if (file?.type !== "CHECK" && file?.type !== "RESALE") continue;
 
     const fileName = String(file.file_name || file.fileName || "").trim();
     if (!fileName) continue;
@@ -391,6 +476,7 @@ function rememberPaidChecks({ userId, files, batchId, source }) {
       existing.lastPaidCheckAt = paidAt;
       existing.batchId = batchId || existing.batchId || null;
       existing.source = source || "payment-confirmed";
+      existing.lastPaidType = file.type || "CHECK";
       changed = true;
     } else {
       checkHistory.push({
@@ -400,7 +486,8 @@ function rememberPaidChecks({ userId, files, batchId, source }) {
         fileUniqueId: fileUniqueId || null,
         lastPaidCheckAt: paidAt,
         batchId: batchId || null,
-        source: source || "payment-confirmed"
+        source: source || "payment-confirmed",
+        lastPaidType: file.type || "CHECK"
       });
       changed = true;
     }
@@ -447,6 +534,66 @@ function addReportPrefix(fileName, prefix) {
   return `${prefix}_${stripExistingReportPrefix(fileName)}`;
 }
 
+function initBatchTracking(target) {
+  if (!target.sentItemKeys) target.sentItemKeys = {};
+  if (!target.inProgressItemKeys) target.inProgressItemKeys = {};
+}
+
+function makeDocumentDeliveryKey(doc) {
+  return [
+    "document",
+    doc.file_unique_id || doc.file_id || "unknown",
+    doc.file_size || 0,
+    safeFileName(doc.file_name || "unknown")
+  ].join(":");
+}
+
+function makePhotoDeliveryKey(photo) {
+  return [
+    "photo",
+    photo.file_unique_id || photo.file_id || "unknown",
+    photo.file_size || 0
+  ].join(":");
+}
+
+function startBatchItemOnce(target, key) {
+  initBatchTracking(target);
+
+  if (target.sentItemKeys[key] || target.inProgressItemKeys[key]) {
+    return false;
+  }
+
+  target.inProgressItemKeys[key] = Date.now();
+  return true;
+}
+
+function markBatchItemSent(target, key) {
+  initBatchTracking(target);
+  delete target.inProgressItemKeys[key];
+  target.sentItemKeys[key] = Date.now();
+}
+
+function clearBatchItemProgress(target, key) {
+  initBatchTracking(target);
+  delete target.inProgressItemKeys[key];
+}
+
+function batchOpenedMessage(userId) {
+  return `✅ Batch delivery opened for user ${userId}.
+
+send /donebatch
+send /cancelbatch`;
+}
+
+function resellerCodeMatches(value) {
+  if (!RESALE_ENABLED) return false;
+
+  const given = String(value || "").trim();
+  if (!given) return false;
+
+  return given.toLowerCase() === RESELLER_CODE.toLowerCase();
+}
+
 async function downloadTelegramDocument(fileId, originalFileName) {
   ensureReportTmpDir();
 
@@ -465,6 +612,27 @@ async function downloadTelegramDocument(fileId, originalFileName) {
 
   fs.writeFileSync(localPath, buffer);
   return localPath;
+}
+
+async function extractPdfTextWithPdfParse(fileBuffer) {
+  try {
+    const parser =
+      typeof pdfParse === "function"
+        ? pdfParse
+        : typeof pdfParse?.default === "function"
+          ? pdfParse.default
+          : typeof pdfParse?.pdfParse === "function"
+            ? pdfParse.pdfParse
+            : null;
+
+    if (!parser) return "";
+
+    const data = await parser(fileBuffer);
+    return data?.text || "";
+  } catch (err) {
+    console.warn("pdf-parse extraction skipped/failed:", err?.message || err);
+    return "";
+  }
 }
 
 function extractPdfTextWithPdf2Json(localPath) {
@@ -519,21 +687,8 @@ async function extractReportText(localPath, originalFileName, mimeType) {
     const fileBuffer = fs.readFileSync(localPath);
 
     if (ext === ".pdf" || mime.includes("pdf")) {
-      let pdfParseText = "";
-      let pdf2JsonText = "";
-
-      try {
-        const data = await pdfParse(fileBuffer);
-        pdfParseText = data.text || "";
-      } catch (err) {
-        console.warn("pdf-parse extraction failed:", err?.message || err);
-      }
-
-      try {
-        pdf2JsonText = await extractPdfTextWithPdf2Json(localPath);
-      } catch (err) {
-        console.warn("pdf2json extraction wrapper failed:", err?.message || err);
-      }
+      const pdfParseText = await extractPdfTextWithPdfParse(fileBuffer);
+      const pdf2JsonText = await extractPdfTextWithPdf2Json(localPath);
 
       return `${pdfParseText}\n${pdf2JsonText}`;
     }
@@ -742,11 +897,19 @@ function batchSizeKeyboard() {
   ]);
 }
 
-function typeInlineKeyboard(allowRecheck) {
+function typeInlineKeyboard(allowRecheck, allowResale, resaleVerified) {
   const rows = [[Markup.button.callback(`✅ CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")]];
 
   if (allowRecheck) {
     rows.push([Markup.button.callback(`🔁 RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")]);
+  }
+
+  if (allowResale) {
+    const resaleLabel = resaleVerified
+      ? `🏷️ RESALE (${RESALE_PRICE_KES} KES)`
+      : `🏷️ RESALE (${RESALE_PRICE_KES} KES - code)`;
+
+    rows.push([Markup.button.callback(resaleLabel, "TYPE_RESALE")]);
   }
 
   rows.push([Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]);
@@ -862,7 +1025,8 @@ function createEmptySubmission() {
     stkSentAt: null,
     resendCount: 0,
     paymentAttempts: [],
-    pendingInitialDocument: null
+    pendingInitialDocument: null,
+    resellerVerified: false
   };
 }
 
@@ -877,7 +1041,7 @@ function isBotInactivePeriod() {
 }
 
 async function notifyInactivePeriod(ctx) {
-  await replyMarkdownSafe(ctx, MESSAGES.inactive.trim(), {
+  await replyMarkdownSafe(ctx, MESSAGES.inactive().trim(), {
     reply_markup: mainKeyboard()
   });
 }
@@ -891,36 +1055,51 @@ function getCurrentPendingFile(sub) {
 function getSubmissionCounts(sub) {
   let checks = 0;
   let rechecks = 0;
+  let resales = 0;
 
   for (const file of sub.files || []) {
     if (file.type === "CHECK") checks += 1;
     if (file.type === "RECHECK") rechecks += 1;
+    if (file.type === "RESALE") resales += 1;
   }
 
   return {
     checks,
     rechecks,
-    total: checks + rechecks
+    resales,
+    total: checks + rechecks + resales
   };
 }
 
 function calculateSubmissionAmount(sub) {
   const counts = getSubmissionCounts(sub);
-  return counts.checks * CHECK_PRICE_KES + counts.rechecks * RECHECK_PRICE_KES;
+  return (
+    counts.checks * CHECK_PRICE_KES +
+    counts.rechecks * RECHECK_PRICE_KES +
+    counts.resales * RESALE_PRICE_KES
+  );
 }
 
 function formatBatchSummary(sub) {
   const counts = getSubmissionCounts(sub);
-  return [
+
+  const lines = [
     `• Check: ${counts.checks}`,
-    `• Recheck: ${counts.rechecks}`,
-    `• Files: ${counts.total}`
-  ].join("\n");
+    `• Recheck: ${counts.rechecks}`
+  ];
+
+  if (RESALE_ENABLED || counts.resales > 0) {
+    lines.push(`• Resale: ${counts.resales}`);
+  }
+
+  lines.push(`• Files: ${counts.total}`);
+
+  return lines.join("\n");
 }
 
 function getBatchKindLabel(sub) {
   const counts = getSubmissionCounts(sub);
-  return `${counts.checks} CHECK, ${counts.rechecks} RECHECK`;
+  return `${counts.checks} CHECK, ${counts.rechecks} RECHECK, ${counts.resales} RESALE`;
 }
 
 function canAcceptMoreFiles(sub) {
@@ -1056,11 +1235,19 @@ async function askForFileType(ctx, sub) {
     ? `✅ This file qualifies for *RECHECK* because the same file was checked and paid within the last 24 hours.\n\nYou may choose *CHECK* or *RECHECK*.`
     : `ℹ️ This file name does not have a matching paid *CHECK* within the last 24 hours.\n\nIt will be treated as *CHECK*.`;
 
+  const resaleNote = RESALE_ENABLED
+    ? `\n\n🏷️ *RESALE* is available with reseller code.`
+    : "";
+
   await ctx.reply(
-    `📄 File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\n\n${recheckNote}`,
+    `📄 File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\n\n${recheckNote}${resaleNote}`,
     {
       parse_mode: "Markdown",
-      reply_markup: typeInlineKeyboard(Boolean(file.recheckEligible)).reply_markup
+      reply_markup: typeInlineKeyboard(
+        Boolean(file.recheckEligible),
+        RESALE_ENABLED,
+        Boolean(sub.resellerVerified)
+      ).reply_markup
     }
   );
 }
@@ -1087,6 +1274,40 @@ async function moveBatchToPhoneStep(ctx, sub) {
   });
 }
 
+async function finalizeFileTypeSelection(ctx, sub, kind) {
+  const file = getCurrentPendingFile(sub);
+  if (!file) {
+    sub.stage = STAGE_WAIT_UPLOADS;
+    sub.currentFileIndex = null;
+    return;
+  }
+
+  file.type = kind;
+
+  if (kind === "CHECK") file.price = CHECK_PRICE_KES;
+  if (kind === "RECHECK") file.price = RECHECK_PRICE_KES;
+  if (kind === "RESALE") file.price = RESALE_PRICE_KES;
+
+  const justCompletedNumber = sub.currentFileIndex + 1;
+  sub.currentFileIndex = null;
+
+  if (sub.files.length >= sub.expectedFiles) {
+    await moveBatchToPhoneStep(ctx, sub);
+    return;
+  }
+
+  sub.stage = STAGE_WAIT_UPLOADS;
+  await ctx.reply(
+    `✅ ${kind} saved for file ${justCompletedNumber}.\n\nNow send file ${
+      sub.files.length + 1
+    } of ${sub.expectedFiles}.\nIf you are finished early, tap *Done Uploading*.`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: uploadContinueKeyboard().reply_markup
+    }
+  );
+}
+
 async function handleFileTypeSelected(ctx, kind) {
   const userId = ctx.from.id;
   const sub = submissions[userId];
@@ -1109,30 +1330,27 @@ async function handleFileTypeSelected(ctx, kind) {
       "⚠️ Recheck is only available when the same file name was checked and paid within the last 24 hours.\n\nThis file has been treated as *CHECK*.",
       { parse_mode: "Markdown" }
     );
+  } else if (kind === "RESALE") {
+    if (!RESALE_ENABLED) {
+      await ctx.answerCbQuery("Resale is not enabled.");
+      return ctx.reply("⚠️ Resale is not enabled right now.");
+    }
+
+    if (!sub.resellerVerified) {
+      sub.stage = STAGE_WAIT_RESELLER_CODE;
+      await ctx.answerCbQuery("Code required");
+      return ctx.reply(
+        "🔐 Send reseller code to use *RESALE* for this file.\n\nTo go back, tap Cancel / New submission.",
+        { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+      );
+    }
+
+    await ctx.answerCbQuery("RESALE selected");
   } else {
     await ctx.answerCbQuery(`${kind} selected`);
   }
 
-  file.type = kind;
-  file.price = kind === "CHECK" ? CHECK_PRICE_KES : RECHECK_PRICE_KES;
-  const justCompletedNumber = sub.currentFileIndex + 1;
-  sub.currentFileIndex = null;
-
-  if (sub.files.length >= sub.expectedFiles) {
-    await moveBatchToPhoneStep(ctx, sub);
-    return;
-  }
-
-  sub.stage = STAGE_WAIT_UPLOADS;
-  await ctx.reply(
-    `✅ ${kind} saved for file ${justCompletedNumber}.\n\nNow send file ${
-      sub.files.length + 1
-    } of ${sub.expectedFiles}.\nIf you are finished early, tap *Done Uploading*.`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: uploadContinueKeyboard().reply_markup
-    }
-  );
+  await finalizeFileTypeSelection(ctx, sub, kind);
 }
 
 // =====================
@@ -1664,7 +1882,7 @@ bot.start(async (ctx) => {
 
   await replyMarkdownSafe(
     ctx,
-    `${MESSAGES.welcome(CHECK_PRICE_KES, RECHECK_PRICE_KES)}\nTap the button below to begin.`,
+    `${MESSAGES.welcome(CHECK_PRICE_KES, RECHECK_PRICE_KES, RESALE_PRICE_KES)}\nTap the button below to begin.`,
     {
       reply_markup: startInlineKeyboard().reply_markup
     }
@@ -1715,12 +1933,12 @@ bot.command("filebatch", async (ctx) => {
   pendingFileTargets[ADMIN_ID] = {
     userId,
     caption,
-    sentCount: 0
+    sentCount: 0,
+    sentItemKeys: {},
+    inProgressItemKeys: {}
   };
 
-  await ctx.reply(
-    `✅ Batch delivery opened for user ${userId}.\nNow send as many document/photo messages as needed.\nWhen finished, send /donebatch\nTo cancel, send /cancelbatch`
-  );
+  await ctx.reply(batchOpenedMessage(userId));
 });
 
 bot.command("donebatch", async (ctx) => {
@@ -1764,13 +1982,13 @@ bot.action(/^ADMIN_FILEBATCH_(\d+)$/, async (ctx) => {
   pendingFileTargets[ADMIN_ID] = {
     userId,
     caption: "",
-    sentCount: 0
+    sentCount: 0,
+    sentItemKeys: {},
+    inProgressItemKeys: {}
   };
 
   await ctx.answerCbQuery("Filebatch opened");
-  await ctx.reply(
-    `✅ Batch delivery opened for user ${userId}.\nNow send as many document/photo messages as needed.\nWhen finished, send /donebatch\nTo cancel, send /cancelbatch`
-  );
+  await ctx.reply(batchOpenedMessage(userId));
 });
 
 bot.action(/^ADMIN_REPLY_(\d+)$/, async (ctx) => {
@@ -1918,7 +2136,15 @@ bot.on("document", async (ctx) => {
       return ctx.reply("Use /filebatch <userId> first.");
     }
 
+    initBatchTracking(target);
+
     const doc = ctx.message.document;
+    const deliveryKey = makeDocumentDeliveryKey(doc);
+
+    if (!startBatchItemOnce(target, deliveryKey)) {
+      return ctx.reply(`⚠️ Duplicate document ignored for ${target.userId}`);
+    }
+
     const docSize = Number(doc.file_size || 0);
 
     let localPath = null;
@@ -2000,6 +2226,7 @@ bot.on("document", async (ctx) => {
       }
 
       target.sentCount += 1;
+      markBatchItemSent(target, deliveryKey);
 
       if (sentWithPrefix) {
         await ctx.reply(`✅ Document with prefix sent to ${target.userId}`);
@@ -2011,6 +2238,7 @@ bot.on("document", async (ctx) => {
         await ctx.reply(`✅ Document without prefix sent to ${target.userId}`);
       }
     } catch (err) {
+      clearBatchItemProgress(target, deliveryKey);
       await ctx.reply("❌ Failed: " + (err?.message || err));
     } finally {
       if (localPath) {
@@ -2091,10 +2319,14 @@ bot.on("document", async (ctx) => {
     return;
   }
 
-  if (sub.stage === STAGE_WAIT_FILE_TYPE) {
-    return ctx.reply("⚠️ Please choose *Check* or *Recheck* for the previous file first.", {
+  if (sub.stage === STAGE_WAIT_FILE_TYPE || sub.stage === STAGE_WAIT_RESELLER_CODE) {
+    return ctx.reply("⚠️ Please choose a type for the previous file first.", {
       parse_mode: "Markdown",
-      reply_markup: typeInlineKeyboard(Boolean(getCurrentPendingFile(sub)?.recheckEligible)).reply_markup
+      reply_markup: typeInlineKeyboard(
+        Boolean(getCurrentPendingFile(sub)?.recheckEligible),
+        RESALE_ENABLED,
+        Boolean(sub.resellerVerified)
+      ).reply_markup
     });
   }
 
@@ -2148,8 +2380,20 @@ bot.on("photo", async (ctx) => {
       return ctx.reply("Use /filebatch <userId> first.");
     }
 
+    initBatchTracking(target);
+
     const photos = ctx.message.photo || [];
     const largest = photos[photos.length - 1];
+
+    if (!largest) {
+      return ctx.reply("❌ No photo found.");
+    }
+
+    const deliveryKey = makePhotoDeliveryKey(largest);
+
+    if (!startBatchItemOnce(target, deliveryKey)) {
+      return ctx.reply(`⚠️ Duplicate photo ignored for ${target.userId}`);
+    }
 
     try {
       await bot.telegram.sendPhoto(target.userId, largest.file_id, {
@@ -2157,7 +2401,10 @@ bot.on("photo", async (ctx) => {
       });
 
       target.sentCount += 1;
+      markBatchItemSent(target, deliveryKey);
+      await ctx.reply(`✅ Photo sent to ${target.userId}`);
     } catch (err) {
+      clearBatchItemProgress(target, deliveryKey);
       await ctx.reply("❌ Failed: " + (err?.message || err));
     }
     return;
@@ -2185,7 +2432,7 @@ bot.on("photo", async (ctx) => {
 
   if (
     sub &&
-    [STAGE_WAIT_BATCH_SIZE, STAGE_WAIT_UPLOADS, STAGE_WAIT_FILE_TYPE].includes(sub.stage)
+    [STAGE_WAIT_BATCH_SIZE, STAGE_WAIT_UPLOADS, STAGE_WAIT_FILE_TYPE, STAGE_WAIT_RESELLER_CODE].includes(sub.stage)
   ) {
     return ctx.reply("⚠️ Please send your file as a *document*, not as a photo.", {
       parse_mode: "Markdown",
@@ -2210,6 +2457,11 @@ bot.action("TYPE_CHECK", async (ctx) => {
 bot.action("TYPE_RECHECK", async (ctx) => {
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
   await handleFileTypeSelected(ctx, "RECHECK");
+});
+
+bot.action("TYPE_RESALE", async (ctx) => {
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+  await handleFileTypeSelected(ctx, "RESALE");
 });
 
 bot.action("DONE_UPLOADING", async (ctx) => {
@@ -2338,6 +2590,37 @@ _We’re here if you need anything else._`,
 
   const sub = submissions[user.id];
 
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+
+  if (sub && sub.stage === STAGE_WAIT_RESELLER_CODE) {
+    if (!RESALE_ENABLED) {
+      sub.stage = STAGE_WAIT_FILE_TYPE;
+      return ctx.reply("⚠️ Resale is not enabled right now.", {
+        reply_markup: typeInlineKeyboard(
+          Boolean(getCurrentPendingFile(sub)?.recheckEligible),
+          RESALE_ENABLED,
+          Boolean(sub.resellerVerified)
+        ).reply_markup
+      });
+    }
+
+    if (!resellerCodeMatches(text)) {
+      sub.stage = STAGE_WAIT_FILE_TYPE;
+      return ctx.reply("❌ Wrong reseller code. Choose another type or tap RESALE again to retry.", {
+        reply_markup: typeInlineKeyboard(
+          Boolean(getCurrentPendingFile(sub)?.recheckEligible),
+          RESALE_ENABLED,
+          Boolean(sub.resellerVerified)
+        ).reply_markup
+      });
+    }
+
+    sub.resellerVerified = true;
+    await ctx.reply("✅ Reseller code accepted. RESALE price applied.");
+    await finalizeFileTypeSelection(ctx, sub, "RESALE");
+    return;
+  }
+
   if (hasActiveSubmissionForUploads(sub)) {
     await sendAdminMessage(
       `💬 Message from user\nUser ID: ${user.id}\nUsername: @${safeText(
@@ -2345,8 +2628,6 @@ _We’re here if you need anything else._`,
       )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`
     );
   }
-
-  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
@@ -2374,9 +2655,13 @@ _We’re here if you need anything else._`,
   }
 
   if (sub && sub.stage === STAGE_WAIT_FILE_TYPE) {
-    return ctx.reply("⚠️ Please choose *Check* or *Recheck* for the last uploaded file first.", {
+    return ctx.reply("⚠️ Please choose a type for the last uploaded file first.", {
       parse_mode: "Markdown",
-      reply_markup: typeInlineKeyboard(Boolean(getCurrentPendingFile(sub)?.recheckEligible)).reply_markup
+      reply_markup: typeInlineKeyboard(
+        Boolean(getCurrentPendingFile(sub)?.recheckEligible),
+        RESALE_ENABLED,
+        Boolean(sub.resellerVerified)
+      ).reply_markup
     });
   }
 
@@ -2413,7 +2698,17 @@ app.use(
   })
 );
 
-app.use(bot.webhookCallback("/webhook"));
+app.post("/webhook", (req, res) => {
+  res.status(200).send("OK");
+
+  setImmediate(async () => {
+    try {
+      await bot.handleUpdate(req.body);
+    } catch (err) {
+      console.error("Telegram update processing failed:", err?.message || err);
+    }
+  });
+});
 
 app.get("/", (req, res) => res.status(200).send("OK"));
 
@@ -2429,9 +2724,18 @@ app.get("/health", (req, res) => {
     publishableKeyLooksValid: String(INTASEND_PUBLISHABLE_KEY).startsWith("ISPubKey_"),
     pendingSubmissions: Object.keys(submissions).length,
     activePollers: Object.keys(activePollers).length,
+    processedUpdateCache: processedUpdateCache.size,
     checkHistoryRecords: checkHistory.length,
     recheckWindowHours: 24,
-    reportDetectionMaxMb: REPORT_DETECTION_MAX_MB
+    reportDetectionMaxMb: REPORT_DETECTION_MAX_MB,
+    checkPriceKes: CHECK_PRICE_KES,
+    recheckPriceKes: RECHECK_PRICE_KES,
+    resaleEnabled: RESALE_ENABLED,
+    resalePriceKes: RESALE_PRICE_KES,
+    inactiveStartUtc: INACTIVE_START_UTC,
+    inactiveEndUtc: INACTIVE_END_UTC,
+    inactiveEndEat: INACTIVE_END_EAT,
+    inactiveEndEatDisplay: INACTIVE_END_EAT_DISPLAY
   });
 });
 
@@ -2546,6 +2850,10 @@ app.post("/intasend/webhook", (req, res) => {
   });
 });
 
+bot.catch((err) => {
+  console.error("Bot error:", err?.message || err);
+});
+
 // =====================
 // START SERVER + TELEGRAM WEBHOOK
 // =====================
@@ -2556,7 +2864,12 @@ app.listen(port, async () => {
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
   console.log(`Report detection max: ${REPORT_DETECTION_MAX_MB} MB`);
+  console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, RESALE=${RESALE_PRICE_KES}`);
+  console.log(`Resale enabled: ${RESALE_ENABLED ? "YES" : "NO"}`);
+  console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
+  console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
   console.log("Recheck rule: same user + same visible file name within 24 hours");
+  console.log("Telegram webhook uses immediate ACK to prevent duplicate retries.");
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
 
