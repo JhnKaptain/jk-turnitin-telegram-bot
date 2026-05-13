@@ -2229,13 +2229,13 @@ bot.on("document", async (ctx) => {
       markBatchItemSent(target, deliveryKey);
 
       if (sentWithPrefix) {
-        await ctx.reply(`✅ Document with prefix sent to ${target.userId}`);
+        await ctx.reply(`✅ With prefix sent to ${target.userId}`);
       } else if (skippedDetectionBecauseLarge) {
         await ctx.reply(
-          `✅ Large document sent without prefix to ${target.userId}\nSkipped detection because file is above ${REPORT_DETECTION_MAX_MB} MB.`
+          `✅ Large document sent to ${target.userId}\nFile above ${REPORT_DETECTION_MAX_MB} MB.`
         );
       } else {
-        await ctx.reply(`✅ Document without prefix sent to ${target.userId}`);
+        await ctx.reply(`✅ Without prefix sent to ${target.userId}`);
       }
     } catch (err) {
       clearBatchItemProgress(target, deliveryKey);
