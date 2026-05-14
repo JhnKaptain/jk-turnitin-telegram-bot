@@ -1356,7 +1356,7 @@ async function handleFileTypeSelected(ctx, kind) {
     kind = "CHECK";
     await ctx.answerCbQuery("Recheck not available; treated as CHECK.");
     await ctx.reply(
-      "⚠️ Recheck is only available when the same file name was checked and paid within the last 24 hours.\n\nThis file has been treated as *CHECK*.",
+      "⚠️ Recheck is only available when the same file was checked and paid within the last 24 hours.\n\nThis file has been treated as *CHECK*.",
       { parse_mode: "Markdown" }
     );
   } else if (kind === "RESALE") {
@@ -2075,7 +2075,7 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
 bot.hears(KEY_CONTACT_SUPPORT, async (ctx) => {
   supportRequests[ctx.from.id] = true;
   await ctx.reply(
-    "💬 Please type your message for the Support Team. It will be delivered to admin.",
+    "💬 Please type your message for the Support Team For Any Help.",
     { reply_markup: mainKeyboard() }
   );
 });
