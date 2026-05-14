@@ -2200,7 +2200,7 @@ bot.on("document", async (ctx) => {
         skippedDetectionReason =
           REPORT_DETECTION_MAX_BYTES <= 0
             ? "Skipped detection because report detection is disabled."
-            : `Skipped detection because file is above ${REPORT_DETECTION_MAX_MB} MB.`;
+            : `File above ${REPORT_DETECTION_MAX_MB} MB.`;
 
         await bot.telegram.sendDocument(
           target.userId,
@@ -2263,13 +2263,13 @@ bot.on("document", async (ctx) => {
       markBatchItemSent(target, deliveryKey);
 
       if (sentWithPrefix) {
-        await ctx.reply(`✅ Document with prefix sent to ${target.userId}`);
+        await ctx.reply(`✅ File with prefix to ${target.userId}`);
       } else if (skippedDetection) {
         await ctx.reply(
-          `✅ Document without prefix sent to ${target.userId}\n${skippedDetectionReason}`
+          `✅ File without to ${target.userId}\n${skippedDetectionReason}`
         );
       } else {
-        await ctx.reply(`✅ Document without prefix sent to ${target.userId}`);
+        await ctx.reply(`✅ File without prefix to ${target.userId}`);
       }
     } catch (err) {
       clearBatchItemProgress(target, deliveryKey);
