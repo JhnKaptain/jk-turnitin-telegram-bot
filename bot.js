@@ -93,6 +93,16 @@ function formatHHMMTo12Hour(hhmm) {
   return `${hour12}:${String(mm).padStart(2, "0")} ${suffix}`;
 }
 
+function formatHHMMTo12HourStrict(hhmm) {
+  const s = normalizeHHMM(hhmm, null);
+  if (!s) return "";
+  let [hh, mm] = s.split(":").map(Number);
+  const suffix = hh >= 12 ? "PM" : "AM";
+  let hour12 = hh % 12;
+  if (hour12 === 0) hour12 = 12;
+  return `${hour12}:${String(mm).padStart(2, "0")} ${suffix}`;
+}
+
 const PUBLIC_BASE_URL = sanitizeBaseUrl(
   process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || ""
 );
@@ -141,7 +151,12 @@ const RESELLER_CODE = String(
 
 const RESALE_ENABLED = RESELLER_CODE.length > 0;
 const RESALE_CODE_VISIBLE = readBoolEnv("RESALE_CODE_VISIBLE", false);
+const RESALE_AMOUNT_VISIBLE = readBoolEnv("RESALE_AMOUNT_VISIBLE", true);
 const RESALE_LABEL = readLabelEnv("RESALE_LABEL", "RESALE");
+
+const DISCOUNT_TIME_VISIBLE = readBoolEnv("DISCOUNT_TIME_VISIBLE", false);
+const DISCOUNT_START_EAT = normalizeHHMM(process.env.DISCOUNT_START_EAT, "");
+const DISCOUNT_END_EAT = normalizeHHMM(process.env.DISCOUNT_END_EAT, "");
 
 const REPORT_DETECTION_MAX_MB = readIntEnv("REPORT_DETECTION_MAX_MB", 4);
 const REPORT_DETECTION_MAX_BYTES = REPORT_DETECTION_MAX_MB * 1024 * 1024;
@@ -190,6 +205,42 @@ const KEY_CANCEL = "❌ Cancel / New submission";
 const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access other Writing Serices Here https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
+function discountTimeText() {
+  if (!DISCOUNT_TIME_VISIBLE) return "";
+
+  const start = formatHHMMTo12HourStrict(DISCOUNT_START_EAT);
+  const end = formatHHMMTo12HourStrict(DISCOUNT_END_EAT);
+
+  if (start && end) {
+    return `${RESALE_LABEL} available from ${start} to ${end} EAT.`;
+  }
+
+  if (start) {
+    return `${RESALE_LABEL} available from ${start} EAT.`;
+  }
+
+  if (end) {
+    return `${RESALE_LABEL} available until ${end} EAT.`;
+  }
+
+  return "";
+}
+
+function discountTimeLineForMessage() {
+  const text = discountTimeText();
+  return text ? `\n⏰ ${text}` : "";
+}
+
+function resalePublicPriceText() {
+  if (!RESALE_ENABLED) return "";
+
+  if (RESALE_AMOUNT_VISIBLE) {
+    return `${RESALE_PRICE_KES} KES`;
+  }
+
+  return "available with code";
+}
+
 function resaleButtonLabel(resaleVerified) {
   if (!RESALE_ENABLED) return "";
 
@@ -197,11 +248,19 @@ function resaleButtonLabel(resaleVerified) {
     return `🏷️ ${RESALE_LABEL} (${RESALE_PRICE_KES} KES)`;
   }
 
-  if (RESALE_CODE_VISIBLE) {
-    return `🏷️ ${RESALE_LABEL} (${RESALE_PRICE_KES} KES - code: ${RESELLER_CODE})`;
+  if (RESALE_AMOUNT_VISIBLE && RESALE_CODE_VISIBLE) {
+    return `🏷️ ${RESALE_LABEL} now available (${RESALE_PRICE_KES} KES - code: ${RESELLER_CODE})`;
   }
 
-  return `🏷️ ${RESALE_LABEL} (${RESALE_PRICE_KES} KES - code)`;
+  if (RESALE_AMOUNT_VISIBLE && !RESALE_CODE_VISIBLE) {
+    return `🏷️ ${RESALE_LABEL} now available (${RESALE_PRICE_KES} KES - code)`;
+  }
+
+  if (!RESALE_AMOUNT_VISIBLE && RESALE_CODE_VISIBLE) {
+    return `🏷️ ${RESALE_LABEL} (code: ${RESELLER_CODE})`;
+  }
+
+  return `🏷️ ${RESALE_LABEL} (code)`;
 }
 
 function typeDisplayName(kind) {
@@ -221,10 +280,10 @@ JK Turnitin Reports Bot
 
 💰 Pricing
 • Check: ${check} KES
-• Recheck: ${recheck} KES${RESALE_ENABLED ? `\n• ${RESALE_LABEL}: ${resale} KES` : ""}
+• Recheck: ${recheck} KES${RESALE_ENABLED ? `\n• ${RESALE_LABEL}: ${resalePublicPriceText()}` : ""}
 
 🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.
-${RESALE_ENABLED ? `\n🏷️ ${RESALE_LABEL} requires a code.` : ""}
+${RESALE_ENABLED ? `\n🏷️ ${RESALE_LABEL} requires a code.${discountTimeLineForMessage()}` : ""}
 `,
   inactive: () => `
 ⏳ Turnitin checks are paused right now.
@@ -242,7 +301,7 @@ If urgent, WhatsApp call *0701730921*.
 ✅ Default method: *STK Push*
 Choose your batch size → upload files → choose Check/Recheck${RESALE_ENABLED ? `/${RESALE_LABEL}` : ""} where eligible → enter phone number → receive *one combined STK prompt*.
 
-🔁 Recheck is only available when the same visible file name was checked and paid within the last 24 hours.${RESALE_ENABLED ? `\n\n🏷️ ${RESALE_LABEL} requires a code.` : ""}
+🔁 Recheck is only available when the same visible file name was checked and paid within the last 24 hours.${RESALE_ENABLED ? `\n\n🏷️ ${RESALE_LABEL} requires a code.${discountTimeLineForMessage()}` : ""}
 
 If prompt delays/fails, tap *Resend STK Push*.`,
   askPhoneBatch: (summary, amount) =>
@@ -1265,7 +1324,7 @@ async function askForFileType(ctx, sub) {
     : `ℹ️ This file name does not have a matching paid *CHECK* within the last 24 hours.\n\nIt will be treated as *CHECK*.`;
 
   const resaleNote = RESALE_ENABLED
-    ? `\n\n🏷️ *${RESALE_LABEL}* is available with code.`
+    ? `\n\n🏷️ *${RESALE_LABEL}* is available with code.${discountTimeLineForMessage()}`
     : "";
 
   await ctx.reply(
@@ -2768,6 +2827,11 @@ app.get("/health", (req, res) => {
     resalePriceKes: RESALE_PRICE_KES,
     resaleLabel: RESALE_LABEL,
     resaleCodeVisible: RESALE_CODE_VISIBLE,
+    resaleAmountVisible: RESALE_AMOUNT_VISIBLE,
+    discountTimeVisible: DISCOUNT_TIME_VISIBLE,
+    discountStartEat: DISCOUNT_START_EAT,
+    discountEndEat: DISCOUNT_END_EAT,
+    discountTimeText: discountTimeText(),
     inactiveStartUtc: INACTIVE_START_UTC,
     inactiveEndUtc: INACTIVE_END_UTC,
     inactiveEndEat: INACTIVE_END_EAT,
@@ -2904,6 +2968,9 @@ app.listen(port, async () => {
   console.log(`Resale enabled: ${RESALE_ENABLED ? "YES" : "NO"}`);
   console.log(`Resale label: ${RESALE_LABEL}`);
   console.log(`Resale code visible: ${RESALE_CODE_VISIBLE ? "YES" : "NO"}`);
+  console.log(`Resale amount visible: ${RESALE_AMOUNT_VISIBLE ? "YES" : "NO"}`);
+  console.log(`Discount time visible: ${DISCOUNT_TIME_VISIBLE ? "YES" : "NO"}`);
+  console.log(`Discount time: ${discountTimeText() || "N/A"}`);
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
   console.log("Recheck rule: same user + same visible file name within 24 hours");
