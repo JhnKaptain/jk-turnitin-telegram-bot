@@ -249,11 +249,11 @@ function resaleButtonLabel(resaleVerified) {
   }
 
   if (RESALE_AMOUNT_VISIBLE && RESALE_CODE_VISIBLE) {
-    return `🏷️ ${RESALE_LABEL} now available (${RESALE_PRICE_KES} KES - code: ${RESELLER_CODE})`;
+    return `🏷️ ${RESALE_LABEL} now active (${RESALE_PRICE_KES} KES -CODE: ${RESELLER_CODE})`;
   }
 
   if (RESALE_AMOUNT_VISIBLE && !RESALE_CODE_VISIBLE) {
-    return `🏷️ ${RESALE_LABEL} now available (${RESALE_PRICE_KES} KES - code)`;
+    return `🏷️ ${RESALE_LABEL} now active (${RESALE_PRICE_KES} KES -CODE)`;
   }
 
   if (!RESALE_AMOUNT_VISIBLE && RESALE_CODE_VISIBLE) {
@@ -301,7 +301,7 @@ If urgent, WhatsApp call *0701730921*.
 ✅ Default method: *STK Push*
 Choose your batch size → upload files → choose Check/Recheck${RESALE_ENABLED ? `/${RESALE_LABEL}` : ""} where eligible → enter phone number → receive *one combined STK prompt*.
 
-🔁 Recheck is only available when the same visible file name was checked and paid within the last 24 hours.${RESALE_ENABLED ? `\n\n🏷️ ${RESALE_LABEL} requires a code.${discountTimeLineForMessage()}` : ""}
+🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED ? `\n\n🏷️ ${RESALE_LABEL} requires a code.${discountTimeLineForMessage()}` : ""}
 
 If prompt delays/fails, tap *Resend STK Push*.`,
   askPhoneBatch: (summary, amount) =>
@@ -1321,7 +1321,7 @@ async function askForFileType(ctx, sub) {
 
   const recheckNote = file.recheckEligible
     ? `✅ This file qualifies for *RECHECK* because the same file was checked and paid within the last 24 hours.\n\nYou may choose *CHECK* or *RECHECK*.`
-    : `ℹ️ This file name does not have a matching paid *CHECK* within the last 24 hours.\n\nIt will be treated as *CHECK*.`;
+    : `ℹ️ This file does not have a matching paid *CHECK* within the last 24 hours.\n\nIt will be treated as *CHECK*.`;
 
   const resaleNote = RESALE_ENABLED
     ? `\n\n🏷️ *${RESALE_LABEL}* is available with code.${discountTimeLineForMessage()}`
