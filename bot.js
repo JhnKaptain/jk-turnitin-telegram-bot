@@ -161,6 +161,57 @@ const DISCOUNT_END_EAT = normalizeHHMM(process.env.DISCOUNT_END_EAT, "");
 const REPORT_DETECTION_MAX_MB = readIntEnv("REPORT_DETECTION_MAX_MB", 4);
 const REPORT_DETECTION_MAX_BYTES = REPORT_DETECTION_MAX_MB * 1024 * 1024;
 
+// Report processing time message shown to users after payment confirmation.
+// Configure these in Render Environment Variables without editing code:
+//
+// Default/min-max mode:
+// REPORT_PROCESSING_MIN_MINUTES=5
+// REPORT_PROCESSING_MAX_MINUTES=20
+// REPORT_PROCESSING_LABEL=queue
+//
+// Custom override mode:
+// REPORT_PROCESSING_CUSTOM_ENABLED=1
+// REPORT_PROCESSING_MESSAGE=Reports take *30–60 minutes* today due to high demand.
+//
+// To disable custom override without deleting REPORT_PROCESSING_MESSAGE:
+// REPORT_PROCESSING_CUSTOM_ENABLED=0
+const REPORT_PROCESSING_MIN_MINUTES = Math.max(
+  1,
+  readIntEnv("REPORT_PROCESSING_MIN_MINUTES", 5)
+);
+
+const REPORT_PROCESSING_MAX_MINUTES = Math.max(
+  REPORT_PROCESSING_MIN_MINUTES,
+  readIntEnv("REPORT_PROCESSING_MAX_MINUTES", 20)
+);
+
+const REPORT_PROCESSING_LABEL = String(process.env.REPORT_PROCESSING_LABEL || "queue")
+  .replace(/[^A-Za-z0-9 ,._()/-]/g, "")
+  .replace(/\s+/g, " ")
+  .trim()
+  .slice(0, 50) || "queue";
+
+const REPORT_PROCESSING_CUSTOM_ENABLED = readBoolEnv(
+  "REPORT_PROCESSING_CUSTOM_ENABLED",
+  false
+);
+
+const REPORT_PROCESSING_MESSAGE_OVERRIDE = String(
+  process.env.REPORT_PROCESSING_MESSAGE || ""
+).trim();
+
+function reportProcessingTimeText() {
+  if (REPORT_PROCESSING_CUSTOM_ENABLED && REPORT_PROCESSING_MESSAGE_OVERRIDE) {
+    return REPORT_PROCESSING_MESSAGE_OVERRIDE;
+  }
+
+  if (REPORT_PROCESSING_MIN_MINUTES === REPORT_PROCESSING_MAX_MINUTES) {
+    return `Reports take *${REPORT_PROCESSING_MIN_MINUTES} minutes* (${REPORT_PROCESSING_LABEL}).`;
+  }
+
+  return `Reports take *${REPORT_PROCESSING_MIN_MINUTES}–${REPORT_PROCESSING_MAX_MINUTES} minutes* (${REPORT_PROCESSING_LABEL}).`;
+}
+
 const RECHECK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const CHECK_HISTORY_RETENTION_MS = 72 * 60 * 60 * 1000;
 
@@ -313,7 +364,7 @@ If prompt delays/fails, tap *Resend STK Push*.`,
   waitingConfirm:
     "Waiting for payment confirmation…\n\nIf webhook delays, the bot will also check IntaSend status automatically.",
   paidMsgBatch: (amount, summary) =>
-    `✅ Payment confirmed (${amount} KES).\n\n${summary}\n\n⏱ Reports take *5–20 minutes* (queue).`
+    `✅ Payment confirmed (${amount} KES).\n\n${summary}\n\n⏱ ${reportProcessingTimeText()}`
 };
 
 // =====================
@@ -1689,7 +1740,7 @@ async function queryPaymentStatus(invoiceId) {
   const resp = await intasendCheckPaymentStatus({ invoice_id: invoiceId });
   const state = normalizePaymentState(extractState(resp));
 
-  return {
+   return {
     raw: resp,
     invoiceId: extractInvoiceId(resp) || invoiceId,
     apiRef: extractApiRef(resp) || resp?.invoice?.api_ref || null,
@@ -2821,6 +2872,12 @@ app.get("/health", (req, res) => {
     checkHistoryRecords: checkHistory.length,
     recheckWindowHours: 24,
     reportDetectionMaxMb: REPORT_DETECTION_MAX_MB,
+    reportProcessingMinMinutes: REPORT_PROCESSING_MIN_MINUTES,
+    reportProcessingMaxMinutes: REPORT_PROCESSING_MAX_MINUTES,
+    reportProcessingLabel: REPORT_PROCESSING_LABEL,
+    reportProcessingCustomEnabled: REPORT_PROCESSING_CUSTOM_ENABLED,
+    reportProcessingCustomMessagePresent: Boolean(REPORT_PROCESSING_MESSAGE_OVERRIDE),
+    reportProcessingMessage: reportProcessingTimeText(),
     checkPriceKes: CHECK_PRICE_KES,
     recheckPriceKes: RECHECK_PRICE_KES,
     resaleEnabled: RESALE_ENABLED,
@@ -2964,6 +3021,7 @@ app.listen(port, async () => {
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
   console.log(`Report detection max: ${REPORT_DETECTION_MAX_MB} MB`);
+  console.log(`Report processing message: ${reportProcessingTimeText().replace(/\*/g, "")}`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
   console.log(`Resale enabled: ${RESALE_ENABLED ? "YES" : "NO"}`);
   console.log(`Resale label: ${RESALE_LABEL}`);
