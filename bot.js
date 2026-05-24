@@ -1,12 +1,8 @@
 require("dotenv").config();
 
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
-const { Telegraf, Markup, Input } = require("telegraf");
-const pdfParse = require("pdf-parse");
-const PDFParser = require("pdf2json");
-const mammoth = require("mammoth");
+const { Telegraf, Markup } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
 const qs = require("querystring");
@@ -158,10 +154,6 @@ const DISCOUNT_TIME_VISIBLE = readBoolEnv("DISCOUNT_TIME_VISIBLE", false);
 const DISCOUNT_START_EAT = normalizeHHMM(process.env.DISCOUNT_START_EAT, "");
 const DISCOUNT_END_EAT = normalizeHHMM(process.env.DISCOUNT_END_EAT, "");
 
-const REPORT_DETECTION_MAX_MB = readIntEnv("REPORT_DETECTION_MAX_MB", 4);
-const REPORT_DETECTION_MAX_BYTES = REPORT_DETECTION_MAX_MB * 1024 * 1024;
-
-// Report processing time message shown to users after payment confirmation.
 const REPORT_PROCESSING_MIN_MINUTES = Math.max(
   1,
   readIntEnv("REPORT_PROCESSING_MIN_MINUTES", 5)
@@ -229,8 +221,8 @@ const STAGE_PAID = "PAID";
 const STK_RESEND_COOLDOWN_MS = 30 * 1000;
 const STK_MAX_RESENDS = 3;
 const PAYMENT_TIMEOUT_MS = 6 * 60 * 1000;
-const STATUS_POLL_INTERVAL_MS = 10 * 1000;
-const STATUS_POLL_MAX_ATTEMPTS = 48;
+const STATUS_POLL_INTERVAL_MS = readIntEnv("STATUS_POLL_INTERVAL_SECONDS", 10) * 1000;
+const STATUS_POLL_MAX_ATTEMPTS = readIntEnv("STATUS_POLL_MAX_ATTEMPTS", 180);
 
 // =====================
 // UI TEXT
@@ -347,7 +339,7 @@ If prompt delays/fails, tap *Resend STK Push*.`,
   stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
   stkSentSimple: "✅ STK Push sent. Pay on your phone — confirmation is automatic.",
   stkSentWithTill: (till) =>
-    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails, pay via Till:\n\n\`${till}\`\n\nSend proof here as screenshot not text.`,
+    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails or delays, you may pay via Till:\n\n\`${till}\`\n\nSend proof here as screenshot, not text.`,
   waitingConfirm:
     "Waiting for payment confirmation…\n\nIf webhook delays, the bot will also check IntaSend status automatically.",
   paidMsgBatch: (amount, summary) =>
@@ -639,29 +631,13 @@ function safeText(s) {
   return (s || "").toString();
 }
 
-const REPORT_TMP_DIR = path.join(os.tmpdir(), "jk-turnitin-reports");
-
-function ensureReportTmpDir() {
-  if (!fs.existsSync(REPORT_TMP_DIR)) {
-    fs.mkdirSync(REPORT_TMP_DIR, { recursive: true });
-  }
-}
-
 function safeFileName(name) {
-  const fallback = `report_${Date.now()}`;
+  const fallback = `file_${Date.now()}`;
 
   return String(name || fallback)
     .replace(/[\\/:*?"<>|]+/g, "_")
     .replace(/\s+/g, " ")
     .trim() || fallback;
-}
-
-function stripExistingReportPrefix(fileName) {
-  return safeFileName(fileName).replace(/^(plag|ai|similarity|report)[\s_-]+/i, "");
-}
-
-function addReportPrefix(fileName, prefix) {
-  return `${prefix}_${stripExistingReportPrefix(fileName)}`;
 }
 
 function initBatchTracking(target) {
@@ -724,274 +700,9 @@ function resellerCodeMatches(value) {
   return given.toLowerCase() === RESELLER_CODE.toLowerCase();
 }
 
-async function downloadTelegramDocument(fileId, originalFileName) {
-  ensureReportTmpDir();
-
-  const fileLink = await bot.telegram.getFileLink(fileId);
-  const res = await fetch(fileLink.href || String(fileLink));
-
-  if (!res.ok) {
-    throw new Error(`Failed to download Telegram file. HTTP ${res.status}`);
-  }
-
-  const buffer = Buffer.from(await res.arrayBuffer());
-  const localPath = path.join(
-    REPORT_TMP_DIR,
-    `${Date.now()}_${Math.random().toString(36).slice(2)}_${safeFileName(originalFileName)}`
-  );
-
-  fs.writeFileSync(localPath, buffer);
-  return localPath;
-}
-
-async function extractPdfTextWithPdfParse(fileBuffer) {
-  try {
-    const parser =
-      typeof pdfParse === "function"
-        ? pdfParse
-        : typeof pdfParse?.default === "function"
-          ? pdfParse.default
-          : typeof pdfParse?.pdfParse === "function"
-            ? pdfParse.pdfParse
-            : null;
-
-    if (!parser) return "";
-
-    const data = await parser(fileBuffer);
-    return data?.text || "";
-  } catch (err) {
-    console.warn("pdf-parse extraction skipped/failed:", err?.message || err);
-    return "";
-  }
-}
-
-function extractPdfTextWithPdf2Json(localPath) {
-  return new Promise((resolve) => {
-    try {
-      const pdfParser = new PDFParser();
-
-      pdfParser.on("pdfParser_dataError", (errData) => {
-        console.warn("pdf2json extraction failed:", errData?.parserError || errData);
-        resolve("");
-      });
-
-      pdfParser.on("pdfParser_dataReady", (pdfData) => {
-        try {
-          const pages = pdfData?.Pages || [];
-          const textParts = [];
-
-          for (const page of pages) {
-            for (const textItem of page.Texts || []) {
-              for (const run of textItem.R || []) {
-                if (run.T) {
-                  try {
-                    textParts.push(decodeURIComponent(run.T));
-                  } catch {
-                    textParts.push(run.T);
-                  }
-                }
-              }
-            }
-          }
-
-          resolve(textParts.join(" "));
-        } catch (err) {
-          console.warn("pdf2json parse-read failed:", err?.message || err);
-          resolve("");
-        }
-      });
-
-      pdfParser.loadPDF(localPath);
-    } catch (err) {
-      console.warn("pdf2json setup failed:", err?.message || err);
-      resolve("");
-    }
-  });
-}
-
-async function extractReportText(localPath, originalFileName, mimeType) {
-  const ext = path.extname(originalFileName || "").toLowerCase();
-  const mime = String(mimeType || "").toLowerCase();
-
-  try {
-    const fileBuffer = fs.readFileSync(localPath);
-
-    if (ext === ".pdf" || mime.includes("pdf")) {
-      const pdfParseText = await extractPdfTextWithPdfParse(fileBuffer);
-      const pdf2JsonText = await extractPdfTextWithPdf2Json(localPath);
-
-      return `${pdfParseText}\n${pdf2JsonText}`;
-    }
-
-    if (ext === ".docx" || mime.includes("wordprocessingml.document")) {
-      const data = await mammoth.extractRawText({ path: localPath });
-      return data.value || "";
-    }
-  } catch (err) {
-    console.warn("Report text extraction failed:", err?.message || err);
-  }
-
-  return "";
-}
-
-function normalizeReportDetectionText(value) {
-  const loose = String(value || "")
-    .normalize("NFKD")
-    .replace(/[’‘`´]/g, "'")
-    .replace(/[‐-‒–—―]/g, "-")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const compact = loose.replace(/[^a-z0-9%]+/g, "");
-
-  return { loose, compact };
-}
-
-function scoreLoosePatterns(text, patterns) {
-  let score = 0;
-
-  for (const item of patterns) {
-    if (item.pattern.test(text)) {
-      score += item.weight || 1;
-    }
-  }
-
-  return score;
-}
-
-function scoreCompactTerms(text, terms) {
-  let score = 0;
-
-  for (const item of terms) {
-    if (text.includes(item.term)) {
-      score += item.weight || 1;
-    }
-  }
-
-  return score;
-}
-
-function detectTurnitinReportType({ fileName, caption, text }) {
-  const rawCombined = `
-${fileName || ""}
-${caption || ""}
-${text || ""}
-`;
-
-  const { loose, compact } = normalizeReportDetectionText(rawCombined);
-
-  const aiLoosePatterns = [
-    { pattern: /\bai writing overview\b/i, weight: 20 },
-    { pattern: /\bai writing report\b/i, weight: 18 },
-    { pattern: /\b\d{1,3}\s*%?\s*detected as ai\b/i, weight: 20 },
-    { pattern: /\*?\s*%\s*detected as ai\b/i, weight: 18 },
-    { pattern: /\bdetected as ai\b/i, weight: 18 },
-    { pattern: /\bai-generated only\b/i, weight: 16 },
-    { pattern: /\bai generated only\b/i, weight: 16 },
-    { pattern: /\bai-generated text that was ai-paraphrased\b/i, weight: 16 },
-    { pattern: /\bai generated text that was ai paraphrased\b/i, weight: 16 },
-    { pattern: /\bai-paraphrased\b/i, weight: 12 },
-    { pattern: /\bai paraphrased\b/i, weight: 12 },
-    { pattern: /\bqualifying text\b/i, weight: 10 },
-    { pattern: /\blarge-language model\b/i, weight: 10 },
-    { pattern: /\blarge language model\b/i, weight: 10 },
-    { pattern: /\bai writing assessment\b/i, weight: 10 },
-    { pattern: /\bturnitin'?s ai detection\b/i, weight: 10 },
-    { pattern: /\bai detection capabilities\b/i, weight: 8 },
-    { pattern: /\bfalse positives\b/i, weight: 6 }
-  ];
-
-  const aiCompactTerms = [
-    { term: "aiwritingoverview", weight: 20 },
-    { term: "aiwritingreport", weight: 18 },
-    { term: "detectedasai", weight: 20 },
-    { term: "aigeneratedonly", weight: 16 },
-    { term: "aigeneratedtextthatwasaiparaphrased", weight: 16 },
-    { term: "aiparaphrased", weight: 12 },
-    { term: "qualifyingtext", weight: 10 },
-    { term: "largelanguagemodel", weight: 10 },
-    { term: "aiwritingassessment", weight: 10 },
-    { term: "turnitinsaidetection", weight: 10 },
-    { term: "aidetectioncapabilities", weight: 8 },
-    { term: "falsepositives", weight: 6 }
-  ];
-
-  const plagLoosePatterns = [
-    { pattern: /\bintegrity overview\b/i, weight: 20 },
-    { pattern: /\boverall similarity\b/i, weight: 20 },
-    { pattern: /\bsimilarity report\b/i, weight: 18 },
-    { pattern: /\boriginality report\b/i, weight: 18 },
-    { pattern: /\bsimilarity index\b/i, weight: 18 },
-    { pattern: /\bmatch groups\b/i, weight: 14 },
-    { pattern: /\bmatched sources\b/i, weight: 14 },
-    { pattern: /\bmatch overview\b/i, weight: 14 },
-    { pattern: /\bsource overview\b/i, weight: 14 },
-    { pattern: /\btop sources\b/i, weight: 14 },
-    { pattern: /\binternet sources\b/i, weight: 12 },
-    { pattern: /\bpublications\b/i, weight: 10 },
-    { pattern: /\bsubmitted works\b/i, weight: 12 },
-    { pattern: /\bstudent papers\b/i, weight: 12 },
-    { pattern: /\bprimary sources\b/i, weight: 12 },
-    { pattern: /\bexcluded sources\b/i, weight: 6 }
-  ];
-
-  const plagCompactTerms = [
-    { term: "integrityoverview", weight: 20 },
-    { term: "overallsimilarity", weight: 20 },
-    { term: "similarityreport", weight: 18 },
-    { term: "originalityreport", weight: 18 },
-    { term: "similarityindex", weight: 18 },
-    { term: "matchgroups", weight: 14 },
-    { term: "matchedsources", weight: 14 },
-    { term: "matchoverview", weight: 14 },
-    { term: "sourceoverview", weight: 14 },
-    { term: "topsources", weight: 14 },
-    { term: "internetsources", weight: 12 },
-    { term: "publications", weight: 10 },
-    { term: "submittedworks", weight: 12 },
-    { term: "studentpapers", weight: 12 },
-    { term: "primarysources", weight: 12 },
-    { term: "excludedsources", weight: 6 }
-  ];
-
-  const aiScore =
-    scoreLoosePatterns(loose, aiLoosePatterns) +
-    scoreCompactTerms(compact, aiCompactTerms);
-
-  const plagScore =
-    scoreLoosePatterns(loose, plagLoosePatterns) +
-    scoreCompactTerms(compact, plagCompactTerms);
-
-  if (aiScore >= 12 && aiScore > plagScore) {
-    return {
-      kind: "AI",
-      prefix: "AI",
-      confidence: "high",
-      aiScore,
-      plagScore
-    };
-  }
-
-  if (plagScore >= 12 && plagScore >= aiScore) {
-    return {
-      kind: "PLAG",
-      prefix: "Plag",
-      confidence: "high",
-      aiScore,
-      plagScore
-    };
-  }
-
-  return {
-    kind: "NORMAL",
-    prefix: null,
-    confidence: "low",
-    aiScore,
-    plagScore
-  };
-}
-
+// =====================
+// KEYBOARDS
+// =====================
 function mainKeyboard() {
   return {
     keyboard: [
@@ -1091,7 +802,8 @@ function extractAdminActionUserId(text) {
 function adminActionKeyboard(userId) {
   return Markup.inlineKeyboard([
     [Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)],
-    [Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]
+    [Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)],
+    [Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]
   ]);
 }
 
@@ -1514,6 +1226,44 @@ async function intasendRequest(endpoint, body) {
   return data;
 }
 
+async function intasendGet(endpoint, query = {}) {
+  const url = new URL(`${INTASEND_API_BASE}${endpoint}`);
+
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      accept: "application/json",
+      Authorization: `Bearer ${INTASEND_SECRET_KEY}`
+    }
+  });
+
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok) {
+    const err = new Error(
+      (data && (data.detail || data.message || JSON.stringify(data))) ||
+        `HTTP ${res.status}`
+    );
+    err.status = res.status;
+    err.payload = data;
+    throw err;
+  }
+
+  return data;
+}
+
 function extractApiRef(payload) {
   return (
     payload?.api_ref ||
@@ -1600,6 +1350,20 @@ async function intasendCheckPaymentStatus({ invoice_id }) {
   });
 }
 
+async function intasendListInvoicesByApiRef(apiRef) {
+  return intasendGet("/invoices/", {
+    api_ref: apiRef
+  });
+}
+
+function extractInvoicesFromListResponse(resp) {
+  if (Array.isArray(resp)) return resp;
+  if (Array.isArray(resp?.results)) return resp.results;
+  if (Array.isArray(resp?.data)) return resp.data;
+  if (Array.isArray(resp?.invoices)) return resp.invoices;
+  return [];
+}
+
 function getBatchById(batchId) {
   for (const [userId, sub] of Object.entries(submissions)) {
     if (String(sub?.batchId || "") === String(batchId || "")) {
@@ -1671,57 +1435,6 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   return true;
 }
 
-async function markPaymentFailure({ apiRef, invoiceId, state, source, reason }) {
-  const ref = getPaymentRef(apiRef);
-  if (!ref) return false;
-  if (ref.status === "COMPLETE") return false;
-
-  updatePaymentRef(apiRef, {
-    status: state || "FAILED",
-    invoiceId: invoiceId || ref.invoiceId || null,
-    lastState: state || "FAILED",
-    failureSource: source || "unknown",
-    failureReason: reason || null
-  });
-
-  stopStatusPolling(apiRef);
-
-  const batchLookup = getBatchById(ref.batchId);
-  const userId = batchLookup?.userId || ref.userId;
-  const sub = batchLookup?.sub || submissions[userId];
-
-  if (sub && !sub.paid) {
-    sub.stage = STAGE_WAIT_PAYMENT;
-  }
-
-  try {
-    await bot.telegram.sendMessage(
-      userId,
-      `❌ Payment ${String(state || "failed").toLowerCase()}.\nTap *Resend STK Push* to try again.`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: paymentWaitKeyboard().reply_markup
-      }
-    );
-  } catch (e) {
-    await sendAdminMessage(
-      `❌ Could not message user ${userId} after payment failure. Error: ${safeText(
-        e?.message || e
-      )}`
-    );
-  }
-
-  await sendAdminMessage(
-    `⚠️ PAYMENT ${safeText(state || "FAILED")}\nUser: ${userId}\napi_ref: ${safeText(
-      apiRef
-    )}\ninvoice_id: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nSource: ${safeText(
-      source || "unknown"
-    )}\nReason: ${safeText(reason || "N/A")}`
-  );
-
-  return true;
-}
-
 async function recordPaymentNonComplete({ apiRef, invoiceId, state, source, reason }) {
   const ref = getPaymentRef(apiRef);
   if (!ref) return false;
@@ -1739,27 +1452,85 @@ async function recordPaymentNonComplete({ apiRef, invoiceId, state, source, reas
   return true;
 }
 
-async function queryPaymentStatus(invoiceId) {
-  if (!invoiceId) throw new Error("Missing invoiceId for status query");
-  const resp = await intasendCheckPaymentStatus({ invoice_id: invoiceId });
-  const state = normalizePaymentState(extractState(resp));
+async function queryPaymentStatus(invoiceId, apiRef) {
+  let best = null;
+  let lastError = null;
+
+  if (invoiceId) {
+    try {
+      const resp = await intasendCheckPaymentStatus({ invoice_id: invoiceId });
+      best = {
+        raw: resp,
+        invoiceId: extractInvoiceId(resp) || invoiceId,
+        apiRef: extractApiRef(resp) || apiRef || null,
+        state: normalizePaymentState(extractState(resp)),
+        failedReason:
+          resp?.invoice?.failed_reason ||
+          resp?.failed_reason ||
+          resp?.detail ||
+          resp?.message ||
+          null,
+        source: "payment-status"
+      };
+
+      if (best.state === "COMPLETE") return best;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (apiRef) {
+    try {
+      const resp = await intasendListInvoicesByApiRef(apiRef);
+      const invoices = extractInvoicesFromListResponse(resp);
+
+      const matching =
+        invoices.find((item) => String(item?.api_ref || item?.apiRef || "") === String(apiRef)) ||
+        invoices[0] ||
+        null;
+
+      if (matching) {
+        const invoiceState = normalizePaymentState(extractState(matching));
+        const invoiceResult = {
+          raw: resp,
+          invoiceId: extractInvoiceId(matching) || invoiceId || null,
+          apiRef: extractApiRef(matching) || apiRef,
+          state: invoiceState,
+          failedReason:
+            matching?.failed_reason ||
+            matching?.invoice?.failed_reason ||
+            matching?.detail ||
+            matching?.message ||
+            null,
+          source: "invoice-list"
+        };
+
+        if (invoiceResult.state === "COMPLETE") return invoiceResult;
+
+        if (!best || best.state === "UNKNOWN" || best.state === "PENDING") {
+          best = invoiceResult;
+        }
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (best) return best;
+  if (lastError) throw lastError;
 
   return {
-    raw: resp,
-    invoiceId: extractInvoiceId(resp) || invoiceId,
-    apiRef: extractApiRef(resp) || resp?.invoice?.api_ref || null,
-    state,
-    failedReason:
-      resp?.invoice?.failed_reason ||
-      resp?.failed_reason ||
-      resp?.detail ||
-      resp?.message ||
-      null
+    raw: {},
+    invoiceId: invoiceId || null,
+    apiRef: apiRef || null,
+    state: "UNKNOWN",
+    failedReason: null,
+    source: "none"
   };
 }
 
 function startStatusPolling({ userId, apiRef, invoiceId }) {
-  if (!apiRef || !invoiceId) return;
+  if (!apiRef) return;
 
   stopStatusPolling(apiRef);
 
@@ -1770,6 +1541,11 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
 
     if (attempts > STATUS_POLL_MAX_ATTEMPTS) {
       stopStatusPolling(apiRef);
+      await sendAdminMessage(
+        `⚠️ Payment watcher stopped after maximum attempts.\nUser: ${userId}\napi_ref: ${safeText(
+          apiRef
+        )}\ninvoice_id: ${safeText(invoiceId || "N/A")}\nUse Confirm payment button or /paiduser only after manual verification.`
+      );
       return;
     }
 
@@ -1786,11 +1562,12 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
     }
 
     try {
-      const statusResp = await queryPaymentStatus(invoiceId);
+      const statusResp = await queryPaymentStatus(invoiceId || ref.invoiceId, apiRef);
 
       updatePaymentRef(apiRef, {
-        invoiceId: statusResp.invoiceId || invoiceId,
+        invoiceId: statusResp.invoiceId || invoiceId || ref.invoiceId || null,
         lastState: statusResp.state,
+        lastStatusSource: statusResp.source,
         lastPolledAt: Date.now(),
         pollAttempts: attempts
       });
@@ -1798,9 +1575,9 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
       if (statusResp.state === "COMPLETE") {
         await markPaymentComplete({
           apiRef,
-          invoiceId: statusResp.invoiceId,
+          invoiceId: statusResp.invoiceId || invoiceId || ref.invoiceId || null,
           state: statusResp.state,
-          source: "status-poll"
+          source: statusResp.source || "status-poll"
         });
         return;
       }
@@ -1808,9 +1585,9 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
       if (["FAILED", "CANCELLED", "EXPIRED"].includes(statusResp.state)) {
         await recordPaymentNonComplete({
           apiRef,
-          invoiceId: statusResp.invoiceId,
+          invoiceId: statusResp.invoiceId || invoiceId || ref.invoiceId || null,
           state: statusResp.state,
-          source: "status-poll",
+          source: statusResp.source || "status-poll",
           reason: statusResp.failedReason
         });
 
@@ -1818,9 +1595,9 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
           await sendAdminMessage(
             `⚠️ Payment not complete yet; still watching.\nUser: ${userId}\napi_ref: ${safeText(
               apiRef
-            )}\ninvoice_id: ${safeText(statusResp.invoiceId || invoiceId)}\nState: ${safeText(
+            )}\ninvoice_id: ${safeText(statusResp.invoiceId || invoiceId || ref.invoiceId || "N/A")}\nState: ${safeText(
               statusResp.state
-            )}\nReason: ${safeText(statusResp.failedReason || "N/A")}`
+            )}\nSource: ${safeText(statusResp.source || "N/A")}\nReason: ${safeText(statusResp.failedReason || "N/A")}`
           );
         }
 
@@ -1838,7 +1615,7 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
         await sendAdminMessage(
           `⚠️ IntaSend status poll failed\nUser: ${userId}\napi_ref: ${safeText(
             apiRef
-          )}\ninvoice_id: ${safeText(invoiceId)}\nAttempt: ${attempts}\nHTTP: ${safeText(
+          )}\ninvoice_id: ${safeText(invoiceId || ref?.invoiceId || "N/A")}\nAttempt: ${attempts}\nHTTP: ${safeText(
             err?.status || "N/A"
           )}\nError: ${safeText(err?.message || err)}`
         );
@@ -1860,7 +1637,15 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
     try {
       await bot.telegram.sendMessage(
         userId,
-        "⏳ Still waiting for payment confirmation.\n\nIf you already paid, the bot is still checking IntaSend automatically. If the prompt never came, tap *Resend STK Push*.",
+        `⏳ Still waiting for payment confirmation.
+
+If you already paid by STK, the bot is still checking IntaSend automatically.
+
+If the STK prompt did not come because of network issues, you may pay via Till:
+
+\`${TILL_NUMBER}\`
+
+Send proof here as screenshot, not text.`,
         {
           parse_mode: "Markdown",
           reply_markup: paymentWaitKeyboard().reply_markup
@@ -1899,7 +1684,13 @@ async function attemptStkPush(ctx, sub, { mode }) {
     sub.resendCount = (sub.resendCount || 0) + 1;
     if (sub.resendCount > STK_MAX_RESENDS) {
       await ctx.reply(
-        `⚠️ Resend limit reached.\n\nPay via Till:\n\n\`${TILL_NUMBER}\`\n\nSend proof here.`,
+        `⚠️ Resend limit reached.
+
+Pay via Till:
+
+\`${TILL_NUMBER}\`
+
+Send proof here as screenshot, not text.`,
         { parse_mode: "Markdown" }
       );
       return;
@@ -1973,16 +1764,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
       reply_markup: paymentWaitKeyboard().reply_markup
     });
 
-    if (invoiceId) {
-      startStatusPolling({ userId, apiRef, invoiceId });
-    } else {
-      await sendAdminMessage(
-        `⚠️ STK response had no invoice_id\nUser: ${userId}\napi_ref: ${apiRef}\nMode: ${
-          INTASEND_TEST ? "TEST" : "LIVE"
-        }\nWebhook may still confirm, but polling cannot start without invoice_id.`
-      );
-    }
-
+    startStatusPolling({ userId, apiRef, invoiceId: invoiceId || null });
     schedulePaymentTimeoutReminder(userId, apiRef);
   } catch (err) {
     sub.stage = STAGE_WAIT_PAYMENT;
@@ -1995,10 +1777,21 @@ async function attemptStkPush(ctx, sub, { mode }) {
       failurePayload: err?.payload || null
     });
 
-    await ctx.reply("❌ STK Push failed.\nTap *Resend STK Push* to try again.", {
-      parse_mode: "Markdown",
-      reply_markup: paymentWaitKeyboard().reply_markup
-    });
+    await ctx.reply(
+      `❌ STK Push failed.
+
+You may try again with *Resend STK Push*.
+
+If network issues continue, pay via Till:
+
+\`${TILL_NUMBER}\`
+
+Send proof here as screenshot, not text.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: paymentWaitKeyboard().reply_markup
+      }
+    );
 
     await sendAdminMessage(
       `❌ STK Push error\nUser: ${userId}\napi_ref: ${safeText(apiRef)}\nPhone: ${safeText(
@@ -2126,41 +1919,6 @@ bot.command("cancelbatch", async (ctx) => {
   await ctx.reply(`✅ Batch session cancelled for user ${target.userId}.`);
 });
 
-// =====================
-// ADMIN QUICK ACTION BUTTONS
-// =====================
-bot.action(/^ADMIN_FILEBATCH_(\d+)$/, async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-
-  const userId = ctx.match[1];
-
-  pendingFileTargets[ADMIN_ID] = {
-    userId,
-    caption: "",
-    sentCount: 0,
-    sentItemKeys: {},
-    inProgressItemKeys: {}
-  };
-
-  await ctx.answerCbQuery("Filebatch opened");
-  await ctx.reply(batchOpenedMessage(userId));
-});
-
-bot.action(/^ADMIN_REPLY_(\d+)$/, async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-
-  const userId = ctx.match[1];
-
-  pendingAdminReplies[ADMIN_ID] = {
-    userId
-  };
-
-  await ctx.answerCbQuery("Reply mode opened");
-  await ctx.reply(
-    `💬 Reply mode opened for user ${userId}.\nType the message you want to send.\nTo cancel, send /cancelreply`
-  );
-});
-
 bot.command("cancelreply", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -2185,6 +1943,31 @@ function findLatestPendingPaymentRefByUser(userId) {
     .sort((a, b) => Number(b[1]?.createdAt || 0) - Number(a[1]?.createdAt || 0));
 
   return entries[0] || null;
+}
+
+async function manuallyConfirmLatestPaymentForUser(userId, source) {
+  const found = findLatestPendingPaymentRefByUser(userId);
+  if (!found) {
+    return {
+      ok: false,
+      message: `❌ No pending payment found for user ${userId}`
+    };
+  }
+
+  const [apiRef, ref] = found;
+
+  await markPaymentComplete({
+    apiRef,
+    invoiceId: ref.invoiceId || `manual_${Date.now()}`,
+    state: "COMPLETE",
+    source: source || "admin-manual"
+  });
+
+  return {
+    ok: true,
+    apiRef,
+    message: `✅ Manually marked latest payment complete for user ${userId}`
+  };
 }
 
 bot.command("paidref", async (ctx) => {
@@ -2222,21 +2005,53 @@ bot.command("paiduser", async (ctx) => {
     return ctx.reply("Usage: /paiduser <userId>");
   }
 
-  const found = findLatestPendingPaymentRefByUser(userId);
-  if (!found) {
-    return ctx.reply(`❌ No pending payment found for user ${userId}`);
-  }
+  const result = await manuallyConfirmLatestPaymentForUser(userId, "admin-manual-command");
+  await ctx.reply(result.message);
+});
 
-  const [apiRef, ref] = found;
+// =====================
+// ADMIN QUICK ACTION BUTTONS
+// =====================
+bot.action(/^ADMIN_FILEBATCH_(\d+)$/, async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
 
-  await markPaymentComplete({
-    apiRef,
-    invoiceId: ref.invoiceId || `manual_${Date.now()}`,
-    state: "COMPLETE",
-    source: "admin-manual"
-  });
+  const userId = ctx.match[1];
 
-  await ctx.reply(`✅ Manually marked latest payment complete for user ${userId}`);
+  pendingFileTargets[ADMIN_ID] = {
+    userId,
+    caption: "",
+    sentCount: 0,
+    sentItemKeys: {},
+    inProgressItemKeys: {}
+  };
+
+  await ctx.answerCbQuery("Filebatch opened");
+  await ctx.reply(batchOpenedMessage(userId));
+});
+
+bot.action(/^ADMIN_REPLY_(\d+)$/, async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+
+  const userId = ctx.match[1];
+
+  pendingAdminReplies[ADMIN_ID] = {
+    userId
+  };
+
+  await ctx.answerCbQuery("Reply mode opened");
+  await ctx.reply(
+    `💬 Reply mode opened for user ${userId}.\nType the message you want to send.\nTo cancel, send /cancelreply`
+  );
+});
+
+bot.action(/^ADMIN_PAID_(\d+)$/, async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+
+  const userId = ctx.match[1];
+
+  await ctx.answerCbQuery("Checking pending payment...");
+  const result = await manuallyConfirmLatestPaymentForUser(userId, "admin-manual-button");
+  await ctx.reply(result.message);
 });
 
 // =====================
@@ -2348,7 +2163,6 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
 bot.on("document", async (ctx) => {
   const user = ctx.from;
 
-  // ADMIN SENDING REPORT FILES
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
 
@@ -2365,110 +2179,17 @@ bot.on("document", async (ctx) => {
       return ctx.reply(`⚠️ Duplicate document ignored for ${target.userId}`);
     }
 
-    const docSize = Number(doc.file_size || 0);
-
-    let localPath = null;
-    let detection = {
-      kind: "NORMAL",
-      prefix: null,
-      confidence: "low",
-      aiScore: 0,
-      plagScore: 0
-    };
-
-    let finalFileName = safeFileName(doc.file_name || `document_${Date.now()}`);
-    let sentWithPrefix = false;
-    let skippedDetection = false;
-    let skippedDetectionReason = "";
-
     try {
-      const sendOptions = {
+      await bot.telegram.sendDocument(target.userId, doc.file_id, {
         caption: target.sentCount === 0 ? target.caption || undefined : undefined
-      };
-
-      if (REPORT_DETECTION_MAX_BYTES <= 0 || docSize > REPORT_DETECTION_MAX_BYTES) {
-        skippedDetection = true;
-        skippedDetectionReason =
-          REPORT_DETECTION_MAX_BYTES <= 0
-            ? "Skipped detection because report detection is disabled."
-            : `File above ${REPORT_DETECTION_MAX_MB} MB.`;
-
-        await bot.telegram.sendDocument(
-          target.userId,
-          doc.file_id,
-          sendOptions
-        );
-      } else {
-        try {
-          localPath = await downloadTelegramDocument(doc.file_id, finalFileName);
-
-          const extractedText = await extractReportText(
-            localPath,
-            finalFileName,
-            doc.mime_type
-          );
-
-          detection = detectTurnitinReportType({
-            fileName: finalFileName,
-            caption: ctx.message.caption || target.caption || "",
-            text: extractedText
-          });
-
-          console.log("Report detection:", {
-            fileName: finalFileName,
-            fileSizeBytes: docSize,
-            maxDetectionBytes: REPORT_DETECTION_MAX_BYTES,
-            extractedChars: extractedText.length,
-            kind: detection.kind,
-            aiScore: detection.aiScore,
-            plagScore: detection.plagScore
-          });
-        } catch (err) {
-          console.warn("Report detection failed; using normal send route:", err?.message || err);
-        }
-
-        if (detection.kind === "AI" || detection.kind === "PLAG") {
-          if (!localPath) {
-            throw new Error("Report was detected, but the local file was not available for renaming.");
-          }
-
-          finalFileName = addReportPrefix(finalFileName, detection.prefix);
-
-          await bot.telegram.sendDocument(
-            target.userId,
-            Input.fromLocalFile(localPath, finalFileName),
-            sendOptions
-          );
-
-          sentWithPrefix = true;
-        } else {
-          await bot.telegram.sendDocument(
-            target.userId,
-            doc.file_id,
-            sendOptions
-          );
-        }
-      }
+      });
 
       target.sentCount += 1;
       markBatchItemSent(target, deliveryKey);
-
-      if (sentWithPrefix) {
-        await ctx.reply(`✅ File with prefix to ${target.userId}`);
-      } else if (skippedDetection) {
-        await ctx.reply(
-          `✅ File without to ${target.userId}\n${skippedDetectionReason}`
-        );
-      } else {
-        await ctx.reply(`✅ File without prefix to ${target.userId}`);
-      }
+      await ctx.reply(`✅ File sent to ${target.userId}`);
     } catch (err) {
       clearBatchItemProgress(target, deliveryKey);
       await ctx.reply("❌ Failed: " + (err?.message || err));
-    } finally {
-      if (localPath) {
-        fs.unlink(localPath, () => {});
-      }
     }
 
     return;
@@ -2951,8 +2672,10 @@ app.get("/health", (req, res) => {
     activePollers: Object.keys(activePollers).length,
     processedUpdateCache: processedUpdateCache.size,
     checkHistoryRecords: checkHistory.length,
+    statusPollIntervalSeconds: STATUS_POLL_INTERVAL_MS / 1000,
+    statusPollMaxAttempts: STATUS_POLL_MAX_ATTEMPTS,
     recheckWindowHours: 24,
-    reportDetectionMaxMb: REPORT_DETECTION_MAX_MB,
+    reportParsing: "disabled",
     reportProcessingMinMinutes: REPORT_PROCESSING_MIN_MINUTES,
     reportProcessingMaxMinutes: REPORT_PROCESSING_MAX_MINUTES,
     reportProcessingLabel: REPORT_PROCESSING_LABEL,
@@ -2970,6 +2693,7 @@ app.get("/health", (req, res) => {
     discountStartEat: DISCOUNT_START_EAT,
     discountEndEat: DISCOUNT_END_EAT,
     discountTimeText: discountTimeText(),
+    tillNumber: TILL_NUMBER,
     inactiveStartUtc: INACTIVE_START_UTC,
     inactiveEndUtc: INACTIVE_END_UTC,
     inactiveEndEat: INACTIVE_END_EAT,
@@ -3111,7 +2835,8 @@ app.listen(port, async () => {
   console.log(`Webhook server listening on port ${port}`);
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
-  console.log(`Report detection max: ${REPORT_DETECTION_MAX_MB} MB`);
+  console.log(`Report parsing: DISABLED`);
+  console.log(`Till number: ${TILL_NUMBER}`);
   console.log(`Report processing message: ${reportProcessingTimeText().replace(/\*/g, "")}`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
   console.log(`Resale enabled: ${RESALE_ENABLED ? "YES" : "NO"}`);
@@ -3120,6 +2845,7 @@ app.listen(port, async () => {
   console.log(`Resale amount visible: ${RESALE_AMOUNT_VISIBLE ? "YES" : "NO"}`);
   console.log(`Discount time visible: ${DISCOUNT_TIME_VISIBLE ? "YES" : "NO"}`);
   console.log(`Discount time: ${discountTimeText() || "N/A"}`);
+  console.log(`Payment polling: every ${STATUS_POLL_INTERVAL_MS / 1000}s, max ${STATUS_POLL_MAX_ATTEMPTS} attempts`);
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
   console.log("Recheck rule: same user + same visible file name within 24 hours");
