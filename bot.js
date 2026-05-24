@@ -162,19 +162,6 @@ const REPORT_DETECTION_MAX_MB = readIntEnv("REPORT_DETECTION_MAX_MB", 4);
 const REPORT_DETECTION_MAX_BYTES = REPORT_DETECTION_MAX_MB * 1024 * 1024;
 
 // Report processing time message shown to users after payment confirmation.
-// Configure these in Render Environment Variables without editing code:
-//
-// Default/min-max mode:
-// REPORT_PROCESSING_MIN_MINUTES=5
-// REPORT_PROCESSING_MAX_MINUTES=20
-// REPORT_PROCESSING_LABEL=queue
-//
-// Custom override mode:
-// REPORT_PROCESSING_CUSTOM_ENABLED=1
-// REPORT_PROCESSING_MESSAGE=Reports take *30–60 minutes* today due to high demand.
-//
-// To disable custom override without deleting REPORT_PROCESSING_MESSAGE:
-// REPORT_PROCESSING_CUSTOM_ENABLED=0
 const REPORT_PROCESSING_MIN_MINUTES = Math.max(
   1,
   readIntEnv("REPORT_PROCESSING_MIN_MINUTES", 5)
@@ -1735,12 +1722,29 @@ async function markPaymentFailure({ apiRef, invoiceId, state, source, reason }) 
   return true;
 }
 
+async function recordPaymentNonComplete({ apiRef, invoiceId, state, source, reason }) {
+  const ref = getPaymentRef(apiRef);
+  if (!ref) return false;
+  if (ref.status === "COMPLETE") return false;
+
+  updatePaymentRef(apiRef, {
+    status: "PENDING",
+    invoiceId: invoiceId || ref.invoiceId || null,
+    lastState: state || "PENDING",
+    lastNonCompleteAt: Date.now(),
+    lastNonCompleteSource: source || "unknown",
+    lastNonCompleteReason: reason || null
+  });
+
+  return true;
+}
+
 async function queryPaymentStatus(invoiceId) {
   if (!invoiceId) throw new Error("Missing invoiceId for status query");
   const resp = await intasendCheckPaymentStatus({ invoice_id: invoiceId });
   const state = normalizePaymentState(extractState(resp));
 
-   return {
+  return {
     raw: resp,
     invoiceId: extractInvoiceId(resp) || invoiceId,
     apiRef: extractApiRef(resp) || resp?.invoice?.api_ref || null,
@@ -1802,13 +1806,25 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
       }
 
       if (["FAILED", "CANCELLED", "EXPIRED"].includes(statusResp.state)) {
-        await markPaymentFailure({
+        await recordPaymentNonComplete({
           apiRef,
           invoiceId: statusResp.invoiceId,
           state: statusResp.state,
           source: "status-poll",
           reason: statusResp.failedReason
         });
+
+        if (attempts === 1 || attempts % 6 === 0) {
+          await sendAdminMessage(
+            `⚠️ Payment not complete yet; still watching.\nUser: ${userId}\napi_ref: ${safeText(
+              apiRef
+            )}\ninvoice_id: ${safeText(statusResp.invoiceId || invoiceId)}\nState: ${safeText(
+              statusResp.state
+            )}\nReason: ${safeText(statusResp.failedReason || "N/A")}`
+          );
+        }
+
+        return;
       }
     } catch (err) {
       updatePaymentRef(apiRef, {
@@ -2156,6 +2172,71 @@ bot.command("cancelreply", async (ctx) => {
   delete pendingAdminReplies[ADMIN_ID];
 
   await ctx.reply(`✅ Reply session cancelled for user ${replyTarget.userId}.`);
+});
+
+function findLatestPendingPaymentRefByUser(userId) {
+  const entries = Object.entries(paymentRefs)
+    .filter(([apiRef, value]) => {
+      return (
+        String(value?.userId) === String(userId) &&
+        value?.status !== "COMPLETE"
+      );
+    })
+    .sort((a, b) => Number(b[1]?.createdAt || 0) - Number(a[1]?.createdAt || 0));
+
+  return entries[0] || null;
+}
+
+bot.command("paidref", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  const parts = (ctx.message.text || "").trim().split(/\s+/);
+  const apiRef = parts[1];
+
+  if (!apiRef) {
+    return ctx.reply("Usage: /paidref <api_ref>");
+  }
+
+  const ref = getPaymentRef(apiRef);
+  if (!ref) {
+    return ctx.reply(`❌ No payment found for api_ref: ${apiRef}`);
+  }
+
+  await markPaymentComplete({
+    apiRef,
+    invoiceId: ref.invoiceId || `manual_${Date.now()}`,
+    state: "COMPLETE",
+    source: "admin-manual"
+  });
+
+  await ctx.reply(`✅ Manually marked payment complete for ${apiRef}`);
+});
+
+bot.command("paiduser", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  const parts = (ctx.message.text || "").trim().split(/\s+/);
+  const userId = parts[1];
+
+  if (!userId) {
+    return ctx.reply("Usage: /paiduser <userId>");
+  }
+
+  const found = findLatestPendingPaymentRefByUser(userId);
+  if (!found) {
+    return ctx.reply(`❌ No pending payment found for user ${userId}`);
+  }
+
+  const [apiRef, ref] = found;
+
+  await markPaymentComplete({
+    apiRef,
+    invoiceId: ref.invoiceId || `manual_${Date.now()}`,
+    state: "COMPLETE",
+    source: "admin-manual"
+  });
+
+  await ctx.reply(`✅ Manually marked latest payment complete for user ${userId}`);
 });
 
 // =====================
@@ -2993,13 +3074,23 @@ app.post("/intasend/webhook", (req, res) => {
       }
 
       if (["FAILED", "CANCELLED", "EXPIRED"].includes(state)) {
-        await markPaymentFailure({
+        await recordPaymentNonComplete({
           apiRef,
           invoiceId: invoiceId || ref.invoiceId || null,
           state,
           source: "webhook",
           reason
         });
+
+        await sendAdminMessage(
+          `⚠️ IntaSend webhook says payment is not complete yet; kept open.\nUser: ${safeText(
+            ref.userId
+          )}\napi_ref: ${safeText(apiRef)}\ninvoice_id: ${safeText(
+            invoiceId || ref.invoiceId || "N/A"
+          )}\nState: ${safeText(state)}\nReason: ${safeText(reason || "N/A")}`
+        );
+
+        return;
       }
     } catch (err) {
       console.error("Async IntaSend webhook processing error:", err?.message || err);
