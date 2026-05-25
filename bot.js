@@ -1452,6 +1452,66 @@ async function recordPaymentNonComplete({ apiRef, invoiceId, state, source, reas
   return true;
 }
 
+async function handlePaymentAttemptFailed({ apiRef, invoiceId, state, source, reason }) {
+  const ref = getPaymentRef(apiRef);
+  if (!ref) return false;
+  if (ref.status === "COMPLETE") return false;
+
+  if (["FAILED", "CANCELLED", "EXPIRED"].includes(String(ref.status || "").toUpperCase())) {
+    return false;
+  }
+
+  updatePaymentRef(apiRef, {
+    status: state || "FAILED",
+    invoiceId: invoiceId || ref.invoiceId || null,
+    lastState: state || "FAILED",
+    failureSource: source || "unknown",
+    failureReason: reason || null,
+    failedAt: Date.now()
+  });
+
+  stopStatusPolling(apiRef);
+
+  const batchLookup = getBatchById(ref.batchId);
+  const userId = batchLookup?.userId || ref.userId;
+  const sub = batchLookup?.sub || submissions[userId];
+
+  if (sub && !sub.paid) {
+    sub.stage = STAGE_WAIT_PAYMENT;
+  }
+
+  try {
+    await bot.telegram.sendMessage(
+      userId,
+      `❌ Payment was not completed.
+
+Reason: ${safeText(reason || state || "Payment failed")}
+
+You can tap *Resend STK Push* or *Change phone number*.
+
+If STK has network issues, you may pay via Till:
+
+\`${TILL_NUMBER}\`
+
+Send proof here as screenshot, not text.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: paymentWaitKeyboard().reply_markup
+      }
+    );
+  } catch {}
+
+  await sendAdminMessage(
+    `⚠️ PAYMENT ATTEMPT FAILED\nUser: ${safeText(userId)}\napi_ref: ${safeText(
+      apiRef
+    )}\ninvoice_id: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nState: ${safeText(
+      state || "FAILED"
+    )}\nSource: ${safeText(source || "unknown")}\nReason: ${safeText(reason || "N/A")}\n\nWatcher stopped for this failed attempt. User can resend STK, change phone, or pay via Till.`
+  );
+
+  return true;
+}
+
 async function queryPaymentStatus(invoiceId, apiRef) {
   let best = null;
   let lastError = null;
@@ -1583,23 +1643,13 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
       }
 
       if (["FAILED", "CANCELLED", "EXPIRED"].includes(statusResp.state)) {
-        await recordPaymentNonComplete({
+        await handlePaymentAttemptFailed({
           apiRef,
           invoiceId: statusResp.invoiceId || invoiceId || ref.invoiceId || null,
           state: statusResp.state,
           source: statusResp.source || "status-poll",
           reason: statusResp.failedReason
         });
-
-        if (attempts === 1 || attempts % 6 === 0) {
-          await sendAdminMessage(
-            `⚠️ Payment not complete yet; still watching.\nUser: ${userId}\napi_ref: ${safeText(
-              apiRef
-            )}\ninvoice_id: ${safeText(statusResp.invoiceId || invoiceId || ref.invoiceId || "N/A")}\nState: ${safeText(
-              statusResp.state
-            )}\nSource: ${safeText(statusResp.source || "N/A")}\nReason: ${safeText(statusResp.failedReason || "N/A")}`
-          );
-        }
 
         return;
       }
@@ -1631,6 +1681,7 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
 
     if (!ref) return;
     if (ref.status === "COMPLETE") return;
+    if (["FAILED", "CANCELLED", "EXPIRED"].includes(String(ref.status || "").toUpperCase())) return;
     if (!sub || sub.paid) return;
     if (sub.stage !== STAGE_WAIT_PAYMENT) return;
 
@@ -2798,21 +2849,13 @@ app.post("/intasend/webhook", (req, res) => {
       }
 
       if (["FAILED", "CANCELLED", "EXPIRED"].includes(state)) {
-        await recordPaymentNonComplete({
+        await handlePaymentAttemptFailed({
           apiRef,
           invoiceId: invoiceId || ref.invoiceId || null,
           state,
           source: "webhook",
           reason
         });
-
-        await sendAdminMessage(
-          `⚠️ IntaSend webhook says payment is not complete yet; kept open.\nUser: ${safeText(
-            ref.userId
-          )}\napi_ref: ${safeText(apiRef)}\ninvoice_id: ${safeText(
-            invoiceId || ref.invoiceId || "N/A"
-          )}\nState: ${safeText(state)}\nReason: ${safeText(reason || "N/A")}`
-        );
 
         return;
       }
