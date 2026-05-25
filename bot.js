@@ -220,6 +220,7 @@ function reportProcessingTimeText() {
 const RECHECK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const CHECK_HISTORY_RETENTION_MS = 72 * 60 * 60 * 1000;
 const USED_PROOF_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const PAID_JOB_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const INACTIVE_START_UTC = normalizeHHMM(
   process.env.INACTIVE_START_UTC,
@@ -268,18 +269,9 @@ function discountTimeText() {
   const start = formatHHMMTo12HourStrict(DISCOUNT_START_EAT);
   const end = formatHHMMTo12HourStrict(DISCOUNT_END_EAT);
 
-  if (start && end) {
-    return `${RESALE_LABEL} available from ${start} to ${end} EAT.`;
-  }
-
-  if (start) {
-    return `${RESALE_LABEL} available from ${start} EAT.`;
-  }
-
-  if (end) {
-    return `${RESALE_LABEL} available until ${end} EAT.`;
-  }
-
+  if (start && end) return `${RESALE_LABEL} available from ${start} to ${end} EAT.`;
+  if (start) return `${RESALE_LABEL} available from ${start} EAT.`;
+  if (end) return `${RESALE_LABEL} available until ${end} EAT.`;
   return "";
 }
 
@@ -290,20 +282,14 @@ function discountTimeLineForMessage() {
 
 function resalePublicPriceText() {
   if (!RESALE_ENABLED) return "";
-
-  if (RESALE_AMOUNT_VISIBLE) {
-    return `${RESALE_PRICE_KES} KES`;
-  }
-
+  if (RESALE_AMOUNT_VISIBLE) return `${RESALE_PRICE_KES} KES`;
   return "available with code";
 }
 
 function resaleButtonLabel(resaleVerified) {
   if (!RESALE_ENABLED) return "";
 
-  if (resaleVerified) {
-    return `🏷️ ${RESALE_LABEL} (${RESALE_PRICE_KES} KES)`;
-  }
+  if (resaleVerified) return `🏷️ ${RESALE_LABEL} (${RESALE_PRICE_KES} KES)`;
 
   if (RESALE_AMOUNT_VISIBLE && RESALE_CODE_VISIBLE) {
     return `🏷️ ${RESALE_LABEL} now active (${RESALE_PRICE_KES} KES -CODE: ${RESELLER_CODE})`;
@@ -396,10 +382,12 @@ const PROCESSED_UPDATE_TTL_MS = 30 * 60 * 1000;
 let paymentRefs = {};
 let checkHistory = [];
 let usedProofCodes = {};
+let paidJobs = {};
 
 const STORE_FILE = path.join(__dirname, "paymentRefs.store.json");
 const CHECK_HISTORY_FILE = path.join(__dirname, "checkHistory.store.json");
 const USED_PROOF_CODES_FILE = path.join(__dirname, "usedProofCodes.store.json");
+const PAID_JOBS_FILE = path.join(__dirname, "paidJobs.store.json");
 
 // =====================
 // DUPLICATE UPDATE GUARD
@@ -418,9 +406,7 @@ bot.use(async (ctx, next) => {
   cleanupProcessedUpdateCache();
 
   const updateId = ctx.update?.update_id;
-  if (updateId === undefined || updateId === null) {
-    return next();
-  }
+  if (updateId === undefined || updateId === null) return next();
 
   const key = `update:${updateId}`;
   if (processedUpdateCache.has(key)) {
@@ -428,17 +414,11 @@ bot.use(async (ctx, next) => {
     return;
   }
 
-  processedUpdateCache.set(key, {
-    ts: Date.now(),
-    status: "processing"
-  });
+  processedUpdateCache.set(key, { ts: Date.now(), status: "processing" });
 
   try {
     await next();
-    processedUpdateCache.set(key, {
-      ts: Date.now(),
-      status: "done"
-    });
+    processedUpdateCache.set(key, { ts: Date.now(), status: "done" });
   } catch (err) {
     processedUpdateCache.delete(key);
     throw err;
@@ -490,9 +470,7 @@ function findPaymentRefByInvoiceId(invoiceId) {
   if (!wanted) return null;
 
   for (const [apiRef, value] of Object.entries(paymentRefs)) {
-    if (String(value?.invoiceId || "").trim() === wanted) {
-      return { apiRef, value };
-    }
+    if (String(value?.invoiceId || "").trim() === wanted) return { apiRef, value };
   }
   return null;
 }
@@ -513,6 +491,108 @@ setInterval(() => {
 
   if (changed) saveStore();
 }, 6 * 60 * 60 * 1000);
+
+// =====================
+// PAID JOB STORE
+// =====================
+function loadPaidJobs() {
+  try {
+    if (!fs.existsSync(PAID_JOBS_FILE)) return;
+    const raw = fs.readFileSync(PAID_JOBS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") paidJobs = parsed;
+  } catch (e) {
+    console.error("Failed to load paid jobs:", e?.message || e);
+  }
+}
+
+function savePaidJobs() {
+  try {
+    fs.writeFileSync(PAID_JOBS_FILE, JSON.stringify(paidJobs, null, 2), "utf8");
+  } catch (e) {
+    console.error("Failed to save paid jobs:", e?.message || e);
+  }
+}
+
+function cleanupPaidJobs() {
+  const now = Date.now();
+  let changed = false;
+
+  for (const [jobId, job] of Object.entries(paidJobs)) {
+    const t = Number(job?.paidAt || job?.createdAt || 0);
+    if (!t || now - t > PAID_JOB_RETENTION_MS) {
+      delete paidJobs[jobId];
+      changed = true;
+    }
+  }
+
+  if (changed) savePaidJobs();
+}
+
+function createPaidJob({ userId, apiRef, ref, invoiceId, source }) {
+  const now = Date.now();
+  const batchId = ref?.batchId || `paid_${userId}_${now}`;
+  const jobId = String(batchId || apiRef || `paid_${userId}_${now}`);
+  const cancelAllowedAt = now + REPORT_PROCESSING_MAX_MINUTES * 60 * 1000;
+
+  paidJobs[jobId] = {
+    jobId,
+    userId: Number(userId),
+    batchId,
+    apiRef,
+    invoiceId: invoiceId || ref?.invoiceId || null,
+    amount: ref?.amount || null,
+    kind: ref?.kind || "BATCH",
+    summary: ref?.summary || "",
+    paidAt: now,
+    cancelAllowedAt,
+    status: "PROCESSING",
+    createdAt: now,
+    source: source || "payment-confirmed"
+  };
+
+  cleanupPaidJobs();
+  savePaidJobs();
+  return paidJobs[jobId];
+}
+
+function getLatestActivePaidJob(userId) {
+  const list = Object.values(paidJobs)
+    .filter((job) => String(job.userId) === String(userId))
+    .filter((job) => !["DELIVERED", "CLOSED"].includes(String(job.status || "").toUpperCase()))
+    .sort((a, b) => Number(b.paidAt || 0) - Number(a.paidAt || 0));
+
+  return list[0] || null;
+}
+
+function markPaidJobCancellationRequested(jobId) {
+  if (!paidJobs[jobId]) return null;
+  paidJobs[jobId].status = "CANCEL_REQUESTED";
+  paidJobs[jobId].cancelRequestedAt = Date.now();
+  savePaidJobs();
+  return paidJobs[jobId];
+}
+
+function markLatestPaidJobDelivered(userId) {
+  const job = getLatestActivePaidJob(userId);
+  if (!job) return null;
+
+  paidJobs[job.jobId].status = "DELIVERED";
+  paidJobs[job.jobId].deliveredAt = Date.now();
+  savePaidJobs();
+
+  return paidJobs[job.jobId];
+}
+
+function paidJobCancelWaitText(job) {
+  const ms = Number(job.cancelAllowedAt || 0) - Date.now();
+  const min = Math.max(1, Math.ceil(ms / 60000));
+  return `✅ Payment confirmed. Report is processing.\n\nCancellation opens in about ${min} minute(s).`;
+}
+
+loadPaidJobs();
+cleanupPaidJobs();
+setInterval(cleanupPaidJobs, 6 * 60 * 60 * 1000);
 
 // =====================
 // USED PROOF CODE STORE
@@ -586,7 +666,7 @@ cleanupUsedProofCodes();
 setInterval(cleanupUsedProofCodes, 6 * 60 * 60 * 1000);
 
 // =====================
-// CHECK HISTORY PERSISTENCE
+// CHECK HISTORY
 // =====================
 function loadCheckHistory() {
   try {
@@ -647,9 +727,7 @@ function sameFileIdentity(record, userId, fileName, fileUniqueId) {
   const currentName = normalizeFileNameForRecheck(fileName);
 
   if (!historyName || !currentName) return false;
-  if (historyName !== currentName) return false;
-
-  return true;
+  return historyName === currentName;
 }
 
 function getRecheckEligibility(userId, fileName, fileUniqueId) {
@@ -660,22 +738,12 @@ function getRecheckEligibility(userId, fileName, fileUniqueId) {
     .filter((record) => now - Number(record.lastPaidCheckAt || 0) <= RECHECK_WINDOW_MS)
     .sort((a, b) => Number(b.lastPaidCheckAt || 0) - Number(a.lastPaidCheckAt || 0))[0];
 
-  if (!match) {
-    return {
-      eligible: false,
-      matchedAt: null,
-      hoursLeft: 0
-    };
-  }
+  if (!match) return { eligible: false, matchedAt: null, hoursLeft: 0 };
 
   const expiresAt = Number(match.lastPaidCheckAt) + RECHECK_WINDOW_MS;
   const hoursLeft = Math.max(0, Math.ceil((expiresAt - now) / (60 * 60 * 1000)));
 
-  return {
-    eligible: true,
-    matchedAt: Number(match.lastPaidCheckAt),
-    hoursLeft
-  };
+  return { eligible: true, matchedAt: Number(match.lastPaidCheckAt), hoursLeft };
 }
 
 function rememberPaidChecks({ userId, files, batchId, source }) {
@@ -728,7 +796,6 @@ function rememberPaidChecks({ userId, files, batchId, source }) {
 
 loadCheckHistory();
 cleanupCheckHistory();
-
 setInterval(cleanupCheckHistory, 60 * 60 * 1000);
 
 // =====================
@@ -758,9 +825,7 @@ function normalizeLoose(value) {
 }
 
 function oneLine(value) {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 function extractMoneyAmount(text) {
@@ -838,7 +903,6 @@ function extractPaidRecipient(text) {
   const s = oneLine(text);
 
   const match = s.match(/\bpaid\s+to\s+(.+?)(?:\.?\s+on\b|\.?\s+New\s+M[- ]?PESA|\.?\s+M[- ]?PESA\s+Balance|\.?\s+Transaction\b|\.?\s+Amount\b|$)/i);
-
   if (!match) return "";
 
   return String(match[1] || "")
@@ -870,9 +934,7 @@ function buildPaymentProofCandidates(rawText) {
 
   while ((m = codeRegex.exec(raw.toUpperCase())) !== null) {
     const code = normalizeProofCode(m[0]);
-    if (/[A-Z]/.test(code) && /\d/.test(code)) {
-      matches.push({ index: m.index, code });
-    }
+    if (/[A-Z]/.test(code) && /\d/.test(code)) matches.push({ index: m.index, code });
   }
 
   for (let i = 0; i < matches.length; i++) {
@@ -889,9 +951,7 @@ function buildPaymentProofCandidates(rawText) {
     addBlock(raw.slice(start, end), "paid-to-window");
   }
 
-  if (candidates.length === 0) {
-    addBlock(raw.slice(0, 1200), "whole-text");
-  }
+  if (candidates.length === 0) addBlock(raw.slice(0, 1200), "whole-text");
 
   return candidates;
 }
@@ -1024,9 +1084,7 @@ function makePhotoDeliveryKey(photo) {
 function startBatchItemOnce(target, key) {
   initBatchTracking(target);
 
-  if (target.sentItemKeys[key] || target.inProgressItemKeys[key]) {
-    return false;
-  }
+  if (target.sentItemKeys[key] || target.inProgressItemKeys[key]) return false;
 
   target.inProgressItemKeys[key] = Date.now();
   return true;
@@ -1052,10 +1110,8 @@ send /cancelbatch`;
 
 function resellerCodeMatches(value) {
   if (!RESALE_ENABLED) return false;
-
   const given = String(value || "").trim();
   if (!given) return false;
-
   return given.toLowerCase() === RESELLER_CODE.toLowerCase();
 }
 
@@ -1066,9 +1122,7 @@ async function downloadTelegramFileToTemp(fileId, ext) {
   const fileLink = await bot.telegram.getFileLink(fileId);
   const res = await fetch(fileLink.href || String(fileLink));
 
-  if (!res.ok) {
-    throw new Error(`Failed to download Telegram file. HTTP ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Failed to download Telegram file. HTTP ${res.status}`);
 
   const buffer = Buffer.from(await res.arrayBuffer());
   const localPath = path.join(
@@ -1081,19 +1135,12 @@ async function downloadTelegramFileToTemp(fileId, ext) {
 }
 
 function promiseTimeout(ms, label) {
-  return new Promise((_, reject) => {
-    setTimeout(() => reject(new Error(label || "Timed out")), ms);
-  });
+  return new Promise((_, reject) => setTimeout(() => reject(new Error(label || "Timed out")), ms));
 }
 
 async function extractOcrTextFromImage(localPath) {
-  if (!PAYMENT_OCR_ENABLED) {
-    return { ok: false, text: "", status: "disabled", error: "OCR disabled" };
-  }
-
-  if (!Tesseract) {
-    return { ok: false, text: "", status: "package-missing", error: "tesseract.js not installed" };
-  }
+  if (!PAYMENT_OCR_ENABLED) return { ok: false, text: "", status: "disabled", error: "OCR disabled" };
+  if (!Tesseract) return { ok: false, text: "", status: "package-missing", error: "tesseract.js not installed" };
 
   try {
     const result = await Promise.race([
@@ -1101,21 +1148,9 @@ async function extractOcrTextFromImage(localPath) {
       promiseTimeout(PAYMENT_OCR_TIMEOUT_MS, "OCR timeout")
     ]);
 
-    const text = result?.data?.text || "";
-
-    return {
-      ok: true,
-      text,
-      status: "ok",
-      error: ""
-    };
+    return { ok: true, text: result?.data?.text || "", status: "ok", error: "" };
   } catch (err) {
-    return {
-      ok: false,
-      text: "",
-      status: "failed",
-      error: safeText(err?.message || err)
-    };
+    return { ok: false, text: "", status: "failed", error: safeText(err?.message || err) };
   }
 }
 
@@ -1153,30 +1188,24 @@ function batchSizeKeyboard() {
       Markup.button.callback("4", "BATCH_COUNT_4"),
       Markup.button.callback("5", "BATCH_COUNT_5")
     ],
-    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
+    [Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]
   ]);
 }
 
 function typeInlineKeyboard(allowRecheck, allowResale, resaleVerified) {
   const rows = [[Markup.button.callback(`✅ CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")]];
 
-  if (allowRecheck) {
-    rows.push([Markup.button.callback(`🔁 RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")]);
-  }
+  if (allowRecheck) rows.push([Markup.button.callback(`🔁 RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")]);
+  if (allowResale) rows.push([Markup.button.callback(resaleButtonLabel(resaleVerified), "TYPE_RESALE")]);
 
-  if (allowResale) {
-    rows.push([Markup.button.callback(resaleButtonLabel(resaleVerified), "TYPE_RESALE")]);
-  }
-
-  rows.push([Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]);
-
+  rows.push([Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]);
   return Markup.inlineKeyboard(rows);
 }
 
 function uploadContinueKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("✅ Done Uploading", "DONE_UPLOADING")],
-    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
+    [Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]
   ]);
 }
 
@@ -1184,7 +1213,7 @@ function paymentWaitKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔁 Resend STK Push", "STK_RESEND")],
     [Markup.button.callback("📞 Change phone number", "STK_CHANGE_PHONE")],
-    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
+    [Markup.button.callback("❌ Cancel payment attempt", "PAYMENT_CANCEL")]
   ]);
 }
 
@@ -1202,7 +1231,6 @@ function adminQuickCommands(userId) {
 
 function extractAdminActionUserId(text) {
   const s = String(text || "");
-
   const patterns = [
     /User ID:\s*(\d{3,30})/i,
     /User:\s*(\d{3,30})/i,
@@ -1228,11 +1256,7 @@ function adminActionKeyboard(userId) {
 
 async function sendAdminMessage(text, extra = {}) {
   const userIdForButtons = extractAdminActionUserId(text);
-
-  const finalExtra = {
-    parse_mode: "Markdown",
-    ...extra
-  };
+  const finalExtra = { parse_mode: "Markdown", ...extra };
 
   if (userIdForButtons && !finalExtra.reply_markup) {
     finalExtra.reply_markup = adminActionKeyboard(userIdForButtons).reply_markup;
@@ -1298,9 +1322,7 @@ function isBotInactivePeriod() {
 }
 
 async function notifyInactivePeriod(ctx) {
-  await replyMarkdownSafe(ctx, MESSAGES.inactive().trim(), {
-    reply_markup: mainKeyboard()
-  });
+  await replyMarkdownSafe(ctx, MESSAGES.inactive().trim(), { reply_markup: mainKeyboard() });
 }
 
 function getCurrentPendingFile(sub) {
@@ -1320,12 +1342,7 @@ function getSubmissionCounts(sub) {
     if (file.type === "RESALE") resales += 1;
   }
 
-  return {
-    checks,
-    rechecks,
-    resales,
-    total: checks + rechecks + resales
-  };
+  return { checks, rechecks, resales, total: checks + rechecks + resales };
 }
 
 function calculateSubmissionAmount(sub) {
@@ -1339,16 +1356,9 @@ function calculateSubmissionAmount(sub) {
 
 function formatBatchSummary(sub) {
   const counts = getSubmissionCounts(sub);
+  const lines = [`• Check: ${counts.checks}`, `• Recheck: ${counts.rechecks}`];
 
-  const lines = [
-    `• Check: ${counts.checks}`,
-    `• Recheck: ${counts.rechecks}`
-  ];
-
-  if (RESALE_ENABLED || counts.resales > 0) {
-    lines.push(`• ${RESALE_LABEL}: ${counts.resales}`);
-  }
-
+  if (RESALE_ENABLED || counts.resales > 0) lines.push(`• ${RESALE_LABEL}: ${counts.resales}`);
   lines.push(`• Files: ${counts.total}`);
 
   return lines.join("\n");
@@ -1379,16 +1389,77 @@ function resetSubmission(userId) {
   delete supportRequests[userId];
 }
 
-async function notifyUserCancelledToAdmin(user) {
+async function notifyUserCancelledToAdmin(user, label) {
   if (user.id === ADMIN_ID) return;
 
   await sendAdminMessage(
-    `❌ User cancelled submission\nUser ID: ${user.id}\nUsername: @${safeText(
+    `❌ ${label || "User cancelled submission"}\nUser ID: ${user.id}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
-      user.id
-    )}`
+    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(user.id)}`
   );
+}
+
+async function handleCancelRequest(ctx, sourceLabel) {
+  const user = ctx.from;
+
+  if (user.id === ADMIN_ID) {
+    await ctx.reply("No user submission to cancel.");
+    return;
+  }
+
+  const sub = submissions[user.id];
+
+  if (sub && sub.stage !== STAGE_PAID) {
+    const isPayment = sub.stage === STAGE_WAIT_PAYMENT || sub.stage === STAGE_WAIT_PHONE;
+    const label = isPayment ? "User cancelled unpaid payment attempt" : "User cancelled unpaid document submission";
+
+    await notifyUserCancelledToAdmin(user, label);
+    resetSubmission(user.id);
+
+    await ctx.reply("❌ Cancelled. You can start again.", {
+      reply_markup: mainKeyboard()
+    });
+    return;
+  }
+
+  const job = getLatestActivePaidJob(user.id);
+
+  if (!job) {
+    await ctx.reply("No active submission to cancel.", {
+      reply_markup: mainKeyboard()
+    });
+    return;
+  }
+
+  if (String(job.status || "").toUpperCase() === "CANCEL_REQUESTED") {
+    await ctx.reply("Cancellation request already sent.", {
+      reply_markup: mainKeyboard()
+    });
+    return;
+  }
+
+  if (Date.now() < Number(job.cancelAllowedAt || 0)) {
+    await ctx.reply(paidJobCancelWaitText(job), {
+      reply_markup: mainKeyboard()
+    });
+    return;
+  }
+
+  const updatedJob = markPaidJobCancellationRequested(job.jobId);
+
+  await sendAdminMessage(
+    `⚠️ Paid cancellation request\nUser ID: ${user.id}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nAmount: ${safeText(
+      updatedJob?.amount || "N/A"
+    )} KES\nBatch: ${safeText(updatedJob?.batchId || "N/A")}\nPaid at: ${moment(
+      updatedJob?.paidAt || Date.now()
+    ).format("YYYY-MM-DD HH:mm")}\nMax time elapsed: Yes`
+  );
+
+  await ctx.reply("✅ Cancellation request sent to admin.", {
+    reply_markup: mainKeyboard()
+  });
 }
 
 function hasActiveSubmissionForUploads(sub) {
@@ -1401,9 +1472,7 @@ function hasActiveSubmissionForUploads(sub) {
 }
 
 function ensureFreshSubmission(userId) {
-  if (!submissions[userId]) {
-    submissions[userId] = createEmptySubmission();
-  }
+  if (!submissions[userId]) submissions[userId] = createEmptySubmission();
   return submissions[userId];
 }
 
@@ -1437,14 +1506,10 @@ async function forwardAcceptedDocumentByIds(userId, chatId, messageId, username,
 }
 
 async function beginSubmissionFlow(ctx) {
-  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
-    return notifyInactivePeriod(ctx);
-  }
+  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
   if (ctx.from.id === ADMIN_ID) {
-    return replyMarkdownSafe(ctx, MESSAGES.sendDocHelp, {
-      reply_markup: mainKeyboard()
-    });
+    return replyMarkdownSafe(ctx, MESSAGES.sendDocHelp, { reply_markup: mainKeyboard() });
   }
 
   const userId = ctx.from.id;
@@ -1453,10 +1518,7 @@ async function beginSubmissionFlow(ctx) {
   if (existing && existing.stage === STAGE_WAIT_BATCH_SIZE) {
     await ctx.reply(
       `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: batchSizeKeyboard().reply_markup
-      }
+      { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
     );
     return;
   }
@@ -1465,21 +1527,14 @@ async function beginSubmissionFlow(ctx) {
 
   await ctx.reply(
     `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: batchSizeKeyboard().reply_markup
-    }
+    { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
   );
 }
 
 async function showPaymentHelp(ctx) {
-  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
-    return notifyInactivePeriod(ctx);
-  }
+  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
-  await replyMarkdownSafe(ctx, MESSAGES.paymentHelp, {
-    reply_markup: mainKeyboard()
-  });
+  await replyMarkdownSafe(ctx, MESSAGES.paymentHelp, { reply_markup: mainKeyboard() });
 }
 
 async function askForFileType(ctx, sub) {
@@ -1489,8 +1544,8 @@ async function askForFileType(ctx, sub) {
   const fileNumber = sub.currentFileIndex + 1;
 
   const recheckNote = file.recheckEligible
-    ? `✅ This file qualifies for *RECHECK* because the same file was checked and paid within the last 24 hours.\n\nYou may choose *CHECK* or *RECHECK*.`
-    : `ℹ️ This file does not have a matching paid *CHECK* within the last 24 hours.\n\nIt will be treated as *CHECK*.`;
+    ? `✅ This file qualifies for *RECHECK*.\n\nChoose *CHECK* or *RECHECK*.`
+    : `ℹ️ Recheck not available for this file.\n\nIt will be treated as *CHECK*.`;
 
   const resaleNote = RESALE_ENABLED
     ? `\n\n🏷️ *${RESALE_LABEL}* is available with code.${discountTimeLineForMessage()}`
@@ -1513,9 +1568,7 @@ async function moveBatchToPhoneStep(ctx, sub) {
   const counts = getSubmissionCounts(sub);
 
   if (counts.total === 0) {
-    await ctx.reply("❌ Please upload at least one file first.", {
-      reply_markup: mainKeyboard()
-    });
+    await ctx.reply("❌ Please upload at least one file first.", { reply_markup: mainKeyboard() });
     return;
   }
 
@@ -1540,7 +1593,6 @@ async function finalizeFileTypeSelection(ctx, sub, kind) {
   }
 
   file.type = kind;
-
   if (kind === "CHECK") file.price = CHECK_PRICE_KES;
   if (kind === "RECHECK") file.price = RECHECK_PRICE_KES;
   if (kind === "RESALE") file.price = RESALE_PRICE_KES;
@@ -1555,9 +1607,7 @@ async function finalizeFileTypeSelection(ctx, sub, kind) {
 
   sub.stage = STAGE_WAIT_UPLOADS;
   await ctx.reply(
-    `✅ ${typeDisplayName(kind)} saved for file ${justCompletedNumber}.\n\nNow send file ${
-      sub.files.length + 1
-    } of ${sub.expectedFiles}.\nIf you are finished early, tap *Done Uploading*.`,
+    `✅ ${typeDisplayName(kind)} saved for file ${justCompletedNumber}.\n\nSend file ${sub.files.length + 1} of ${sub.expectedFiles}.`,
     {
       parse_mode: "Markdown",
       reply_markup: uploadContinueKeyboard().reply_markup
@@ -1569,9 +1619,7 @@ async function handleFileTypeSelected(ctx, kind) {
   const userId = ctx.from.id;
   const sub = submissions[userId];
 
-  if (!sub || sub.stage !== STAGE_WAIT_FILE_TYPE) {
-    return ctx.answerCbQuery("No pending file type selection.");
-  }
+  if (!sub || sub.stage !== STAGE_WAIT_FILE_TYPE) return ctx.answerCbQuery("No pending file type selection.");
 
   const file = getCurrentPendingFile(sub);
   if (!file) {
@@ -1582,11 +1630,8 @@ async function handleFileTypeSelected(ctx, kind) {
 
   if (kind === "RECHECK" && !file.recheckEligible) {
     kind = "CHECK";
-    await ctx.answerCbQuery("Recheck not available; treated as CHECK.");
-    await ctx.reply(
-      "⚠️ Recheck is only available when the same file was checked and paid within the last 24 hours.\n\nThis file has been treated as *CHECK*.",
-      { parse_mode: "Markdown" }
-    );
+    await ctx.answerCbQuery("Treated as CHECK.");
+    await ctx.reply("⚠️ Recheck not available. Treated as *CHECK*.", { parse_mode: "Markdown" });
   } else if (kind === "RESALE") {
     if (!RESALE_ENABLED) {
       await ctx.answerCbQuery(`${RESALE_LABEL} is not enabled.`);
@@ -1596,10 +1641,10 @@ async function handleFileTypeSelected(ctx, kind) {
     if (!sub.resellerVerified) {
       sub.stage = STAGE_WAIT_RESELLER_CODE;
       await ctx.answerCbQuery("Code required");
-      return ctx.reply(
-        `🔐 Send code to use *${RESALE_LABEL}* for this file.\n\nTo go back, tap Cancel / New submission.`,
-        { parse_mode: "Markdown", reply_markup: mainKeyboard() }
-      );
+      return ctx.reply(`🔐 Send code to use *${RESALE_LABEL}* for this file.`, {
+        parse_mode: "Markdown",
+        reply_markup: mainKeyboard()
+      });
     }
 
     await ctx.answerCbQuery(`${RESALE_LABEL} selected`);
@@ -1634,8 +1679,7 @@ async function intasendRequest(endpoint, body) {
 
   if (!res.ok) {
     const err = new Error(
-      (data && (data.detail || data.message || JSON.stringify(data))) ||
-        `HTTP ${res.status}`
+      (data && (data.detail || data.message || JSON.stringify(data))) || `HTTP ${res.status}`
     );
     err.status = res.status;
     err.payload = data;
@@ -1672,8 +1716,7 @@ async function intasendGet(endpoint, query = {}) {
 
   if (!res.ok) {
     const err = new Error(
-      (data && (data.detail || data.message || JSON.stringify(data))) ||
-        `HTTP ${res.status}`
+      (data && (data.detail || data.message || JSON.stringify(data))) || `HTTP ${res.status}`
     );
     err.status = res.status;
     err.payload = data;
@@ -1740,17 +1783,11 @@ function extractState(payload) {
 function normalizePaymentState(raw) {
   const s = String(raw || "").trim().toUpperCase();
 
-  if (
-    ["COMPLETE", "COMPLETED", "SUCCESS", "SUCCEEDED", "PAID", "TS100"].includes(s)
-  ) return "COMPLETE";
-
+  if (["COMPLETE", "COMPLETED", "SUCCESS", "SUCCEEDED", "PAID", "TS100"].includes(s)) return "COMPLETE";
   if (["FAILED", "FAIL", "ERROR", "TF103", "TF106"].includes(s)) return "FAILED";
   if (["CANCELLED", "CANCELED", "TC108"].includes(s)) return "CANCELLED";
   if (["EXPIRED", "TIMEOUT", "TIMEDOUT"].includes(s)) return "EXPIRED";
-
-  if (
-    ["PENDING", "PROCESSING", "IN_PROGRESS", "INPROGRESS", "TP101", "TP102", "BP101", "BP103"].includes(s)
-  ) return "PENDING";
+  if (["PENDING", "PROCESSING", "IN_PROGRESS", "INPROGRESS", "TP101", "TP102", "BP101", "BP103"].includes(s)) return "PENDING";
 
   return s || "UNKNOWN";
 }
@@ -1764,15 +1801,11 @@ async function intasendSendStkPush({ amount, phone_number, api_ref }) {
 }
 
 async function intasendCheckPaymentStatus({ invoice_id }) {
-  return intasendRequest("/payment/status/", {
-    invoice_id
-  });
+  return intasendRequest("/payment/status/", { invoice_id });
 }
 
 async function intasendListInvoicesByApiRef(apiRef) {
-  return intasendGet("/invoices/", {
-    api_ref: apiRef
-  });
+  return intasendGet("/invoices/", { api_ref: apiRef });
 }
 
 function extractInvoicesFromListResponse(resp) {
@@ -1826,6 +1859,8 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
     sub.invoiceId = invoiceId || sub.invoiceId || ref.invoiceId || null;
   }
 
+  createPaidJob({ userId, apiRef, ref, invoiceId, source });
+
   const filesForHistory = sub?.files || ref.files || [];
 
   rememberPaidChecks({
@@ -1842,41 +1877,18 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
       { parse_mode: "Markdown" }
     );
   } catch (e) {
-    await sendAdminMessage(
-      `❌ Could not message user ${userId} after payment completion. Error: ${safeText(
-        e?.message || e
-      )}`
-    );
+    await sendAdminMessage(`❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`);
   }
 
   await sendAdminMessage(
-    `✅ PAYMENT COMPLETE\nUser: ${userId}\nType: ${safeText(
-      ref.kind || "BATCH"
-    )}\nAmount: ${safeText(ref.amount)} KES\napiref: ${safeText(
-      apiRef
-    )}\ninvoiceid: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nSource: ${safeText(
-      source || "unknown"
-    )}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}`
+    `✅ PAYMENT COMPLETE\nUser: ${userId}\nType: ${safeText(ref.kind || "BATCH")}\nAmount: ${safeText(
+      ref.amount
+    )} KES\napiref: ${safeText(apiRef)}\ninvoiceid: ${safeText(
+      invoiceId || ref.invoiceId || "N/A"
+    )}\nSource: ${safeText(source || "unknown")}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}`
   );
 
   resetSubmission(userId);
-  return true;
-}
-
-async function recordPaymentNonComplete({ apiRef, invoiceId, state, source, reason }) {
-  const ref = getPaymentRef(apiRef);
-  if (!ref) return false;
-  if (ref.status === "COMPLETE") return false;
-
-  updatePaymentRef(apiRef, {
-    status: "PENDING",
-    invoiceId: invoiceId || ref.invoiceId || null,
-    lastState: state || "PENDING",
-    lastNonCompleteAt: Date.now(),
-    lastNonCompleteSource: source || "unknown",
-    lastNonCompleteReason: reason || null
-  });
-
   return true;
 }
 
@@ -1885,9 +1897,7 @@ async function handlePaymentAttemptFailed({ apiRef, invoiceId, state, source, re
   if (!ref) return false;
   if (ref.status === "COMPLETE") return false;
 
-  if (["FAILED", "CANCELLED", "EXPIRED"].includes(String(ref.status || "").toUpperCase())) {
-    return false;
-  }
+  if (["FAILED", "CANCELLED", "EXPIRED"].includes(String(ref.status || "").toUpperCase())) return false;
 
   updatePaymentRef(apiRef, {
     status: state || "FAILED",
@@ -1904,25 +1914,13 @@ async function handlePaymentAttemptFailed({ apiRef, invoiceId, state, source, re
   const userId = batchLookup?.userId || ref.userId;
   const sub = batchLookup?.sub || submissions[userId];
 
-  if (sub && !sub.paid) {
-    sub.stage = STAGE_WAIT_PAYMENT;
-  }
+  if (sub && !sub.paid) sub.stage = STAGE_WAIT_PAYMENT;
 
   try {
     await bot.telegram.sendMessage(
       userId,
-      `❌ Payment was not completed.
-
-Reason: ${safeText(reason || state || "Payment failed")}
-
-You can resend STK, change phone number, or pay via:
-${tillLine()}
-
-Then send the M-Pesa message or payment screenshot here.`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: paymentWaitKeyboard().reply_markup
-      }
+      `❌ Payment was not completed.\n\nReason: ${safeText(reason || state || "Payment failed")}\n\nYou can try again or pay via:\n${tillLine()}`,
+      { parse_mode: "Markdown", reply_markup: paymentWaitKeyboard().reply_markup }
     );
   } catch {}
 
@@ -1975,12 +1973,11 @@ async function queryPaymentStatus(invoiceId, apiRef) {
         null;
 
       if (matching) {
-        const invoiceState = normalizePaymentState(extractState(matching));
         const invoiceResult = {
           raw: resp,
           invoiceId: extractInvoiceId(matching) || invoiceId || null,
           apiRef: extractApiRef(matching) || apiRef,
-          state: invoiceState,
+          state: normalizePaymentState(extractState(matching)),
           failedReason:
             matching?.failed_reason ||
             matching?.invoice?.failed_reason ||
@@ -1991,10 +1988,7 @@ async function queryPaymentStatus(invoiceId, apiRef) {
         };
 
         if (invoiceResult.state === "COMPLETE") return invoiceResult;
-
-        if (!best || best.state === "UNKNOWN" || best.state === "PENDING") {
-          best = invoiceResult;
-        }
+        if (!best || best.state === "UNKNOWN" || best.state === "PENDING") best = invoiceResult;
       }
     } catch (err) {
       lastError = err;
@@ -2018,7 +2012,6 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
   if (!apiRef) return;
 
   stopStatusPolling(apiRef);
-
   let attempts = 0;
 
   activePollers[apiRef] = setInterval(async () => {
@@ -2027,9 +2020,7 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
     if (attempts > STATUS_POLL_MAX_ATTEMPTS) {
       stopStatusPolling(apiRef);
       await sendAdminMessage(
-        `⚠️ Payment watcher stopped after maximum attempts.\nUser ID: ${userId}\napiref: ${safeText(
-          apiRef
-        )}\ninvoiceid: ${safeText(invoiceId || "N/A")}`
+        `⚠️ Payment watcher stopped.\nUser ID: ${userId}\napiref: ${safeText(apiRef)}\ninvoiceid: ${safeText(invoiceId || "N/A")}`
       );
       return;
     }
@@ -2075,8 +2066,6 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
           source: statusResp.source || "status-poll",
           reason: statusResp.failedReason
         });
-
-        return;
       }
     } catch (err) {
       updatePaymentRef(apiRef, {
@@ -2090,9 +2079,7 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
         await sendAdminMessage(
           `⚠️ IntaSend status poll failed\nUser ID: ${userId}\napiref: ${safeText(
             apiRef
-          )}\ninvoiceid: ${safeText(invoiceId || ref?.invoiceId || "N/A")}\nAttempt: ${attempts}\nHTTP: ${safeText(
-            err?.status || "N/A"
-          )}\nError: ${safeText(err?.message || err)}`
+          )}\nAttempt: ${attempts}\nError: ${safeText(err?.message || err)}`
         );
       }
     }
@@ -2113,16 +2100,8 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
     try {
       await bot.telegram.sendMessage(
         userId,
-        `⏳ Payment not confirmed yet.
-
-If STK is delayed, you may pay via:
-${tillLine()}
-
-Then send the M-Pesa message or payment screenshot here.`,
-        {
-          parse_mode: "Markdown",
-          reply_markup: paymentWaitKeyboard().reply_markup
-        }
+        `⏳ Payment not confirmed yet.\n\nYou may pay via:\n${tillLine()}\n\nThen send the M-Pesa message or screenshot here.`,
+        { parse_mode: "Markdown", reply_markup: paymentWaitKeyboard().reply_markup }
       );
     } catch {}
   }, PAYMENT_TIMEOUT_MS);
@@ -2136,7 +2115,6 @@ async function handleMpesaProofText(ctx, sub, text) {
 
   if (found) {
     const [apiRef] = found;
-
     updatePaymentRef(apiRef, {
       pendingProof: {
         type: "mpesa-text",
@@ -2154,35 +2132,37 @@ async function handleMpesaProofText(ctx, sub, text) {
     });
   }
 
-  const warningsText = parsed.warnings.length
-    ? parsed.warnings.map((w) => `• ${w}`).join("\n")
-    : "None";
+  const warningsText = parsed.warnings.length ? parsed.warnings.map((w) => `• ${w}`).join("\n") : "None";
 
   await sendAdminMessage(
     `🧾 M-Pesa message received\nUser ID: ${user.id}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient: ${proofValue(parsed.recipient)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`
+    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\n\nDetected:\nAmount: ${proofValue(
+      parsed.amount ? `${parsed.amount} KES` : ""
+    )}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient: ${proofValue(
+      parsed.recipient
+    )}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nCode: ${proofValue(
+      parsed.code
+    )}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(
+      parsed.detectedTime
+    )}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`
   );
 
   try {
-    await ctx.reply(
-      "✅ Payment proof received. Admin will verify shortly.",
-      {
-        reply_markup: paymentWaitKeyboard().reply_markup
-      }
-    );
+    await ctx.reply("✅ Payment proof received. Admin will verify.", {
+      reply_markup: paymentWaitKeyboard().reply_markup
+    });
   } catch {}
 }
 
 async function handlePaymentScreenshotProof(ctx, sub) {
   const user = ctx.from;
   const expectedAmount = Number(sub?.amount || 0);
-
   const photos = ctx.message.photo || [];
   const largest = photos[photos.length - 1];
 
   if (!largest) {
-    await ctx.reply("❌ No screenshot found. Please resend the payment screenshot.");
+    await ctx.reply("❌ No screenshot found.");
     return;
   }
 
@@ -2209,7 +2189,6 @@ async function handlePaymentScreenshotProof(ctx, sub) {
     const found = findLatestPendingPaymentRefByUser(user.id);
     if (found) {
       const [apiRef] = found;
-
       updatePaymentRef(apiRef, {
         pendingProof: {
           type: "screenshot-ocr",
@@ -2228,21 +2207,27 @@ async function handlePaymentScreenshotProof(ctx, sub) {
       });
     }
 
-    const warningsText = parsed.warnings.length
-      ? parsed.warnings.map((w) => `• ${w}`).join("\n")
-      : "None";
+    const warningsText = parsed.warnings.length ? parsed.warnings.map((w) => `• ${w}`).join("\n") : "None";
 
     await sendAdminMessage(
       `🖼️ Payment screenshot received\nUser ID: ${user.id}\nUsername: @${safeText(
         user.username || "N/A"
-      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nOCR status: ${ocrStatus}${ocrError ? `\nOCR note: ${safeText(ocrError)}` : ""}\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient: ${proofValue(parsed.recipient)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`
+      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nOCR status: ${ocrStatus}${ocrError ? `\nOCR note: ${safeText(ocrError)}` : ""}\n\nDetected:\nAmount: ${proofValue(
+        parsed.amount ? `${parsed.amount} KES` : ""
+      )}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient: ${proofValue(
+        parsed.recipient
+      )}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nCode: ${proofValue(
+        parsed.code
+      )}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(
+        parsed.detectedTime
+      )}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`
     );
 
     try {
       await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
     } catch {}
 
-    await ctx.reply("✅ Payment proof received. Admin will verify shortly.", {
+    await ctx.reply("✅ Payment proof received. Admin will verify.", {
       reply_markup: paymentWaitKeyboard().reply_markup
     });
   } catch (err) {
@@ -2256,7 +2241,7 @@ async function handlePaymentScreenshotProof(ctx, sub) {
       await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
     } catch {}
 
-    await ctx.reply("✅ Payment proof received. Admin will verify shortly.", {
+    await ctx.reply("✅ Payment proof received. Admin will verify.", {
       reply_markup: paymentWaitKeyboard().reply_markup
     });
   } finally {
@@ -2272,19 +2257,14 @@ async function attemptStkPush(ctx, sub, { mode }) {
 
   if (!sub?.phone || !sub?.amount || !sub?.batchId) {
     sub.stage = STAGE_WAIT_PHONE;
-    await ctx.reply("⚠️ Missing payment details. Please send your phone number again.", {
+    await ctx.reply("⚠️ Missing payment details. Send phone number again.", {
       reply_markup: mainKeyboard()
     });
     return;
   }
 
-  if (
-    mode === "resend" &&
-    sub.stkSentAt &&
-    Date.now() - sub.stkSentAt < STK_RESEND_COOLDOWN_MS
-  ) {
-    const remainingMs = STK_RESEND_COOLDOWN_MS - (Date.now() - sub.stkSentAt);
-    const remainingSec = Math.ceil(remainingMs / 1000);
+  if (mode === "resend" && sub.stkSentAt && Date.now() - sub.stkSentAt < STK_RESEND_COOLDOWN_MS) {
+    const remainingSec = Math.ceil((STK_RESEND_COOLDOWN_MS - (Date.now() - sub.stkSentAt)) / 1000);
     if (ctx.answerCbQuery) await ctx.answerCbQuery(`Wait ${remainingSec}s`);
     return;
   }
@@ -2292,15 +2272,9 @@ async function attemptStkPush(ctx, sub, { mode }) {
   if (mode === "resend") {
     sub.resendCount = (sub.resendCount || 0) + 1;
     if (sub.resendCount > STK_MAX_RESENDS) {
-      await ctx.reply(
-        `⚠️ Resend limit reached.
-
-Pay via:
-${tillLine()}
-
-Then send the M-Pesa message or payment screenshot here.`,
-        { parse_mode: "Markdown" }
-      );
+      await ctx.reply(`⚠️ Resend limit reached.\n\nPay via:\n${tillLine()}`, {
+        parse_mode: "Markdown"
+      });
       return;
     }
   }
@@ -2377,27 +2351,15 @@ Then send the M-Pesa message or payment screenshot here.`,
       failurePayload: err?.payload || null
     });
 
-    await ctx.reply(
-      `❌ STK Push failed.
-
-Try again or pay via:
-${tillLine()}
-
-Then send the M-Pesa message or payment screenshot here.`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: paymentWaitKeyboard().reply_markup
-      }
-    );
+    await ctx.reply(`❌ STK Push failed.\n\nTry again or pay via:\n${tillLine()}`, {
+      parse_mode: "Markdown",
+      reply_markup: paymentWaitKeyboard().reply_markup
+    });
 
     await sendAdminMessage(
       `❌ STK Push error\nUser ID: ${userId}\napiref: ${safeText(apiRef)}\nPhone: ${safeText(
         sub.phone
-      )}\nHTTP: ${safeText(err?.status || "N/A")}\nError: ${safeText(
-        err?.message || err
-      )}\nPayload: ${safeText(JSON.stringify(err?.payload || {}))}\nMode: ${
-        INTASEND_TEST ? "TEST" : "LIVE"
-      }\nHost: ${PUBLIC_BASE_URL}`
+      )}\nError: ${safeText(err?.message || err)}`
     );
   }
 }
@@ -2409,18 +2371,14 @@ bot.start(async (ctx) => {
   const user = ctx.from;
 
   if (user.id === ADMIN_ID) {
-    await replyMarkdownSafe(ctx, "👋 Admin mode is ready.", {
-      reply_markup: mainKeyboard()
-    });
+    await replyMarkdownSafe(ctx, "👋 Admin mode is ready.", { reply_markup: mainKeyboard() });
     return;
   }
 
   await sendAdminMessage(
     `🔥 New user started bot\nName: ${safeText(user.first_name)} ${safeText(
       user.last_name
-    )}\nUsername: @${safeText(user.username || "N/A")}\nUser ID: ${user.id}${adminQuickCommands(
-      user.id
-    )}`
+    )}\nUsername: @${safeText(user.username || "N/A")}\nUser ID: ${user.id}${adminQuickCommands(user.id)}`
   );
 
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
@@ -2428,9 +2386,7 @@ bot.start(async (ctx) => {
   await replyMarkdownSafe(
     ctx,
     `${MESSAGES.welcome(CHECK_PRICE_KES, RECHECK_PRICE_KES, RESALE_PRICE_KES)}\nTap the button below to begin.`,
-    {
-      reply_markup: startInlineKeyboard().reply_markup
-    }
+    { reply_markup: startInlineKeyboard().reply_markup }
   );
 });
 
@@ -2455,8 +2411,7 @@ bot.command("reply", async (ctx) => {
 
 ${replyText}
 
-━━━━━━━━━━━━━━━
-_We’re here if you need anything else._`,
+━━━━━━━━━━━━━━━`,
       { parse_mode: "Markdown" }
     );
 
@@ -2498,6 +2453,8 @@ bot.command("donebatch", async (ctx) => {
   delete pendingFileTargets[ADMIN_ID];
 
   if (sentCount > 0) {
+    markLatestPaidJobDelivered(userId);
+
     try {
       await bot.telegram.sendMessage(userId, REPORTS_DELIVERED_MESSAGE);
     } catch {}
@@ -2520,23 +2477,15 @@ bot.command("cancelreply", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
   const replyTarget = pendingAdminReplies[ADMIN_ID];
-  if (!replyTarget) {
-    return ctx.reply("No active reply session.");
-  }
+  if (!replyTarget) return ctx.reply("No active reply session.");
 
   delete pendingAdminReplies[ADMIN_ID];
-
   await ctx.reply(`✅ Reply session cancelled for user ${replyTarget.userId}.`);
 });
 
 function findLatestPendingPaymentRefByUser(userId) {
   const entries = Object.entries(paymentRefs)
-    .filter(([apiRef, value]) => {
-      return (
-        String(value?.userId) === String(userId) &&
-        value?.status !== "COMPLETE"
-      );
-    })
+    .filter(([apiRef, value]) => String(value?.userId) === String(userId) && value?.status !== "COMPLETE")
     .sort((a, b) => Number(b[1]?.createdAt || 0) - Number(a[1]?.createdAt || 0));
 
   return entries[0] || null;
@@ -2544,12 +2493,7 @@ function findLatestPendingPaymentRefByUser(userId) {
 
 async function manuallyConfirmLatestPaymentForUser(userId, source) {
   const found = findLatestPendingPaymentRefByUser(userId);
-  if (!found) {
-    return {
-      ok: false,
-      message: `❌ No pending payment found for user ${userId}`
-    };
-  }
+  if (!found) return { ok: false, message: `❌ No pending payment found for user ${userId}` };
 
   const [apiRef, ref] = found;
 
@@ -2573,14 +2517,10 @@ bot.command("paidref", async (ctx) => {
   const parts = (ctx.message.text || "").trim().split(/\s+/);
   const apiRef = parts[1];
 
-  if (!apiRef) {
-    return ctx.reply("Usage: /paidref <apiref>");
-  }
+  if (!apiRef) return ctx.reply("Usage: /paidref <apiref>");
 
   const ref = getPaymentRef(apiRef);
-  if (!ref) {
-    return ctx.reply(`❌ No payment found for apiref: ${apiRef}`);
-  }
+  if (!ref) return ctx.reply(`❌ No payment found for apiref: ${apiRef}`);
 
   await markPaymentComplete({
     apiRef,
@@ -2598,9 +2538,7 @@ bot.command("paiduser", async (ctx) => {
   const parts = (ctx.message.text || "").trim().split(/\s+/);
   const userId = parts[1];
 
-  if (!userId) {
-    return ctx.reply("Usage: /paiduser <userId>");
-  }
+  if (!userId) return ctx.reply("Usage: /paiduser <userId>");
 
   const result = await manuallyConfirmLatestPaymentForUser(userId, "admin-manual-command");
   await ctx.reply(result.message);
@@ -2630,15 +2568,10 @@ bot.action(/^ADMIN_REPLY_(\d+)$/, async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
 
   const userId = ctx.match[1];
-
-  pendingAdminReplies[ADMIN_ID] = {
-    userId
-  };
+  pendingAdminReplies[ADMIN_ID] = { userId };
 
   await ctx.answerCbQuery("Reply mode opened");
-  await ctx.reply(
-    `💬 Reply mode opened for user ${userId}.\nType the message you want to send.\nTo cancel, send /cancelreply`
-  );
+  await ctx.reply(`💬 Reply mode opened for user ${userId}.\nSend message or /cancelreply`);
 });
 
 bot.action(/^ADMIN_PAID_(\d+)$/, async (ctx) => {
@@ -2677,18 +2610,11 @@ bot.hears(KEY_SEND_MPESA, async (ctx) => {
 
 bot.hears(KEY_CONTACT_SUPPORT, async (ctx) => {
   supportRequests[ctx.from.id] = true;
-  await ctx.reply(
-    "💬 Please type your message for the Support Team For Any Help.",
-    { reply_markup: mainKeyboard() }
-  );
+  await ctx.reply("💬 Type your message for support.", { reply_markup: mainKeyboard() });
 });
 
 bot.hears(KEY_CANCEL, async (ctx) => {
-  await notifyUserCancelledToAdmin(ctx.from);
-  resetSubmission(ctx.from.id);
-  await ctx.reply("❌ Cancelled. Send a new document to start again.", {
-    reply_markup: mainKeyboard()
-  });
+  await handleCancelRequest(ctx, "main");
 });
 
 // =====================
@@ -2699,10 +2625,7 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
   const userId = ctx.from.id;
 
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
-
-  if (count < 1 || count > MAX_BATCH_FILES) {
-    return ctx.answerCbQuery("Invalid number.");
-  }
+  if (count < 1 || count > MAX_BATCH_FILES) return ctx.answerCbQuery("Invalid number.");
 
   const sub = ensureFreshSubmission(userId);
   sub.expectedFiles = count;
@@ -2724,13 +2647,10 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
     sub.stage = STAGE_WAIT_FILE_TYPE;
     sub.pendingInitialDocument = null;
 
-    await ctx.reply(
-      `✅ You selected *${count}* file(s).\n\nYour first document has been captured as *file 1*.`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: mainKeyboard()
-      }
-    );
+    await ctx.reply(`✅ Selected *${count}* file(s).\n\nFirst document saved as *file 1*.`, {
+      parse_mode: "Markdown",
+      reply_markup: mainKeyboard()
+    });
 
     await forwardAcceptedDocumentByIds(
       pending.userId,
@@ -2745,13 +2665,10 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
     return;
   }
 
-  await ctx.reply(
-    `✅ You selected *${count}* file(s).\n\nNow send file *1* of *${count}* as a *document*.`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: mainKeyboard()
-    }
-  );
+  await ctx.reply(`✅ Selected *${count}* file(s).\n\nSend file *1* of *${count}* as a document.`, {
+    parse_mode: "Markdown",
+    reply_markup: mainKeyboard()
+  });
 });
 
 // =====================
@@ -2763,9 +2680,7 @@ bot.on("document", async (ctx) => {
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
 
-    if (!target) {
-      return ctx.reply("Use /filebatch <userId> first.");
-    }
+    if (!target) return ctx.reply("Use /filebatch <userId> first.");
 
     initBatchTracking(target);
 
@@ -2818,23 +2733,17 @@ bot.on("document", async (ctx) => {
     };
 
     await ctx.reply(
-      `📦 First document received.\n\nNow choose how many files you want to upload.\nYour first document will be used as *file 1* after you choose the number.`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: batchSizeKeyboard().reply_markup
-      }
+      `📦 First document received.\n\nChoose number of files. This is file 1.`,
+      { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
     );
     return;
   }
 
   if (sub.stage === STAGE_WAIT_BATCH_SIZE) {
     if (sub.pendingInitialDocument) {
-      await ctx.reply(
-        "📦 Please choose the number of files first. Your first document is already held and will be used as file 1.",
-        {
-          reply_markup: batchSizeKeyboard().reply_markup
-        }
-      );
+      await ctx.reply("📦 Choose number of files first.", {
+        reply_markup: batchSizeKeyboard().reply_markup
+      });
       return;
     }
 
@@ -2852,18 +2761,15 @@ bot.on("document", async (ctx) => {
       lastName: user.last_name || ""
     };
 
-    await ctx.reply(
-      `📦 First document received.\n\nNow choose how many files you want to upload.\nYour first document will be used as *file 1* after you choose the number.`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: batchSizeKeyboard().reply_markup
-      }
-    );
+    await ctx.reply(`📦 First document received.\n\nChoose number of files. This is file 1.`, {
+      parse_mode: "Markdown",
+      reply_markup: batchSizeKeyboard().reply_markup
+    });
     return;
   }
 
   if (sub.stage === STAGE_WAIT_FILE_TYPE || sub.stage === STAGE_WAIT_RESELLER_CODE) {
-    return ctx.reply("⚠️ Please choose a type for the previous file first.", {
+    return ctx.reply("⚠️ Choose type for the previous file first.", {
       parse_mode: "Markdown",
       reply_markup: typeInlineKeyboard(
         Boolean(getCurrentPendingFile(sub)?.recheckEligible),
@@ -2874,22 +2780,14 @@ bot.on("document", async (ctx) => {
   }
 
   if (sub.stage === STAGE_WAIT_PHONE || sub.stage === STAGE_WAIT_PAYMENT) {
-    return ctx.reply(
-      "⚠️ This batch is already in payment state. Please finish payment or tap *Cancel / New submission* to start another batch.",
-      {
-        parse_mode: "Markdown",
-        reply_markup: mainKeyboard()
-      }
-    );
+    return ctx.reply("⚠️ Finish payment or cancel this payment attempt first.", {
+      parse_mode: "Markdown",
+      reply_markup: paymentWaitKeyboard().reply_markup
+    });
   }
 
   if (!canAcceptMoreFiles(sub)) {
-    return ctx.reply(
-      "✅ You have already uploaded the selected number of files.\nIf you are ready, continue with the next prompt.",
-      {
-        reply_markup: mainKeyboard()
-      }
-    );
+    return ctx.reply("✅ Selected file count already uploaded.", { reply_markup: mainKeyboard() });
   }
 
   const doc = ctx.message.document;
@@ -2919,18 +2817,14 @@ bot.on("photo", async (ctx) => {
 
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
-    if (!target) {
-      return ctx.reply("Use /filebatch <userId> first.");
-    }
+    if (!target) return ctx.reply("Use /filebatch <userId> first.");
 
     initBatchTracking(target);
 
     const photos = ctx.message.photo || [];
     const largest = photos[photos.length - 1];
 
-    if (!largest) {
-      return ctx.reply("❌ No photo found.");
-    }
+    if (!largest) return ctx.reply("❌ No photo found.");
 
     const deliveryKey = makePhotoDeliveryKey(largest);
 
@@ -2962,17 +2856,14 @@ bot.on("photo", async (ctx) => {
     return;
   }
 
-  if (
-    sub &&
-    [STAGE_WAIT_BATCH_SIZE, STAGE_WAIT_UPLOADS, STAGE_WAIT_FILE_TYPE, STAGE_WAIT_RESELLER_CODE].includes(sub.stage)
-  ) {
-    return ctx.reply("⚠️ Please send your file as a *document*, not as a photo.", {
+  if (sub && [STAGE_WAIT_BATCH_SIZE, STAGE_WAIT_UPLOADS, STAGE_WAIT_FILE_TYPE, STAGE_WAIT_RESELLER_CODE].includes(sub.stage)) {
+    return ctx.reply("⚠️ Send file as a document, not photo.", {
       parse_mode: "Markdown",
       reply_markup: mainKeyboard()
     });
   }
 
-  await ctx.reply("⚠️ Please tap *Send Document* and upload your file as a *document*, not a photo.", {
+  await ctx.reply("⚠️ Tap *Send Document* and upload as document.", {
     parse_mode: "Markdown",
     reply_markup: startInlineKeyboard().reply_markup
   });
@@ -3001,26 +2892,21 @@ bot.action("DONE_UPLOADING", async (ctx) => {
   const sub = submissions[userId];
 
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
-
-  if (!sub || sub.stage !== STAGE_WAIT_UPLOADS) {
-    return ctx.answerCbQuery("Nothing to finish.");
-  }
-
-  if (sub.files.length === 0) {
-    return ctx.answerCbQuery("Upload at least one file first.");
-  }
+  if (!sub || sub.stage !== STAGE_WAIT_UPLOADS) return ctx.answerCbQuery("Nothing to finish.");
+  if (sub.files.length === 0) return ctx.answerCbQuery("Upload at least one file first.");
 
   await ctx.answerCbQuery("Finishing batch");
   await moveBatchToPhoneStep(ctx, sub);
 });
 
 bot.action("TYPE_CANCEL", async (ctx) => {
-  await notifyUserCancelledToAdmin(ctx.from);
-  resetSubmission(ctx.from.id);
-  await ctx.answerCbQuery("Cancelled");
-  await ctx.reply("❌ Cancelled. Send a new document to start again.", {
-    reply_markup: mainKeyboard()
-  });
+  await ctx.answerCbQuery("Cancelling");
+  await handleCancelRequest(ctx, "document");
+});
+
+bot.action("PAYMENT_CANCEL", async (ctx) => {
+  await ctx.answerCbQuery("Cancelling payment attempt");
+  await handleCancelRequest(ctx, "payment");
 });
 
 // =====================
@@ -3035,12 +2921,7 @@ bot.action("STK_CHANGE_PHONE", async (ctx) => {
   sub.phone = null;
 
   await ctx.answerCbQuery("Send new phone");
-  await ctx.reply(
-    "📞 Send your phone number again (07XXXXXXXX / 01XXXXXXXX).",
-    {
-      reply_markup: mainKeyboard()
-    }
-  );
+  await ctx.reply("📞 Send phone number again.", { reply_markup: mainKeyboard() });
 });
 
 bot.action("STK_RESEND", async (ctx) => {
@@ -3052,9 +2933,7 @@ bot.action("STK_RESEND", async (ctx) => {
 
   if (!sub.phone) {
     sub.stage = STAGE_WAIT_PHONE;
-    await ctx.reply("📞 Please send your phone number again.", {
-      reply_markup: mainKeyboard()
-    });
+    await ctx.reply("📞 Send phone number again.", { reply_markup: mainKeyboard() });
     return;
   }
 
@@ -3084,8 +2963,7 @@ bot.on("text", async (ctx) => {
 
 ${text}
 
-━━━━━━━━━━━━━━━
-_We’re here if you need anything else._`,
+━━━━━━━━━━━━━━━`,
         { parse_mode: "Markdown" }
       );
 
@@ -3105,17 +2983,11 @@ _We’re here if you need anything else._`,
       await sendAdminMessage(
         `💬 Support message from user\nUser ID: ${user.id}\nUsername: @${safeText(
           user.username || "N/A"
-        )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\n${safeText(
-          text
-        )}${adminQuickCommands(user.id)}`
+        )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\n${safeText(text)}${adminQuickCommands(user.id)}`
       );
-      await ctx.reply("✅ Your message has been sent to the Support Team.", {
-        reply_markup: mainKeyboard()
-      });
+      await ctx.reply("✅ Sent to support.", { reply_markup: mainKeyboard() });
     } catch {
-      await ctx.reply("❌ Failed to send your message. Please try again.", {
-        reply_markup: mainKeyboard()
-      });
+      await ctx.reply("❌ Failed. Try again.", { reply_markup: mainKeyboard() });
     }
     return;
   }
@@ -3127,7 +2999,7 @@ _We’re here if you need anything else._`,
   if (sub && sub.stage === STAGE_WAIT_RESELLER_CODE) {
     if (!RESALE_ENABLED) {
       sub.stage = STAGE_WAIT_FILE_TYPE;
-      return ctx.reply(`⚠️ ${RESALE_LABEL} is not enabled right now.`, {
+      return ctx.reply(`⚠️ ${RESALE_LABEL} is not enabled.`, {
         reply_markup: typeInlineKeyboard(
           Boolean(getCurrentPendingFile(sub)?.recheckEligible),
           RESALE_ENABLED,
@@ -3138,7 +3010,7 @@ _We’re here if you need anything else._`,
 
     if (!resellerCodeMatches(text)) {
       sub.stage = STAGE_WAIT_FILE_TYPE;
-      return ctx.reply(`❌ Wrong code. Choose another type or tap ${RESALE_LABEL} again to retry.`, {
+      return ctx.reply(`❌ Wrong code. Choose another type.`, {
         reply_markup: typeInlineKeyboard(
           Boolean(getCurrentPendingFile(sub)?.recheckEligible),
           RESALE_ENABLED,
@@ -3148,18 +3020,14 @@ _We’re here if you need anything else._`,
     }
 
     sub.resellerVerified = true;
-    await ctx.reply(`✅ Code accepted. ${RESALE_LABEL} price applied.`);
+    await ctx.reply(`✅ Code accepted.`);
     await finalizeFileTypeSelection(ctx, sub, "RESALE");
     return;
   }
 
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
-    if (!phone254) {
-      return ctx.reply(
-        "❌ Invalid phone. Send like 07XXXXXXXX or 01XXXXXXXX."
-      );
-    }
+    if (!phone254) return ctx.reply("❌ Invalid phone. Use 07XXXXXXXX or 01XXXXXXXX.");
 
     sub.phone = phone254;
     await attemptStkPush(ctx, sub, { mode: "initial" });
@@ -3180,19 +3048,14 @@ _We’re here if you need anything else._`,
   }
 
   if (sub && sub.stage === STAGE_WAIT_UPLOADS) {
-    return ctx.reply(
-      `📄 Please send file ${sub.files.length + 1} of ${
-        sub.expectedFiles
-      } as a *document*.\nOr tap *Done Uploading* if you are finished early.`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: uploadContinueKeyboard().reply_markup
-      }
-    );
+    return ctx.reply(`📄 Send file ${sub.files.length + 1} of ${sub.expectedFiles} as document.`, {
+      parse_mode: "Markdown",
+      reply_markup: uploadContinueKeyboard().reply_markup
+    });
   }
 
   if (sub && sub.stage === STAGE_WAIT_FILE_TYPE) {
-    return ctx.reply("⚠️ Please choose a type for the last uploaded file first.", {
+    return ctx.reply("⚠️ Choose type for the last file first.", {
       parse_mode: "Markdown",
       reply_markup: typeInlineKeyboard(
         Boolean(getCurrentPendingFile(sub)?.recheckEligible),
@@ -3203,7 +3066,7 @@ _We’re here if you need anything else._`,
   }
 
   if (!sub) {
-    return ctx.reply("Tap *Send Document* below to start your submission.", {
+    return ctx.reply("Tap *Send Document* to start.", {
       parse_mode: "Markdown",
       reply_markup: startInlineKeyboard().reply_markup
     });
@@ -3258,6 +3121,7 @@ app.get("/health", (req, res) => {
     publishableKeyPresent: Boolean(INTASEND_PUBLISHABLE_KEY),
     publishableKeyLooksValid: String(INTASEND_PUBLISHABLE_KEY).startsWith("ISPubKey_"),
     pendingSubmissions: Object.keys(submissions).length,
+    paidJobs: Object.keys(paidJobs).length,
     activePollers: Object.keys(activePollers).length,
     processedUpdateCache: processedUpdateCache.size,
     checkHistoryRecords: checkHistory.length,
@@ -3275,20 +3139,12 @@ app.get("/health", (req, res) => {
     reportProcessingMinMinutes: REPORT_PROCESSING_MIN_MINUTES,
     reportProcessingMaxMinutes: REPORT_PROCESSING_MAX_MINUTES,
     reportProcessingLabel: REPORT_PROCESSING_LABEL,
-    reportProcessingCustomEnabled: REPORT_PROCESSING_CUSTOM_ENABLED,
-    reportProcessingCustomMessagePresent: Boolean(REPORT_PROCESSING_MESSAGE_OVERRIDE),
     reportProcessingMessage: reportProcessingTimeText(),
     checkPriceKes: CHECK_PRICE_KES,
     recheckPriceKes: RECHECK_PRICE_KES,
     resaleEnabled: RESALE_ENABLED,
     resalePriceKes: RESALE_PRICE_KES,
     resaleLabel: RESALE_LABEL,
-    resaleCodeVisible: RESALE_CODE_VISIBLE,
-    resaleAmountVisible: RESALE_AMOUNT_VISIBLE,
-    discountTimeVisible: DISCOUNT_TIME_VISIBLE,
-    discountStartEat: DISCOUNT_START_EAT,
-    discountEndEat: DISCOUNT_END_EAT,
-    discountTimeText: discountTimeText(),
     inactiveStartUtc: INACTIVE_START_UTC,
     inactiveEndUtc: INACTIVE_END_UTC,
     inactiveEndEat: INACTIVE_END_EAT,
@@ -3338,7 +3194,7 @@ app.post("/intasend/webhook", (req, res) => {
         INTASEND_WEBHOOK_CHALLENGE &&
         String(payload.challenge).trim() !== INTASEND_WEBHOOK_CHALLENGE
       ) {
-        await sendAdminMessage("⚠️ IntaSend webhook: invalid challenge received.");
+        await sendAdminMessage("⚠️ IntaSend webhook: invalid challenge.");
         return;
       }
 
@@ -3359,9 +3215,7 @@ app.post("/intasend/webhook", (req, res) => {
 
       if (!apiRef) {
         await sendAdminMessage(
-          `⚠️ IntaSend webhook received but apiref not matched.\ninvoiceid: ${safeText(
-            invoiceId || "N/A"
-          )}\nstate: ${safeText(state)}`
+          `⚠️ IntaSend webhook not matched.\ninvoiceid: ${safeText(invoiceId || "N/A")}\nstate: ${safeText(state)}`
         );
         return;
       }
@@ -3400,8 +3254,6 @@ app.post("/intasend/webhook", (req, res) => {
           source: "webhook",
           reason
         });
-
-        return;
       }
     } catch (err) {
       console.error("Async IntaSend webhook processing error:", err?.message || err);
@@ -3430,18 +3282,11 @@ app.listen(port, async () => {
   console.log(`Payment OCR max: ${PAYMENT_OCR_MAX_MB} MB`);
   console.log(`Payment OCR timeout: ${PAYMENT_OCR_TIMEOUT_SECONDS}s`);
   console.log(`Report processing message: ${reportProcessingTimeText().replace(/\*/g, "")}`);
+  console.log(`Paid cancellation opens after max processing: ${REPORT_PROCESSING_MAX_MINUTES} minutes`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
-  console.log(`Resale enabled: ${RESALE_ENABLED ? "YES" : "NO"}`);
-  console.log(`Resale label: ${RESALE_LABEL}`);
-  console.log(`Resale code visible: ${RESALE_CODE_VISIBLE ? "YES" : "NO"}`);
-  console.log(`Resale amount visible: ${RESALE_AMOUNT_VISIBLE ? "YES" : "NO"}`);
-  console.log(`Discount time visible: ${DISCOUNT_TIME_VISIBLE ? "YES" : "NO"}`);
-  console.log(`Discount time: ${discountTimeText() || "N/A"}`);
   console.log(`Payment polling: every ${STATUS_POLL_INTERVAL_MS / 1000}s, max ${STATUS_POLL_MAX_ATTEMPTS} attempts`);
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
-  console.log("Recheck rule: same user + same visible file name within 24 hours");
-  console.log("Telegram webhook uses immediate ACK to prevent duplicate retries.");
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
 
