@@ -132,7 +132,11 @@ if (!INTASEND_PUBLISHABLE_KEY) {
 const INTASEND_API_BASE = "https://api.intasend.com/api/v1";
 const ADMIN_ID = Number(process.env.ADMIN_ID || 6569201830);
 const MAX_BATCH_FILES = 5;
-const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915");
+const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915").trim();
+
+const PAYMENT_PROOF_RECIPIENT = String(
+  process.env.PAYMENT_PROOF_RECIPIENT || "JOHNKAPTAIN SOLUTIONS HUB"
+).trim();
 
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
 const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
@@ -193,6 +197,7 @@ function reportProcessingTimeText() {
 
 const RECHECK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const CHECK_HISTORY_RETENTION_MS = 72 * 60 * 60 * 1000;
+const USED_PROOF_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 const INACTIVE_START_UTC = normalizeHHMM(
   process.env.INACTIVE_START_UTC,
@@ -331,17 +336,23 @@ If urgent, WhatsApp call *0701730921*.
 ✅ Default method: *STK Push*
 Choose your batch size → upload files → choose Check/Recheck${RESALE_ENABLED ? `/${RESALE_LABEL}` : ""} where eligible → enter phone number → receive *one combined STK prompt*.
 
-🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED ? `\n\n🏷️ ${RESALE_LABEL} requires a code.${discountTimeLineForMessage()}` : ""}
+If STK prompt delays/fails, you may pay via Till:
 
-If prompt delays/fails, tap *Resend STK Push*.`,
+\`${TILL_NUMBER}\`
+
+Recipient: *${PAYMENT_PROOF_RECIPIENT}*
+
+Then send the M-Pesa confirmation message or screenshot here.
+
+🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED ? `\n\n🏷️ ${RESALE_LABEL} requires a code.${discountTimeLineForMessage()}` : ""}`,
   askPhoneBatch: (summary, amount) =>
     `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
   stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
   stkSentSimple: "✅ STK Push sent. Pay on your phone — confirmation is automatic.",
   stkSentWithTill: (till) =>
-    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails or delays, you may pay via Till:\n\n\`${till}\`\n\nSend proof here as screenshot, not text.`,
+    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails or delays, you may pay via Till:\n\n\`${till}\`\n\nRecipient: *${PAYMENT_PROOF_RECIPIENT}*\n\nSend M-Pesa confirmation message or screenshot here.`,
   waitingConfirm:
-    "Waiting for payment confirmation…\n\nIf webhook delays, the bot will also check IntaSend status automatically.",
+    `Waiting for payment confirmation…\n\nIf webhook delays, the bot will also check IntaSend status automatically.\n\nIf STK prompt does not come, you may pay via Till:\n\n\`${TILL_NUMBER}\`\n\nRecipient: *${PAYMENT_PROOF_RECIPIENT}*\n\nThen send M-Pesa confirmation message or screenshot here.`,
   paidMsgBatch: (amount, summary) =>
     `✅ Payment confirmed (${amount} KES).\n\n${summary}\n\n⏱ ${reportProcessingTimeText()}`
 };
@@ -361,9 +372,11 @@ const PROCESSED_UPDATE_TTL_MS = 30 * 60 * 1000;
 
 let paymentRefs = {};
 let checkHistory = [];
+let usedProofCodes = {};
 
 const STORE_FILE = path.join(__dirname, "paymentRefs.store.json");
 const CHECK_HISTORY_FILE = path.join(__dirname, "checkHistory.store.json");
+const USED_PROOF_CODES_FILE = path.join(__dirname, "usedProofCodes.store.json");
 
 // =====================
 // DUPLICATE UPDATE GUARD
@@ -477,6 +490,77 @@ setInterval(() => {
 
   if (changed) saveStore();
 }, 6 * 60 * 60 * 1000);
+
+// =====================
+// USED PROOF CODE STORE
+// =====================
+function normalizeProofCode(code) {
+  return String(code || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function loadUsedProofCodes() {
+  try {
+    if (!fs.existsSync(USED_PROOF_CODES_FILE)) return;
+    const raw = fs.readFileSync(USED_PROOF_CODES_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") usedProofCodes = parsed;
+  } catch (e) {
+    console.error("Failed to load used proof codes:", e?.message || e);
+  }
+}
+
+function saveUsedProofCodes() {
+  try {
+    fs.writeFileSync(USED_PROOF_CODES_FILE, JSON.stringify(usedProofCodes, null, 2), "utf8");
+  } catch (e) {
+    console.error("Failed to save used proof codes:", e?.message || e);
+  }
+}
+
+function cleanupUsedProofCodes() {
+  const now = Date.now();
+  let changed = false;
+
+  for (const [code, record] of Object.entries(usedProofCodes)) {
+    const t = Number(record?.confirmedAt || 0);
+    if (!t || now - t > USED_PROOF_RETENTION_MS) {
+      delete usedProofCodes[code];
+      changed = true;
+    }
+  }
+
+  if (changed) saveUsedProofCodes();
+}
+
+function isProofCodeUsed(code) {
+  const normalized = normalizeProofCode(code);
+  if (!normalized) return false;
+  return Boolean(usedProofCodes[normalized]);
+}
+
+function rememberUsedProofCode(code, details) {
+  const normalized = normalizeProofCode(code);
+  if (!normalized) return;
+
+  usedProofCodes[normalized] = {
+    code: normalized,
+    userId: details?.userId || null,
+    apiRef: details?.apiRef || null,
+    amount: details?.amount || null,
+    source: details?.source || "manual-confirm",
+    confirmedAt: Date.now()
+  };
+
+  cleanupUsedProofCodes();
+  saveUsedProofCodes();
+}
+
+loadUsedProofCodes();
+cleanupUsedProofCodes();
+setInterval(cleanupUsedProofCodes, 6 * 60 * 60 * 1000);
 
 // =====================
 // CHECK HISTORY PERSISTENCE
@@ -638,6 +722,121 @@ function safeFileName(name) {
     .replace(/[\\/:*?"<>|]+/g, "_")
     .replace(/\s+/g, " ")
     .trim() || fallback;
+}
+
+function normalizeLoose(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "");
+}
+
+function normalizeWords(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractMoneyAmount(text) {
+  const s = String(text || "");
+  const patterns = [
+    /\b(?:KSH|KES|KSHS|K)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
+    /\b([0-9][0-9,]*(?:\.\d{1,2})?)\s*(?:KSH|KES|KSHS)\b/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = s.match(pattern);
+    if (match) {
+      const n = Number(String(match[1]).replace(/,/g, ""));
+      if (Number.isFinite(n)) return Math.round(n);
+    }
+  }
+
+  return null;
+}
+
+function extractMpesaCode(text) {
+  const s = String(text || "").toUpperCase();
+  const firstWord = s.trim().split(/\s+/)[0] || "";
+  const firstCandidate = normalizeProofCode(firstWord);
+
+  if (/^[A-Z0-9]{10}$/.test(firstCandidate) && /[A-Z]/.test(firstCandidate) && /\d/.test(firstCandidate)) {
+    return firstCandidate;
+  }
+
+  const matches = s.match(/\b[A-Z0-9]{10}\b/g) || [];
+  for (const item of matches) {
+    const code = normalizeProofCode(item);
+    if (/[A-Z]/.test(code) && /\d/.test(code)) return code;
+  }
+
+  return "";
+}
+
+function extractProofTime(text) {
+  const s = String(text || "");
+
+  const match1 = s.match(/\bon\s+([0-3]?\d[\/.-][01]?\d[\/.-]\d{2,4})\s+at\s+([0-2]?\d:[0-5]\d\s*(?:AM|PM)?)/i);
+  if (match1) return `${match1[1]} ${match1[2]}`.trim();
+
+  const match2 = s.match(/\b([0-3]?\d[\/.-][01]?\d[\/.-]\d{2,4})\s+([0-2]?\d:[0-5]\d\s*(?:AM|PM)?)/i);
+  if (match2) return `${match2[1]} ${match2[2]}`.trim();
+
+  const match3 = s.match(/\b([0-2]?\d:[0-5]\d\s*(?:AM|PM)?)\b/i);
+  if (match3) return match3[1].trim();
+
+  return "";
+}
+
+function parsePaymentProofText(text, expectedAmount) {
+  const raw = String(text || "");
+  const compactText = normalizeLoose(raw);
+  const compactRecipient = normalizeLoose(PAYMENT_PROOF_RECIPIENT);
+  const compactTill = normalizeLoose(TILL_NUMBER);
+
+  const amount = extractMoneyAmount(raw);
+  const code = extractMpesaCode(raw);
+  const detectedTime = extractProofTime(raw);
+
+  const recipientMatch = compactRecipient ? compactText.includes(compactRecipient) : false;
+  const tillMatch = compactTill ? compactText.includes(compactTill) : false;
+  const amountMatch = Number(amount) === Number(expectedAmount);
+  const duplicateCode = code ? isProofCodeUsed(code) : false;
+
+  let confidence = "Low";
+  if (amountMatch && code && (recipientMatch || tillMatch) && !duplicateCode) {
+    confidence = "High";
+  } else if (amountMatch && code && !duplicateCode) {
+    confidence = "Medium";
+  }
+
+  const warnings = [];
+  if (!amount) warnings.push("Amount not detected");
+  if (amount && !amountMatch) warnings.push(`Amount mismatch: expected ${expectedAmount} KES`);
+  if (!code) warnings.push("Transaction code not detected");
+  if (duplicateCode) warnings.push("Transaction code was already used before");
+  if (!recipientMatch && !tillMatch) warnings.push("Recipient/Till not clearly detected");
+
+  return {
+    amount,
+    amountMatch,
+    code,
+    duplicateCode,
+    recipientMatch,
+    tillMatch,
+    detectedTime,
+    confidence,
+    warnings,
+    rawPreview: raw.slice(0, 500)
+  };
+}
+
+function proofValue(value) {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  if (value === null || value === undefined || value === "") return "Not detected";
+  return String(value);
 }
 
 function initBatchTracking(target) {
@@ -1378,6 +1577,15 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   if (!ref) return false;
   if (ref.status === "COMPLETE") return false;
 
+  if (ref.pendingProof?.code && !isProofCodeUsed(ref.pendingProof.code)) {
+    rememberUsedProofCode(ref.pendingProof.code, {
+      userId: ref.userId,
+      apiRef,
+      amount: ref.pendingProof.amount || ref.amount,
+      source: source || "payment-confirmed"
+    });
+  }
+
   updatePaymentRef(apiRef, {
     status: "COMPLETE",
     invoiceId: invoiceId || ref.invoiceId || null,
@@ -1424,9 +1632,9 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   await sendAdminMessage(
     `✅ PAYMENT COMPLETE\nUser: ${userId}\nType: ${safeText(
       ref.kind || "BATCH"
-    )}\nAmount: ${safeText(ref.amount)} KES\napi_ref: ${safeText(
+    )}\nAmount: ${safeText(ref.amount)} KES\napiref: ${safeText(
       apiRef
-    )}\ninvoice_id: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nSource: ${safeText(
+    )}\ninvoiceid: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nSource: ${safeText(
       source || "unknown"
     )}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}`
   );
@@ -1493,7 +1701,9 @@ If STK has network issues, you may pay via Till:
 
 \`${TILL_NUMBER}\`
 
-Send proof here as screenshot, not text.`,
+Recipient: *${PAYMENT_PROOF_RECIPIENT}*
+
+Send M-Pesa confirmation message or screenshot here.`,
       {
         parse_mode: "Markdown",
         reply_markup: paymentWaitKeyboard().reply_markup
@@ -1502,9 +1712,9 @@ Send proof here as screenshot, not text.`,
   } catch {}
 
   await sendAdminMessage(
-    `⚠️ PAYMENT ATTEMPT FAILED\nUser: ${safeText(userId)}\napi_ref: ${safeText(
+    `⚠️ PAYMENT ATTEMPT FAILED\nUser ID: ${safeText(userId)}\napiref: ${safeText(
       apiRef
-    )}\ninvoice_id: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nState: ${safeText(
+    )}\ninvoiceid: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nState: ${safeText(
       state || "FAILED"
     )}\nSource: ${safeText(source || "unknown")}\nReason: ${safeText(reason || "N/A")}\n\nWatcher stopped for this failed attempt. User can resend STK, change phone, or pay via Till.`
   );
@@ -1602,9 +1812,9 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
     if (attempts > STATUS_POLL_MAX_ATTEMPTS) {
       stopStatusPolling(apiRef);
       await sendAdminMessage(
-        `⚠️ Payment watcher stopped after maximum attempts.\nUser: ${userId}\napi_ref: ${safeText(
+        `⚠️ Payment watcher stopped after maximum attempts.\nUser ID: ${userId}\napiref: ${safeText(
           apiRef
-        )}\ninvoice_id: ${safeText(invoiceId || "N/A")}\nUse Confirm payment button or /paiduser only after manual verification.`
+        )}\ninvoiceid: ${safeText(invoiceId || "N/A")}\nUse Confirm payment button or /paiduser only after manual verification.`
       );
       return;
     }
@@ -1663,9 +1873,9 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
 
       if (attempts === 1 || attempts % 6 === 0) {
         await sendAdminMessage(
-          `⚠️ IntaSend status poll failed\nUser: ${userId}\napi_ref: ${safeText(
+          `⚠️ IntaSend status poll failed\nUser ID: ${userId}\napiref: ${safeText(
             apiRef
-          )}\ninvoice_id: ${safeText(invoiceId || ref?.invoiceId || "N/A")}\nAttempt: ${attempts}\nHTTP: ${safeText(
+          )}\ninvoiceid: ${safeText(invoiceId || ref?.invoiceId || "N/A")}\nAttempt: ${attempts}\nHTTP: ${safeText(
             err?.status || "N/A"
           )}\nError: ${safeText(err?.message || err)}`
         );
@@ -1696,7 +1906,9 @@ If the STK prompt did not come because of network issues, you may pay via Till:
 
 \`${TILL_NUMBER}\`
 
-Send proof here as screenshot, not text.`,
+Recipient: *${PAYMENT_PROOF_RECIPIENT}*
+
+Send M-Pesa confirmation message or screenshot here.`,
         {
           parse_mode: "Markdown",
           reply_markup: paymentWaitKeyboard().reply_markup
@@ -1704,6 +1916,72 @@ Send proof here as screenshot, not text.`,
       );
     } catch {}
   }, PAYMENT_TIMEOUT_MS);
+}
+
+async function handleMpesaProofText(ctx, sub, text) {
+  const user = ctx.from;
+  const expectedAmount = Number(sub?.amount || 0);
+  const found = findLatestPendingPaymentRefByUser(user.id);
+  const parsed = parsePaymentProofText(text, expectedAmount);
+
+  if (found) {
+    const [apiRef] = found;
+
+    updatePaymentRef(apiRef, {
+      pendingProof: {
+        type: "mpesa-text",
+        amount: parsed.amount,
+        amountMatch: parsed.amountMatch,
+        code: parsed.code || null,
+        duplicateCode: parsed.duplicateCode,
+        recipientMatch: parsed.recipientMatch,
+        tillMatch: parsed.tillMatch,
+        detectedTime: parsed.detectedTime || null,
+        confidence: parsed.confidence,
+        receivedAt: Date.now()
+      }
+    });
+  }
+
+  const warningsText = parsed.warnings.length
+    ? parsed.warnings.map((w) => `• ${w}`).join("\n")
+    : "None";
+
+  await sendAdminMessage(
+    `🧾 M-Pesa payment message received\nUser ID: ${user.id}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nTill match: ${proofValue(parsed.tillMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}\n\nAdmin: verify the proof before tapping Confirm payment.`
+  );
+
+  try {
+    await ctx.reply(
+      "✅ Payment message received. The admin will verify and confirm shortly.",
+      {
+        reply_markup: paymentWaitKeyboard().reply_markup
+      }
+    );
+  } catch {}
+}
+
+async function handlePaymentScreenshotProof(ctx, sub) {
+  const user = ctx.from;
+  const expectedAmount = Number(sub?.amount || 0);
+
+  await sendAdminMessage(
+    `🖼️ Payment screenshot received\nUser ID: ${user.id}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nDetected:\nScreenshot OCR: Not enabled\n\nAdmin: visually verify the screenshot before tapping Confirm payment.`
+  );
+
+  try {
+    await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
+  } catch {}
+
+  try {
+    await ctx.reply("✅ Payment proof received. The admin will verify and confirm shortly.", {
+      reply_markup: paymentWaitKeyboard().reply_markup
+    });
+  } catch {}
 }
 
 // =====================
@@ -1741,7 +2019,9 @@ Pay via Till:
 
 \`${TILL_NUMBER}\`
 
-Send proof here as screenshot, not text.`,
+Recipient: *${PAYMENT_PROOF_RECIPIENT}*
+
+Send M-Pesa confirmation message or screenshot here.`,
         { parse_mode: "Markdown" }
       );
       return;
@@ -1766,6 +2046,7 @@ Send proof here as screenshot, not text.`,
     status: "PENDING",
     lastState: "PENDING",
     mode: INTASEND_TEST ? "TEST" : "LIVE",
+    pendingProof: null,
     files: (sub.files || []).map((file) => ({
       file_id: file.file_id || null,
       file_unique_id: file.file_unique_id || null,
@@ -1837,7 +2118,9 @@ If network issues continue, pay via Till:
 
 \`${TILL_NUMBER}\`
 
-Send proof here as screenshot, not text.`,
+Recipient: *${PAYMENT_PROOF_RECIPIENT}*
+
+Send M-Pesa confirmation message or screenshot here.`,
       {
         parse_mode: "Markdown",
         reply_markup: paymentWaitKeyboard().reply_markup
@@ -1845,7 +2128,7 @@ Send proof here as screenshot, not text.`,
     );
 
     await sendAdminMessage(
-      `❌ STK Push error\nUser: ${userId}\napi_ref: ${safeText(apiRef)}\nPhone: ${safeText(
+      `❌ STK Push error\nUser ID: ${userId}\napiref: ${safeText(apiRef)}\nPhone: ${safeText(
         sub.phone
       )}\nHTTP: ${safeText(err?.status || "N/A")}\nError: ${safeText(
         err?.message || err
@@ -2028,12 +2311,12 @@ bot.command("paidref", async (ctx) => {
   const apiRef = parts[1];
 
   if (!apiRef) {
-    return ctx.reply("Usage: /paidref <api_ref>");
+    return ctx.reply("Usage: /paidref <apiref>");
   }
 
   const ref = getPaymentRef(apiRef);
   if (!ref) {
-    return ctx.reply(`❌ No payment found for api_ref: ${apiRef}`);
+    return ctx.reply(`❌ No payment found for apiref: ${apiRef}`);
   }
 
   await markPaymentComplete({
@@ -2412,18 +2695,7 @@ bot.on("photo", async (ctx) => {
   const sub = submissions[user.id];
 
   if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
-    try {
-      await sendAdminMessage(
-        `🖼️ Payment proof received\nUser ID: ${user.id}\nUsername: @${safeText(
-          user.username || "N/A"
-        )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(
-          user.id
-        )}`
-      );
-      await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
-    } catch {}
-
-    await ctx.reply("✅ Payment proof received.", { reply_markup: mainKeyboard() });
+    await handlePaymentScreenshotProof(ctx, sub);
     return;
   }
 
@@ -2618,14 +2890,6 @@ _We’re here if you need anything else._`,
     return;
   }
 
-  if (hasActiveSubmissionForUploads(sub)) {
-    await sendAdminMessage(
-      `💬 Message from user\nUser ID: ${user.id}\nUsername: @${safeText(
-        user.username || "N/A"
-      )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`
-    );
-  }
-
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
     if (!phone254) {
@@ -2637,6 +2901,19 @@ _We’re here if you need anything else._`,
     sub.phone = phone254;
     await attemptStkPush(ctx, sub, { mode: "initial" });
     return;
+  }
+
+  if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
+    await handleMpesaProofText(ctx, sub, text);
+    return;
+  }
+
+  if (hasActiveSubmissionForUploads(sub)) {
+    await sendAdminMessage(
+      `💬 Message from user\nUser ID: ${user.id}\nUsername: @${safeText(
+        user.username || "N/A"
+      )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`
+    );
   }
 
   if (sub && sub.stage === STAGE_WAIT_UPLOADS) {
@@ -2661,8 +2938,6 @@ _We’re here if you need anything else._`,
       ).reply_markup
     });
   }
-
-  if (sub && sub.stage === STAGE_WAIT_PAYMENT) return;
 
   if (!sub) {
     return ctx.reply("Tap *Send Document* below to start your submission.", {
@@ -2723,10 +2998,13 @@ app.get("/health", (req, res) => {
     activePollers: Object.keys(activePollers).length,
     processedUpdateCache: processedUpdateCache.size,
     checkHistoryRecords: checkHistory.length,
+    usedProofCodes: Object.keys(usedProofCodes).length,
     statusPollIntervalSeconds: STATUS_POLL_INTERVAL_MS / 1000,
     statusPollMaxAttempts: STATUS_POLL_MAX_ATTEMPTS,
     recheckWindowHours: 24,
     reportParsing: "disabled",
+    paymentProofRecipient: PAYMENT_PROOF_RECIPIENT,
+    tillNumber: TILL_NUMBER,
     reportProcessingMinMinutes: REPORT_PROCESSING_MIN_MINUTES,
     reportProcessingMaxMinutes: REPORT_PROCESSING_MAX_MINUTES,
     reportProcessingLabel: REPORT_PROCESSING_LABEL,
@@ -2744,7 +3022,6 @@ app.get("/health", (req, res) => {
     discountStartEat: DISCOUNT_START_EAT,
     discountEndEat: DISCOUNT_END_EAT,
     discountTimeText: discountTimeText(),
-    tillNumber: TILL_NUMBER,
     inactiveStartUtc: INACTIVE_START_UTC,
     inactiveEndUtc: INACTIVE_END_UTC,
     inactiveEndEat: INACTIVE_END_EAT,
@@ -2815,7 +3092,7 @@ app.post("/intasend/webhook", (req, res) => {
 
       if (!apiRef) {
         await sendAdminMessage(
-          `⚠️ IntaSend webhook received but api_ref not matched.\ninvoice_id: ${safeText(
+          `⚠️ IntaSend webhook received but apiref not matched.\ninvoiceid: ${safeText(
             invoiceId || "N/A"
           )}\nstate: ${safeText(state)}`
         );
@@ -2825,7 +3102,7 @@ app.post("/intasend/webhook", (req, res) => {
       const ref = getPaymentRef(apiRef);
       if (!ref) {
         await sendAdminMessage(
-          `⚠️ IntaSend webhook: unknown api_ref ${safeText(apiRef)}\ninvoice_id: ${safeText(
+          `⚠️ IntaSend webhook: unknown apiref ${safeText(apiRef)}\ninvoiceid: ${safeText(
             invoiceId || "N/A"
           )}\nstate: ${safeText(state)}`
         );
@@ -2880,6 +3157,7 @@ app.listen(port, async () => {
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
   console.log(`Report parsing: DISABLED`);
   console.log(`Till number: ${TILL_NUMBER}`);
+  console.log(`Payment proof recipient: ${PAYMENT_PROOF_RECIPIENT}`);
   console.log(`Report processing message: ${reportProcessingTimeText().replace(/\*/g, "")}`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
   console.log(`Resale enabled: ${RESALE_ENABLED ? "YES" : "NO"}`);
