@@ -1,11 +1,19 @@
 require("dotenv").config();
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { Telegraf, Markup } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
 const qs = require("querystring");
+
+let Tesseract = null;
+try {
+  Tesseract = require("tesseract.js");
+} catch {
+  Tesseract = null;
+}
 
 // =====================
 // ENV + CONSTANTS
@@ -40,6 +48,14 @@ function readIntEnv(name, fallback) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
   return Math.round(n);
+}
+
+function readFloatEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return n;
 }
 
 function readLabelEnv(name, fallback) {
@@ -137,6 +153,12 @@ const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915").trim();
 const PAYMENT_PROOF_RECIPIENT = String(
   process.env.PAYMENT_PROOF_RECIPIENT || "JOHNKAPTAIN SOLUTIONS HUB"
 ).trim();
+
+const PAYMENT_OCR_ENABLED = readBoolEnv("PAYMENT_OCR_ENABLED", true);
+const PAYMENT_OCR_MAX_MB = readFloatEnv("PAYMENT_OCR_MAX_MB", 3);
+const PAYMENT_OCR_MAX_BYTES = PAYMENT_OCR_MAX_MB * 1024 * 1024;
+const PAYMENT_OCR_TIMEOUT_SECONDS = readIntEnv("PAYMENT_OCR_TIMEOUT_SECONDS", 15);
+const PAYMENT_OCR_TIMEOUT_MS = PAYMENT_OCR_TIMEOUT_SECONDS * 1000;
 
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
 const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
@@ -303,6 +325,10 @@ function typeDisplayName(kind) {
   return kind;
 }
 
+function tillLine() {
+  return `Till: ${TILL_NUMBER}`;
+}
+
 const MESSAGES = {
   welcome: (check, recheck, resale) => `
 JK Turnitin Reports Bot
@@ -333,26 +359,23 @@ If urgent, WhatsApp call *0701730921*.
   paymentHelp:
     `🧾 Payment help:
 
-✅ Default method: *STK Push*
-Choose your batch size → upload files → choose Check/Recheck${RESALE_ENABLED ? `/${RESALE_LABEL}` : ""} where eligible → enter phone number → receive *one combined STK prompt*.
+Default method: *STK Push*.
 
-If STK prompt delays/fails, you may pay via Till:
+If STK delays or fails, pay via:
+${tillLine()}
 
-\`${TILL_NUMBER}\`
-
-Recipient: *${PAYMENT_PROOF_RECIPIENT}*
-
-Then send the M-Pesa confirmation message or screenshot here.
+Then send the M-Pesa message or payment screenshot here.
 
 🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED ? `\n\n🏷️ ${RESALE_LABEL} requires a code.${discountTimeLineForMessage()}` : ""}`,
   askPhoneBatch: (summary, amount) =>
     `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
-  stkSending: "⏳ Sending STK Push… check your phone and enter PIN.",
-  stkSentSimple: "✅ STK Push sent. Pay on your phone — confirmation is automatic.",
-  stkSentWithTill: (till) =>
-    `✅ STK Push sent. Pay on your phone — confirmation is automatic.\n\nIf prompt fails or delays, you may pay via Till:\n\n\`${till}\`\n\nRecipient: *${PAYMENT_PROOF_RECIPIENT}*\n\nSend M-Pesa confirmation message or screenshot here.`,
-  waitingConfirm:
-    `Waiting for payment confirmation…\n\nIf webhook delays, the bot will also check IntaSend status automatically.\n\nIf STK prompt does not come, you may pay via Till:\n\n\`${TILL_NUMBER}\`\n\nRecipient: *${PAYMENT_PROOF_RECIPIENT}*\n\nThen send M-Pesa confirmation message or screenshot here.`,
+  stkSentWithTill: () =>
+    `✅ STK Push sent. Check your phone and enter PIN.
+
+If STK delays or fails, pay via:
+${tillLine()}
+
+Then send the M-Pesa message or payment screenshot here.`,
   paidMsgBatch: (amount, summary) =>
     `✅ Payment confirmed (${amount} KES).\n\n${summary}\n\n⏱ ${reportProcessingTimeText()}`
 };
@@ -724,18 +747,14 @@ function safeFileName(name) {
     .trim() || fallback;
 }
 
+function ensureTmpDir(dir) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
 function normalizeLoose(value) {
   return String(value || "")
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, "");
-}
-
-function normalizeWords(value) {
-  return String(value || "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function extractMoneyAmount(text) {
@@ -828,7 +847,7 @@ function parsePaymentProofText(text, expectedAmount) {
     detectedTime,
     confidence,
     warnings,
-    rawPreview: raw.slice(0, 500)
+    rawPreview: raw.slice(0, 700)
   };
 }
 
@@ -897,6 +916,66 @@ function resellerCodeMatches(value) {
   if (!given) return false;
 
   return given.toLowerCase() === RESELLER_CODE.toLowerCase();
+}
+
+async function downloadTelegramFileToTemp(fileId, ext) {
+  const tmpDir = path.join(os.tmpdir(), "jk-payment-proof");
+  ensureTmpDir(tmpDir);
+
+  const fileLink = await bot.telegram.getFileLink(fileId);
+  const res = await fetch(fileLink.href || String(fileLink));
+
+  if (!res.ok) {
+    throw new Error(`Failed to download Telegram file. HTTP ${res.status}`);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const localPath = path.join(
+    tmpDir,
+    `${Date.now()}_${Math.random().toString(36).slice(2)}${ext || ".jpg"}`
+  );
+
+  fs.writeFileSync(localPath, buffer);
+  return localPath;
+}
+
+function promiseTimeout(ms, label) {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(label || "Timed out")), ms);
+  });
+}
+
+async function extractOcrTextFromImage(localPath) {
+  if (!PAYMENT_OCR_ENABLED) {
+    return { ok: false, text: "", status: "disabled", error: "OCR disabled" };
+  }
+
+  if (!Tesseract) {
+    return { ok: false, text: "", status: "package-missing", error: "tesseract.js not installed" };
+  }
+
+  try {
+    const result = await Promise.race([
+      Tesseract.recognize(localPath, "eng"),
+      promiseTimeout(PAYMENT_OCR_TIMEOUT_MS, "OCR timeout")
+    ]);
+
+    const text = result?.data?.text || "";
+
+    return {
+      ok: true,
+      text,
+      status: "ok",
+      error: ""
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      text: "",
+      status: "failed",
+      error: safeText(err?.message || err)
+    };
+  }
 }
 
 // =====================
@@ -1695,15 +1774,10 @@ async function handlePaymentAttemptFailed({ apiRef, invoiceId, state, source, re
 
 Reason: ${safeText(reason || state || "Payment failed")}
 
-You can tap *Resend STK Push* or *Change phone number*.
+You can resend STK, change phone number, or pay via:
+${tillLine()}
 
-If STK has network issues, you may pay via Till:
-
-\`${TILL_NUMBER}\`
-
-Recipient: *${PAYMENT_PROOF_RECIPIENT}*
-
-Send M-Pesa confirmation message or screenshot here.`,
+Then send the M-Pesa message or payment screenshot here.`,
       {
         parse_mode: "Markdown",
         reply_markup: paymentWaitKeyboard().reply_markup
@@ -1716,7 +1790,7 @@ Send M-Pesa confirmation message or screenshot here.`,
       apiRef
     )}\ninvoiceid: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nState: ${safeText(
       state || "FAILED"
-    )}\nSource: ${safeText(source || "unknown")}\nReason: ${safeText(reason || "N/A")}\n\nWatcher stopped for this failed attempt. User can resend STK, change phone, or pay via Till.`
+    )}\nSource: ${safeText(source || "unknown")}\nReason: ${safeText(reason || "N/A")}`
   );
 
   return true;
@@ -1814,7 +1888,7 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
       await sendAdminMessage(
         `⚠️ Payment watcher stopped after maximum attempts.\nUser ID: ${userId}\napiref: ${safeText(
           apiRef
-        )}\ninvoiceid: ${safeText(invoiceId || "N/A")}\nUse Confirm payment button or /paiduser only after manual verification.`
+        )}\ninvoiceid: ${safeText(invoiceId || "N/A")}`
       );
       return;
     }
@@ -1898,17 +1972,12 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
     try {
       await bot.telegram.sendMessage(
         userId,
-        `⏳ Still waiting for payment confirmation.
+        `⏳ Payment not confirmed yet.
 
-If you already paid by STK, the bot is still checking IntaSend automatically.
+If STK is delayed, you may pay via:
+${tillLine()}
 
-If the STK prompt did not come because of network issues, you may pay via Till:
-
-\`${TILL_NUMBER}\`
-
-Recipient: *${PAYMENT_PROOF_RECIPIENT}*
-
-Send M-Pesa confirmation message or screenshot here.`,
+Then send the M-Pesa message or payment screenshot here.`,
         {
           parse_mode: "Markdown",
           reply_markup: paymentWaitKeyboard().reply_markup
@@ -1948,14 +2017,14 @@ async function handleMpesaProofText(ctx, sub, text) {
     : "None";
 
   await sendAdminMessage(
-    `🧾 M-Pesa payment message received\nUser ID: ${user.id}\nUsername: @${safeText(
+    `🧾 M-Pesa message received\nUser ID: ${user.id}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nTill match: ${proofValue(parsed.tillMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}\n\nAdmin: verify the proof before tapping Confirm payment.`
+    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nTill match: ${proofValue(parsed.tillMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}\n\nText preview:\n${safeText(parsed.rawPreview)}`
   );
 
   try {
     await ctx.reply(
-      "✅ Payment message received. The admin will verify and confirm shortly.",
+      "✅ Payment proof received. Admin will verify shortly.",
       {
         reply_markup: paymentWaitKeyboard().reply_markup
       }
@@ -1967,21 +2036,89 @@ async function handlePaymentScreenshotProof(ctx, sub) {
   const user = ctx.from;
   const expectedAmount = Number(sub?.amount || 0);
 
-  await sendAdminMessage(
-    `🖼️ Payment screenshot received\nUser ID: ${user.id}\nUsername: @${safeText(
-      user.username || "N/A"
-    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nDetected:\nScreenshot OCR: Not enabled\n\nAdmin: visually verify the screenshot before tapping Confirm payment.`
-  );
+  const photos = ctx.message.photo || [];
+  const largest = photos[photos.length - 1];
+
+  if (!largest) {
+    await ctx.reply("❌ No screenshot found. Please resend the payment screenshot.");
+    return;
+  }
+
+  let localPath = null;
+  let ocrStatus = "not-run";
+  let ocrError = "";
+  let ocrText = "";
+  let parsed = null;
 
   try {
-    await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
-  } catch {}
+    if (Number(largest.file_size || 0) > PAYMENT_OCR_MAX_BYTES) {
+      ocrStatus = "skipped-large-image";
+      ocrError = `Image is above ${PAYMENT_OCR_MAX_MB} MB`;
+    } else {
+      localPath = await downloadTelegramFileToTemp(largest.file_id, ".jpg");
+      const ocr = await extractOcrTextFromImage(localPath);
+      ocrStatus = ocr.status;
+      ocrError = ocr.error || "";
+      ocrText = ocr.text || "";
+    }
 
-  try {
-    await ctx.reply("✅ Payment proof received. The admin will verify and confirm shortly.", {
+    parsed = parsePaymentProofText(ocrText, expectedAmount);
+
+    const found = findLatestPendingPaymentRefByUser(user.id);
+    if (found) {
+      const [apiRef] = found;
+
+      updatePaymentRef(apiRef, {
+        pendingProof: {
+          type: "screenshot-ocr",
+          amount: parsed.amount,
+          amountMatch: parsed.amountMatch,
+          code: parsed.code || null,
+          duplicateCode: parsed.duplicateCode,
+          recipientMatch: parsed.recipientMatch,
+          tillMatch: parsed.tillMatch,
+          detectedTime: parsed.detectedTime || null,
+          confidence: parsed.confidence,
+          ocrStatus,
+          receivedAt: Date.now()
+        }
+      });
+    }
+
+    const warningsText = parsed.warnings.length
+      ? parsed.warnings.map((w) => `• ${w}`).join("\n")
+      : "None";
+
+    await sendAdminMessage(
+      `🖼️ Payment screenshot received\nUser ID: ${user.id}\nUsername: @${safeText(
+        user.username || "N/A"
+      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nOCR status: ${ocrStatus}${ocrError ? `\nOCR note: ${safeText(ocrError)}` : ""}\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nTill match: ${proofValue(parsed.tillMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}\n\nOCR text preview:\n${safeText(parsed.rawPreview || "No text detected")}`
+    );
+
+    try {
+      await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
+    } catch {}
+
+    await ctx.reply("✅ Payment proof received. Admin will verify shortly.", {
       reply_markup: paymentWaitKeyboard().reply_markup
     });
-  } catch {}
+  } catch (err) {
+    await sendAdminMessage(
+      `🖼️ Payment screenshot received\nUser ID: ${user.id}\nUsername: @${safeText(
+        user.username || "N/A"
+      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nOCR failed: ${safeText(err?.message || err)}`
+    );
+
+    try {
+      await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
+    } catch {}
+
+    await ctx.reply("✅ Payment proof received. Admin will verify shortly.", {
+      reply_markup: paymentWaitKeyboard().reply_markup
+    });
+  } finally {
+    if (localPath) fs.unlink(localPath, () => {});
+  }
 }
 
 // =====================
@@ -2015,20 +2152,15 @@ async function attemptStkPush(ctx, sub, { mode }) {
       await ctx.reply(
         `⚠️ Resend limit reached.
 
-Pay via Till:
+Pay via:
+${tillLine()}
 
-\`${TILL_NUMBER}\`
-
-Recipient: *${PAYMENT_PROOF_RECIPIENT}*
-
-Send M-Pesa confirmation message or screenshot here.`,
+Then send the M-Pesa message or payment screenshot here.`,
         { parse_mode: "Markdown" }
       );
       return;
     }
   }
-
-  if (mode === "initial") await ctx.reply(MESSAGES.stkSending);
 
   const apiRef = makePaymentAttemptRef(userId);
   const summary = formatBatchSummary(sub);
@@ -2084,15 +2216,8 @@ Send M-Pesa confirmation message or screenshot here.`,
       }
     });
 
-    if (mode === "resend") {
-      await ctx.reply(MESSAGES.stkSentWithTill(TILL_NUMBER), {
-        parse_mode: "Markdown"
-      });
-    } else {
-      await ctx.reply(MESSAGES.stkSentSimple);
-    }
-
-    await ctx.reply(MESSAGES.waitingConfirm, {
+    await ctx.reply(MESSAGES.stkSentWithTill(), {
+      parse_mode: "Markdown",
       reply_markup: paymentWaitKeyboard().reply_markup
     });
 
@@ -2112,15 +2237,10 @@ Send M-Pesa confirmation message or screenshot here.`,
     await ctx.reply(
       `❌ STK Push failed.
 
-You may try again with *Resend STK Push*.
+Try again or pay via:
+${tillLine()}
 
-If network issues continue, pay via Till:
-
-\`${TILL_NUMBER}\`
-
-Recipient: *${PAYMENT_PROOF_RECIPIENT}*
-
-Send M-Pesa confirmation message or screenshot here.`,
+Then send the M-Pesa message or payment screenshot here.`,
       {
         parse_mode: "Markdown",
         reply_markup: paymentWaitKeyboard().reply_markup
@@ -3003,6 +3123,10 @@ app.get("/health", (req, res) => {
     statusPollMaxAttempts: STATUS_POLL_MAX_ATTEMPTS,
     recheckWindowHours: 24,
     reportParsing: "disabled",
+    paymentOcrEnabled: PAYMENT_OCR_ENABLED,
+    paymentOcrPackagePresent: Boolean(Tesseract),
+    paymentOcrMaxMb: PAYMENT_OCR_MAX_MB,
+    paymentOcrTimeoutSeconds: PAYMENT_OCR_TIMEOUT_SECONDS,
     paymentProofRecipient: PAYMENT_PROOF_RECIPIENT,
     tillNumber: TILL_NUMBER,
     reportProcessingMinMinutes: REPORT_PROCESSING_MIN_MINUTES,
@@ -3158,6 +3282,10 @@ app.listen(port, async () => {
   console.log(`Report parsing: DISABLED`);
   console.log(`Till number: ${TILL_NUMBER}`);
   console.log(`Payment proof recipient: ${PAYMENT_PROOF_RECIPIENT}`);
+  console.log(`Payment OCR enabled: ${PAYMENT_OCR_ENABLED ? "YES" : "NO"}`);
+  console.log(`Payment OCR package present: ${Tesseract ? "YES" : "NO"}`);
+  console.log(`Payment OCR max: ${PAYMENT_OCR_MAX_MB} MB`);
+  console.log(`Payment OCR timeout: ${PAYMENT_OCR_TIMEOUT_SECONDS}s`);
   console.log(`Report processing message: ${reportProcessingTimeText().replace(/\*/g, "")}`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
   console.log(`Resale enabled: ${RESALE_ENABLED ? "YES" : "NO"}`);
