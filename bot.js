@@ -155,9 +155,9 @@ const PAYMENT_PROOF_RECIPIENT = String(
 ).trim();
 
 const PAYMENT_OCR_ENABLED = readBoolEnv("PAYMENT_OCR_ENABLED", true);
-const PAYMENT_OCR_MAX_MB = readFloatEnv("PAYMENT_OCR_MAX_MB", 3);
+const PAYMENT_OCR_MAX_MB = readFloatEnv("PAYMENT_OCR_MAX_MB", 1);
 const PAYMENT_OCR_MAX_BYTES = PAYMENT_OCR_MAX_MB * 1024 * 1024;
-const PAYMENT_OCR_TIMEOUT_SECONDS = readIntEnv("PAYMENT_OCR_TIMEOUT_SECONDS", 15);
+const PAYMENT_OCR_TIMEOUT_SECONDS = readIntEnv("PAYMENT_OCR_TIMEOUT_SECONDS", 8);
 const PAYMENT_OCR_TIMEOUT_MS = PAYMENT_OCR_TIMEOUT_SECONDS * 1000;
 
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
@@ -732,7 +732,7 @@ cleanupCheckHistory();
 setInterval(cleanupCheckHistory, 60 * 60 * 1000);
 
 // =====================
-// HELPERS
+// HELPERS + PAYMENT PROOF PARSER
 // =====================
 function safeText(s) {
   return (s || "").toString();
@@ -757,6 +757,12 @@ function normalizeLoose(value) {
     .replace(/[^A-Z0-9]+/g, "");
 }
 
+function oneLine(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function extractMoneyAmount(text) {
   const s = String(text || "");
   const patterns = [
@@ -773,6 +779,26 @@ function extractMoneyAmount(text) {
   }
 
   return null;
+}
+
+function extractPaidAmount(text) {
+  const s = oneLine(text);
+
+  const patterns = [
+    /\b(?:KSH|KES|KSHS)\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s+(?:has\s+been\s+)?paid\s+to\b/i,
+    /\bConfirmed\.?\s*(?:KSH|KES|KSHS)?\s*([0-9][0-9,]*(?:\.\d{1,2})?).{0,90}\bpaid\s+to\b/i,
+    /\bpaid\s+(?:KSH|KES|KSHS)\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s+to\b/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = s.match(pattern);
+    if (match) {
+      const n = Number(String(match[1]).replace(/,/g, ""));
+      if (Number.isFinite(n)) return Math.round(n);
+    }
+  }
+
+  return extractMoneyAmount(s);
 }
 
 function extractMpesaCode(text) {
@@ -794,7 +820,7 @@ function extractMpesaCode(text) {
 }
 
 function extractProofTime(text) {
-  const s = String(text || "");
+  const s = oneLine(text);
 
   const match1 = s.match(/\bon\s+([0-3]?\d[\/.-][01]?\d[\/.-]\d{2,4})\s+at\s+([0-2]?\d:[0-5]\d\s*(?:AM|PM)?)/i);
   if (match1) return `${match1[1]} ${match1[2]}`.trim();
@@ -808,46 +834,161 @@ function extractProofTime(text) {
   return "";
 }
 
-function parsePaymentProofText(text, expectedAmount) {
-  const raw = String(text || "");
-  const compactText = normalizeLoose(raw);
+function extractPaidRecipient(text) {
+  const s = oneLine(text);
+
+  const match = s.match(/\bpaid\s+to\s+(.+?)(?:\.?\s+on\b|\.?\s+New\s+M[- ]?PESA|\.?\s+M[- ]?PESA\s+Balance|\.?\s+Transaction\b|\.?\s+Amount\b|$)/i);
+
+  if (!match) return "";
+
+  return String(match[1] || "")
+    .replace(/\s+/g, " ")
+    .replace(/[.,;:]+$/g, "")
+    .trim();
+}
+
+function buildPaymentProofCandidates(rawText) {
+  const raw = String(rawText || "");
+  const candidates = [];
+  const seen = new Set();
+
+  function addBlock(block, source) {
+    const clean = String(block || "").trim();
+    if (!clean) return;
+
+    const compact = clean.replace(/\s+/g, " ").trim();
+    const key = compact.slice(0, 250);
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    candidates.push({ block: clean, source });
+  }
+
+  const codeRegex = /\b[A-Z0-9]{10}\b/g;
+  const matches = [];
+  let m;
+
+  while ((m = codeRegex.exec(raw.toUpperCase())) !== null) {
+    const code = normalizeProofCode(m[0]);
+    if (/[A-Z]/.test(code) && /\d/.test(code)) {
+      matches.push({ index: m.index, code });
+    }
+  }
+
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i].index;
+    const nextStart = matches[i + 1]?.index || raw.length;
+    const end = Math.min(nextStart, start + 900);
+    addBlock(raw.slice(start, end), "code-window");
+  }
+
+  const paidRegex = /\bpaid\s+to\b/gi;
+  while ((m = paidRegex.exec(raw)) !== null) {
+    const start = Math.max(0, m.index - 160);
+    const end = Math.min(raw.length, m.index + 900);
+    addBlock(raw.slice(start, end), "paid-to-window");
+  }
+
+  if (candidates.length === 0) {
+    addBlock(raw.slice(0, 1200), "whole-text");
+  }
+
+  return candidates;
+}
+
+function scorePaymentCandidate(candidate, expectedAmount) {
+  const block = candidate.block || "";
+  const compact = normalizeLoose(block);
   const compactRecipient = normalizeLoose(PAYMENT_PROOF_RECIPIENT);
   const compactTill = normalizeLoose(TILL_NUMBER);
 
-  const amount = extractMoneyAmount(raw);
-  const code = extractMpesaCode(raw);
-  const detectedTime = extractProofTime(raw);
+  const code = extractMpesaCode(block);
+  const paidTo = /\bpaid\s+to\b/i.test(block);
+  const receivedFrom = /\breceived\b/i.test(block) || /\breceived\s+(?:KSH|KES|KSHS)/i.test(block);
+  const sentTo = /\bsent\s+to\b/i.test(block);
+  const confirmed = /\bconfirmed\b/i.test(block);
 
-  const recipientMatch = compactRecipient ? compactText.includes(compactRecipient) : false;
-  const tillMatch = compactTill ? compactText.includes(compactTill) : false;
+  const amount = paidTo ? extractPaidAmount(block) : extractMoneyAmount(block);
   const amountMatch = Number(amount) === Number(expectedAmount);
+  const recipient = extractPaidRecipient(block);
+  const recipientMatch = compactRecipient ? compact.includes(compactRecipient) : false;
+  const tillMatch = compactTill ? compact.includes(compactTill) : false;
+  const time = extractProofTime(block);
   const duplicateCode = code ? isProofCodeUsed(code) : false;
 
-  let confidence = "Low";
-  if (amountMatch && code && (recipientMatch || tillMatch) && !duplicateCode) {
-    confidence = "High";
-  } else if (amountMatch && code && !duplicateCode) {
-    confidence = "Medium";
-  }
+  let score = 0;
 
-  const warnings = [];
-  if (!amount) warnings.push("Amount not detected");
-  if (amount && !amountMatch) warnings.push(`Amount mismatch: expected ${expectedAmount} KES`);
-  if (!code) warnings.push("Transaction code not detected");
-  if (duplicateCode) warnings.push("Transaction code was already used before");
-  if (!recipientMatch && !tillMatch) warnings.push("Recipient/Till not clearly detected");
+  if (paidTo) score += 90;
+  if (confirmed) score += 15;
+  if (recipientMatch) score += 70;
+  if (amountMatch) score += 60;
+  if (code) score += 25;
+  if (time) score += 8;
+  if (tillMatch) score += 10;
+
+  if (amount && !amountMatch) score -= 35;
+  if (duplicateCode) score -= 80;
+  if (receivedFrom) score -= 100;
+  if (sentTo && !paidTo) score -= 40;
 
   return {
+    ...candidate,
+    score,
     amount,
     amountMatch,
     code,
     duplicateCode,
+    paidTo,
+    receivedFrom,
+    sentTo,
+    confirmed,
+    recipient,
     recipientMatch,
     tillMatch,
-    detectedTime,
+    detectedTime: time
+  };
+}
+
+function parsePaymentProofText(text, expectedAmount) {
+  const raw = String(text || "");
+  const candidates = buildPaymentProofCandidates(raw)
+    .map((candidate) => scorePaymentCandidate(candidate, expectedAmount))
+    .sort((a, b) => b.score - a.score);
+
+  const best = candidates[0] || scorePaymentCandidate({ block: raw, source: "fallback" }, expectedAmount);
+
+  let confidence = "Low";
+  if (best.amountMatch && best.code && best.recipientMatch && best.paidTo && !best.duplicateCode) {
+    confidence = "High";
+  } else if (best.amountMatch && best.code && best.paidTo && !best.duplicateCode) {
+    confidence = "Medium";
+  } else if (best.amountMatch && best.recipientMatch && best.paidTo && !best.duplicateCode) {
+    confidence = "Medium";
+  }
+
+  const warnings = [];
+
+  if (!best.paidTo) warnings.push("Paid-to transaction not clearly detected");
+  if (!best.amount) warnings.push("Amount not detected");
+  if (best.amount && !best.amountMatch) warnings.push(`Amount mismatch: expected ${expectedAmount} KES`);
+  if (!best.code) warnings.push("Transaction code not detected");
+  if (best.duplicateCode) warnings.push("Transaction code was already used before");
+  if (!best.recipientMatch) warnings.push("Recipient not clearly matched");
+
+  return {
+    amount: best.amount || null,
+    amountMatch: Boolean(best.amountMatch),
+    code: best.code || "",
+    duplicateCode: Boolean(best.duplicateCode),
+    recipient: best.recipient || (best.recipientMatch ? PAYMENT_PROOF_RECIPIENT : ""),
+    recipientMatch: Boolean(best.recipientMatch),
+    tillMatch: Boolean(best.tillMatch),
+    detectedTime: best.detectedTime || "",
     confidence,
     warnings,
-    rawPreview: raw.slice(0, 700)
+    selectedSource: best.source || "unknown",
+    selectedPaidTo: Boolean(best.paidTo),
+    candidateCount: candidates.length
   };
 }
 
@@ -2003,6 +2144,7 @@ async function handleMpesaProofText(ctx, sub, text) {
         amountMatch: parsed.amountMatch,
         code: parsed.code || null,
         duplicateCode: parsed.duplicateCode,
+        recipient: parsed.recipient || null,
         recipientMatch: parsed.recipientMatch,
         tillMatch: parsed.tillMatch,
         detectedTime: parsed.detectedTime || null,
@@ -2019,7 +2161,7 @@ async function handleMpesaProofText(ctx, sub, text) {
   await sendAdminMessage(
     `🧾 M-Pesa message received\nUser ID: ${user.id}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nTill match: ${proofValue(parsed.tillMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}\n\nText preview:\n${safeText(parsed.rawPreview)}`
+    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient: ${proofValue(parsed.recipient)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`
   );
 
   try {
@@ -2075,6 +2217,7 @@ async function handlePaymentScreenshotProof(ctx, sub) {
           amountMatch: parsed.amountMatch,
           code: parsed.code || null,
           duplicateCode: parsed.duplicateCode,
+          recipient: parsed.recipient || null,
           recipientMatch: parsed.recipientMatch,
           tillMatch: parsed.tillMatch,
           detectedTime: parsed.detectedTime || null,
@@ -2092,7 +2235,7 @@ async function handlePaymentScreenshotProof(ctx, sub) {
     await sendAdminMessage(
       `🖼️ Payment screenshot received\nUser ID: ${user.id}\nUsername: @${safeText(
         user.username || "N/A"
-      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nOCR status: ${ocrStatus}${ocrError ? `\nOCR note: ${safeText(ocrError)}` : ""}\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nTill match: ${proofValue(parsed.tillMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}\n\nOCR text preview:\n${safeText(parsed.rawPreview || "No text detected")}`
+      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nOCR status: ${ocrStatus}${ocrError ? `\nOCR note: ${safeText(ocrError)}` : ""}\n\nDetected:\nAmount: ${proofValue(parsed.amount ? `${parsed.amount} KES` : "")}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient: ${proofValue(parsed.recipient)}\nRecipient match: ${proofValue(parsed.recipientMatch)}\nCode: ${proofValue(parsed.code)}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(parsed.detectedTime)}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`
     );
 
     try {
@@ -2106,7 +2249,7 @@ async function handlePaymentScreenshotProof(ctx, sub) {
     await sendAdminMessage(
       `🖼️ Payment screenshot received\nUser ID: ${user.id}\nUsername: @${safeText(
         user.username || "N/A"
-      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nExpected recipient: ${PAYMENT_PROOF_RECIPIENT}\nExpected Till: ${TILL_NUMBER}\n\nOCR failed: ${safeText(err?.message || err)}`
+      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nOCR failed: ${safeText(err?.message || err)}`
     );
 
     try {
