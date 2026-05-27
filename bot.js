@@ -544,6 +544,9 @@ function createPaidJob({ userId, apiRef, ref, invoiceId, source }) {
     amount: ref?.amount || null,
     kind: ref?.kind || "BATCH",
     summary: ref?.summary || "",
+    name: ref?.name || "N/A",
+    username: ref?.username || "N/A",
+    phone: ref?.phone || null,
     paidAt: now,
     cancelAllowedAt,
     status: "PROCESSING",
@@ -803,6 +806,12 @@ setInterval(cleanupCheckHistory, 60 * 60 * 1000);
 // =====================
 function safeText(s) {
   return (s || "").toString();
+}
+
+function getUserFullName(user) {
+  return `${safeText(user?.first_name || "")} ${safeText(user?.last_name || "")}`
+    .replace(/\s+/g, " ")
+    .trim() || "N/A";
 }
 
 function safeFileName(name) {
@@ -1246,20 +1255,38 @@ function extractAdminActionUserId(text) {
   return null;
 }
 
-function adminActionKeyboard(userId) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)],
-    [Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)],
-    [Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]
-  ]);
+function adminActionKeyboard(userId, variant) {
+  const rows = [];
+
+  if (variant === "paymentProof") {
+    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+  } else if (variant === "paid" || variant === "delivery") {
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+  } else if (variant === "replyOnly") {
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+  } else {
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
+  }
+
+  return Markup.inlineKeyboard(rows);
 }
 
 async function sendAdminMessage(text, extra = {}) {
   const userIdForButtons = extractAdminActionUserId(text);
-  const finalExtra = { parse_mode: "Markdown", ...extra };
+  const adminButtons = extra.adminButtons;
+  const finalExtra = { ...extra };
 
-  if (userIdForButtons && !finalExtra.reply_markup) {
-    finalExtra.reply_markup = adminActionKeyboard(userIdForButtons).reply_markup;
+  delete finalExtra.adminButtons;
+
+  if (!finalExtra.parse_mode) finalExtra.parse_mode = "Markdown";
+
+  if (userIdForButtons && adminButtons && !finalExtra.reply_markup) {
+    finalExtra.reply_markup = adminActionKeyboard(userIdForButtons, adminButtons).reply_markup;
   }
 
   try {
@@ -1403,9 +1430,10 @@ async function notifyUserCancelledToAdmin(user, label) {
   if (user.id === ADMIN_ID) return;
 
   await sendAdminMessage(
-    `❌ ${label || "User cancelled submission"}\nUser ID: ${user.id}\nUsername: @${safeText(
+    `❌ ${label || "User cancelled submission"}\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}${adminQuickCommands(user.id)}`
+    )}${adminQuickCommands(user.id)}`,
+    { adminButtons: "replyOnly" }
   );
 }
 
@@ -1458,13 +1486,12 @@ async function handleCancelRequest(ctx, sourceLabel) {
   const updatedJob = markPaidJobCancellationRequested(job.jobId);
 
   await sendAdminMessage(
-    `⚠️ Paid cancellation request\nUser ID: ${user.id}\nUsername: @${safeText(
+    `⚠️ Paid cancellation request\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\nAmount: ${safeText(
-      updatedJob?.amount || "N/A"
-    )} KES\nBatch: ${safeText(updatedJob?.batchId || "N/A")}\nPaid at: ${moment(
-      updatedJob?.paidAt || Date.now()
-    ).format("YYYY-MM-DD HH:mm")}\nMax time elapsed: Yes`
+    )}\nAmount: ${safeText(updatedJob?.amount || "N/A")} KES\nBatch: ${safeText(
+      updatedJob?.batchId || "N/A"
+    )}\nPaid at: ${moment(updatedJob?.paidAt || Date.now()).format("YYYY-MM-DD HH:mm")}\nMax time elapsed: Yes`,
+    { adminButtons: "delivery" }
   );
 
   await ctx.reply("✅ Cancellation request sent to admin.", {
@@ -1506,10 +1533,11 @@ function createStoredFileFromDocument(userId, doc) {
 
 async function forwardAcceptedDocumentByIds(userId, chatId, messageId, username, firstName, lastName) {
   try {
+    const name = `${safeText(firstName)} ${safeText(lastName)}`.replace(/\s+/g, " ").trim() || "N/A";
+
     await sendAdminMessage(
-      `📨 Document received\nUser ID: ${userId}\nUsername: @${safeText(
-        username || "N/A"
-      )}\nName: ${safeText(firstName)} ${safeText(lastName)}${adminQuickCommands(userId)}`
+      `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${safeText(username || "N/A")}${adminQuickCommands(userId)}`,
+      { adminButtons: "delivery" }
     );
     await bot.telegram.forwardMessage(ADMIN_ID, chatId, messageId);
   } catch {}
@@ -1891,11 +1919,14 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   }
 
   await sendAdminMessage(
-    `✅ PAID\nUser: ${userId}\nPhone: ${formatPhone254ForAdmin(
-      ref.phone || sub?.phone
-    )}\nAmount: ${safeText(ref.amount)} KES\nType: ${safeText(
-      ref.kind || "BATCH"
-    )}\nRef: ${safeText(invoiceId || ref.invoiceId || apiRef || "N/A")}`
+    `✅ PAID\nUser: ${userId}\nName: ${safeText(ref.name || "N/A")}\nUsername: @${safeText(
+      ref.username || "N/A"
+    )}\nPhone: ${formatPhone254ForAdmin(ref.phone || sub?.phone)}\nAmount: ${safeText(
+      ref.amount
+    )} KES\nType: ${safeText(ref.kind || "BATCH")}\nRef: ${safeText(
+      invoiceId || ref.invoiceId || apiRef || "N/A"
+    )}`,
+    { adminButtons: "paid" }
   );
 
   resetSubmission(userId);
@@ -1935,11 +1966,14 @@ async function handlePaymentAttemptFailed({ apiRef, invoiceId, state, source, re
   } catch {}
 
   await sendAdminMessage(
-    `⚠️ PAYMENT ATTEMPT FAILED\nUser ID: ${safeText(userId)}\napiref: ${safeText(
-      apiRef
-    )}\ninvoiceid: ${safeText(invoiceId || ref.invoiceId || "N/A")}\nState: ${safeText(
-      state || "FAILED"
-    )}\nSource: ${safeText(source || "unknown")}\nReason: ${safeText(reason || "N/A")}`
+    `⚠️ PAYMENT ATTEMPT FAILED\nUser ID: ${safeText(userId)}\nName: ${safeText(
+      ref.name || "N/A"
+    )}\nUsername: @${safeText(ref.username || "N/A")}\nPhone: ${formatPhone254ForAdmin(
+      ref.phone
+    )}\napiref: ${safeText(apiRef)}\ninvoiceid: ${safeText(
+      invoiceId || ref.invoiceId || "N/A"
+    )}\nState: ${safeText(state || "FAILED")}\nSource: ${safeText(source || "unknown")}\nReason: ${safeText(reason || "N/A")}`,
+    { adminButtons: "replyOnly" }
   );
 
   return true;
@@ -2145,9 +2179,9 @@ async function handleMpesaProofText(ctx, sub, text) {
   const warningsText = parsed.warnings.length ? parsed.warnings.map((w) => `• ${w}`).join("\n") : "None";
 
   await sendAdminMessage(
-    `🧾 M-Pesa message received\nUser ID: ${user.id}\nUsername: @${safeText(
+    `🧾 M-Pesa message received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\n\nDetected:\nAmount: ${proofValue(
+    )}\n\nExpected amount: ${expectedAmount} KES\n\nDetected:\nAmount: ${proofValue(
       parsed.amount ? `${parsed.amount} KES` : ""
     )}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient: ${proofValue(
       parsed.recipient
@@ -2155,7 +2189,8 @@ async function handleMpesaProofText(ctx, sub, text) {
       parsed.code
     )}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(
       parsed.detectedTime
-    )}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`
+    )}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`,
+    { adminButtons: "paymentProof" }
   );
 
   try {
@@ -2220,9 +2255,9 @@ async function handlePaymentScreenshotProof(ctx, sub) {
     const warningsText = parsed.warnings.length ? parsed.warnings.map((w) => `• ${w}`).join("\n") : "None";
 
     await sendAdminMessage(
-      `🖼️ Payment screenshot received\nUser ID: ${user.id}\nUsername: @${safeText(
+      `🖼️ Payment screenshot received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
         user.username || "N/A"
-      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nOCR status: ${ocrStatus}${ocrError ? `\nOCR note: ${safeText(ocrError)}` : ""}\n\nDetected:\nAmount: ${proofValue(
+      )}\n\nExpected amount: ${expectedAmount} KES\nOCR status: ${ocrStatus}${ocrError ? `\nOCR note: ${safeText(ocrError)}` : ""}\n\nDetected:\nAmount: ${proofValue(
         parsed.amount ? `${parsed.amount} KES` : ""
       )}\nAmount match: ${proofValue(parsed.amountMatch)}\nRecipient: ${proofValue(
         parsed.recipient
@@ -2230,7 +2265,8 @@ async function handlePaymentScreenshotProof(ctx, sub) {
         parsed.code
       )}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(
         parsed.detectedTime
-      )}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`
+      )}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`,
+      { adminButtons: "paymentProof" }
     );
 
     try {
@@ -2242,9 +2278,10 @@ async function handlePaymentScreenshotProof(ctx, sub) {
     });
   } catch (err) {
     await sendAdminMessage(
-      `🖼️ Payment screenshot received\nUser ID: ${user.id}\nUsername: @${safeText(
+      `🖼️ Payment screenshot received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
         user.username || "N/A"
-      )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\nExpected amount: ${expectedAmount} KES\nOCR failed: ${safeText(err?.message || err)}`
+      )}\n\nExpected amount: ${expectedAmount} KES\nOCR failed: ${safeText(err?.message || err)}`,
+      { adminButtons: "paymentProof" }
     );
 
     try {
@@ -2301,6 +2338,8 @@ async function attemptStkPush(ctx, sub, { mode }) {
     updatedAt: Date.now(),
     summary,
     phone: sub.phone,
+    name: getUserFullName(ctx.from),
+    username: ctx.from.username || "N/A",
     invoiceId: null,
     status: "PENDING",
     lastState: "PENDING",
@@ -2367,9 +2406,10 @@ async function attemptStkPush(ctx, sub, { mode }) {
     });
 
     await sendAdminMessage(
-      `❌ STK Push error\nUser ID: ${userId}\napiref: ${safeText(apiRef)}\nPhone: ${safeText(
-        sub.phone
-      )}\nError: ${safeText(err?.message || err)}`
+      `❌ STK Push error\nUser ID: ${userId}\nName: ${getUserFullName(ctx.from)}\nUsername: @${safeText(
+        ctx.from.username || "N/A"
+      )}\nPhone: ${formatPhone254ForAdmin(sub.phone)}\nError: ${safeText(err?.message || err)}`,
+      { adminButtons: "replyOnly" }
     );
   }
 }
@@ -2386,9 +2426,10 @@ bot.start(async (ctx) => {
   }
 
   await sendAdminMessage(
-    `🔥 New user started bot\nName: ${safeText(user.first_name)} ${safeText(
-      user.last_name
-    )}\nUsername: @${safeText(user.username || "N/A")}\nUser ID: ${user.id}${adminQuickCommands(user.id)}`
+    `🔥 New user started bot\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\nUser ID: ${user.id}${adminQuickCommands(user.id)}`,
+    { adminButtons: "replyOnly" }
   );
 
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
@@ -2991,9 +3032,10 @@ ${text}
 
     try {
       await sendAdminMessage(
-        `💬 Support message from user\nUser ID: ${user.id}\nUsername: @${safeText(
+        `💬 Support message from user\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
           user.username || "N/A"
-        )}\nName: ${safeText(user.first_name)} ${safeText(user.last_name)}\n\n${safeText(text)}${adminQuickCommands(user.id)}`
+        )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`,
+        { adminButtons: "replyOnly" }
       );
       await ctx.reply("✅ Sent to support.", { reply_markup: mainKeyboard() });
     } catch {
@@ -3051,9 +3093,10 @@ ${text}
 
   if (hasActiveSubmissionForUploads(sub)) {
     await sendAdminMessage(
-      `💬 Message from user\nUser ID: ${user.id}\nUsername: @${safeText(
+      `💬 Message from user\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
         user.username || "N/A"
-      )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`
+      )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`,
+      { adminButtons: "replyOnly" }
     );
   }
 
