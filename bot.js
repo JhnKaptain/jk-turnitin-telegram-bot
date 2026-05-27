@@ -1282,6 +1282,16 @@ function normalizePhoneTo254(phoneRaw) {
   return null;
 }
 
+function formatPhone254ForAdmin(phone254) {
+  const s = String(phone254 || "").trim();
+
+  if (/^254(?:7|1)\d{8}$/.test(s)) {
+    return "0" + s.slice(3);
+  }
+
+  return s || "N/A";
+}
+
 function makeBatchId(userId) {
   return `JK_BATCH_${userId}_${Date.now()}`;
 }
@@ -1881,11 +1891,11 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   }
 
   await sendAdminMessage(
-    `✅ PAYMENT COMPLETE\nUser: ${userId}\nType: ${safeText(ref.kind || "BATCH")}\nAmount: ${safeText(
-      ref.amount
-    )} KES\napiref: ${safeText(apiRef)}\ninvoiceid: ${safeText(
-      invoiceId || ref.invoiceId || "N/A"
-    )}\nSource: ${safeText(source || "unknown")}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}`
+    `✅ PAID\nUser: ${userId}\nPhone: ${formatPhone254ForAdmin(
+      ref.phone || sub?.phone
+    )}\nAmount: ${safeText(ref.amount)} KES\nType: ${safeText(
+      ref.kind || "BATCH"
+    )}\nRef: ${safeText(invoiceId || ref.invoiceId || apiRef || "N/A")}`
   );
 
   resetSubmission(userId);
