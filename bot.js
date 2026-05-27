@@ -1259,10 +1259,14 @@ function adminActionKeyboard(userId, variant) {
   const rows = [];
 
   if (variant === "paymentProof") {
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
     rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
     rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+  } else if (variant === "delivery") {
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
     rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
-  } else if (variant === "paid" || variant === "delivery") {
+    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
+  } else if (variant === "paid") {
     rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
     rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
   } else if (variant === "replyOnly") {
@@ -1532,15 +1536,27 @@ function createStoredFileFromDocument(userId, doc) {
 }
 
 async function forwardAcceptedDocumentByIds(userId, chatId, messageId, username, firstName, lastName) {
+  const name = `${safeText(firstName)} ${safeText(lastName)}`.replace(/\s+/g, " ").trim() || "N/A";
+  const usernameText = safeText(username || "N/A");
+
   try {
-    const name = `${safeText(firstName)} ${safeText(lastName)}`.replace(/\s+/g, " ").trim() || "N/A";
+    await bot.telegram.copyMessage(ADMIN_ID, chatId, messageId, {
+      caption: `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${usernameText}`,
+      parse_mode: "Markdown",
+      reply_markup: adminActionKeyboard(userId, "delivery").reply_markup
+    });
+  } catch (err) {
+    console.error("Failed to copy document to admin:", err?.message || err);
 
     await sendAdminMessage(
-      `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${safeText(username || "N/A")}${adminQuickCommands(userId)}`,
+      `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${usernameText}${adminQuickCommands(userId)}`,
       { adminButtons: "delivery" }
     );
-    await bot.telegram.forwardMessage(ADMIN_ID, chatId, messageId);
-  } catch {}
+
+    try {
+      await bot.telegram.forwardMessage(ADMIN_ID, chatId, messageId);
+    } catch {}
+  }
 }
 
 async function beginSubmissionFlow(ctx) {
