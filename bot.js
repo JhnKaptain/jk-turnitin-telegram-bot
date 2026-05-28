@@ -70,6 +70,12 @@ function readLabelEnv(name, fallback) {
   return cleaned || fallback;
 }
 
+function toTitleCaseLabel(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+}
+
 function normalizeHHMM(value, fallback) {
   const s = String(value || "").trim();
   const m = s.match(/^(\d{1,2}):(\d{2})$/);
@@ -172,9 +178,10 @@ const RESELLER_CODE = String(
 ).trim();
 
 const RESALE_ENABLED = RESELLER_CODE.length > 0;
-const RESALE_CODE_VISIBLE = readBoolEnv("RESALE_CODE_VISIBLE", false);
 const RESALE_AMOUNT_VISIBLE = readBoolEnv("RESALE_AMOUNT_VISIBLE", true);
+const DISCOUNT_PUBLIC_ENABLED = readBoolEnv("DISCOUNT_PUBLIC_ENABLED", false);
 const RESALE_LABEL = readLabelEnv("RESALE_LABEL", "RESALE");
+const RESALE_LABEL_TITLE = toTitleCaseLabel(RESALE_LABEL);
 
 const DISCOUNT_TIME_VISIBLE = readBoolEnv("DISCOUNT_TIME_VISIBLE", false);
 const DISCOUNT_START_EAT = normalizeHHMM(process.env.DISCOUNT_START_EAT, "");
@@ -269,9 +276,9 @@ function discountTimeText() {
   const start = formatHHMMTo12HourStrict(DISCOUNT_START_EAT);
   const end = formatHHMMTo12HourStrict(DISCOUNT_END_EAT);
 
-  if (start && end) return `${RESALE_LABEL} available from ${start} to ${end} EAT.`;
-  if (start) return `${RESALE_LABEL} available from ${start} EAT.`;
-  if (end) return `${RESALE_LABEL} available until ${end} EAT.`;
+  if (start && end) return `${RESALE_LABEL_TITLE} available from ${start} to ${end} EAT.`;
+  if (start) return `${RESALE_LABEL_TITLE} available from ${start} EAT.`;
+  if (end) return `${RESALE_LABEL_TITLE} available until ${end} EAT.`;
   return "";
 }
 
@@ -289,25 +296,15 @@ function resalePublicPriceText() {
 function resaleButtonLabel(resaleVerified) {
   if (!RESALE_ENABLED) return "";
 
-  if (resaleVerified) return `🏷️ ${RESALE_LABEL} (${RESALE_PRICE_KES} KES)`;
-
-  if (RESALE_AMOUNT_VISIBLE && RESALE_CODE_VISIBLE) {
-    return `🏷️ ${RESALE_LABEL} now active (${RESALE_PRICE_KES} KES -CODE: ${RESELLER_CODE})`;
+  if (DISCOUNT_PUBLIC_ENABLED || resaleVerified) {
+    return `🏷️ Use ${RESALE_LABEL_TITLE} (${RESALE_PRICE_KES} KES)`;
   }
 
-  if (RESALE_AMOUNT_VISIBLE && !RESALE_CODE_VISIBLE) {
-    return `🏷️ ${RESALE_LABEL} now active (${RESALE_PRICE_KES} KES -CODE)`;
-  }
-
-  if (!RESALE_AMOUNT_VISIBLE && RESALE_CODE_VISIBLE) {
-    return `🏷️ ${RESALE_LABEL} (code: ${RESELLER_CODE})`;
-  }
-
-  return `🏷️ ${RESALE_LABEL} (code)`;
+  return `🏷️ ${RESALE_LABEL_TITLE} Code`;
 }
 
 function typeDisplayName(kind) {
-  if (kind === "RESALE") return RESALE_LABEL;
+  if (kind === "RESALE") return RESALE_LABEL_TITLE;
   return kind;
 }
 
@@ -322,15 +319,16 @@ JK Turnitin Reports Bot
 1️⃣ Tap *Send Document*
 2️⃣ Choose how many files you want to upload (1-${MAX_BATCH_FILES})
 3️⃣ Upload your files one by one as *documents*
-4️⃣ Choose *CHECK*, *RECHECK*${RESALE_ENABLED ? ` or *${RESALE_LABEL}*` : ""} where eligible
+4️⃣ Choose *CHECK*, *RECHECK*${RESALE_ENABLED ? ` or *${RESALE_LABEL_TITLE}*` : ""} where eligible
 5️⃣ Pay *once* for the whole batch
 
 💰 Pricing
 • Check: ${check} KES
-• Recheck: ${recheck} KES${RESALE_ENABLED ? `\n• ${RESALE_LABEL}: ${resalePublicPriceText()}` : ""}
+• Recheck: ${recheck} KES${RESALE_ENABLED ? `\n• ${RESALE_LABEL_TITLE}: ${resalePublicPriceText()}` : ""}
 
 🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.
-${RESALE_ENABLED ? `\n🏷️ ${RESALE_LABEL} requires a code.${discountTimeLineForMessage()}` : ""}
+${RESALE_ENABLED && !DISCOUNT_PUBLIC_ENABLED ? `\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}
+${RESALE_ENABLED && DISCOUNT_PUBLIC_ENABLED ? `\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}
 `,
   inactive: () => `
 ⏳ Turnitin checks are paused right now.
@@ -352,7 +350,7 @@ ${tillLine()}
 
 Then send the M-Pesa message or payment screenshot here.
 
-🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED ? `\n\n🏷️ ${RESALE_LABEL} requires a code.${discountTimeLineForMessage()}` : ""}`,
+🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED && !DISCOUNT_PUBLIC_ENABLED ? `\n\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}${RESALE_ENABLED && DISCOUNT_PUBLIC_ENABLED ? `\n\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}`,
   askPhoneBatch: (summary, amount) =>
     `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
   stkSentWithTill: () =>
@@ -1399,7 +1397,7 @@ function formatBatchSummary(sub) {
   const counts = getSubmissionCounts(sub);
   const lines = [`• Check: ${counts.checks}`, `• Recheck: ${counts.rechecks}`];
 
-  if (RESALE_ENABLED || counts.resales > 0) lines.push(`• ${RESALE_LABEL}: ${counts.resales}`);
+  if (RESALE_ENABLED || counts.resales > 0) lines.push(`• ${RESALE_LABEL_TITLE}: ${counts.resales}`);
   lines.push(`• Files: ${counts.total}`);
 
   return lines.join("\n");
@@ -1601,9 +1599,11 @@ async function askForFileType(ctx, sub) {
     ? `✅ This file qualifies for *RECHECK*.\n\nChoose *CHECK* or *RECHECK*.`
     : `ℹ️ Recheck not available for this file.\n\nIt will be treated as *CHECK*.`;
 
-  const resaleNote = RESALE_ENABLED
-    ? `\n\n🏷️ *${RESALE_LABEL}* is available with code.${discountTimeLineForMessage()}`
-    : "";
+  const resaleNote = RESALE_ENABLED && DISCOUNT_PUBLIC_ENABLED
+    ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* is active.${discountTimeLineForMessage()}`
+    : RESALE_ENABLED
+      ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* is available with code.${discountTimeLineForMessage()}`
+      : "";
 
   await ctx.reply(
     `📄 File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\n\n${recheckNote}${resaleNote}`,
@@ -1688,20 +1688,28 @@ async function handleFileTypeSelected(ctx, kind) {
     await ctx.reply("⚠️ Recheck not available. Treated as *CHECK*.", { parse_mode: "Markdown" });
   } else if (kind === "RESALE") {
     if (!RESALE_ENABLED) {
-      await ctx.answerCbQuery(`${RESALE_LABEL} is not enabled.`);
-      return ctx.reply(`⚠️ ${RESALE_LABEL} is not enabled right now.`);
+      await ctx.answerCbQuery(`${RESALE_LABEL_TITLE} is not enabled.`);
+      return ctx.reply(`⚠️ ${RESALE_LABEL_TITLE} is not enabled right now.`);
+    }
+
+    if (DISCOUNT_PUBLIC_ENABLED) {
+      sub.resellerVerified = true;
+      await ctx.answerCbQuery(`${RESALE_LABEL_TITLE} Applied`);
+      await ctx.reply(`✅ ${RESALE_LABEL_TITLE} Applied`);
+      await finalizeFileTypeSelection(ctx, sub, "RESALE");
+      return;
     }
 
     if (!sub.resellerVerified) {
       sub.stage = STAGE_WAIT_RESELLER_CODE;
       await ctx.answerCbQuery("Code required");
-      return ctx.reply(`🔐 Send code to use *${RESALE_LABEL}* for this file.`, {
+      return ctx.reply(`🔐 Send ${RESALE_LABEL_TITLE} Code.`, {
         parse_mode: "Markdown",
         reply_markup: mainKeyboard()
       });
     }
 
-    await ctx.answerCbQuery(`${RESALE_LABEL} selected`);
+    await ctx.answerCbQuery(`${RESALE_LABEL_TITLE} selected`);
   } else {
     await ctx.answerCbQuery(`${kind} selected`);
   }
@@ -3067,7 +3075,7 @@ ${text}
   if (sub && sub.stage === STAGE_WAIT_RESELLER_CODE) {
     if (!RESALE_ENABLED) {
       sub.stage = STAGE_WAIT_FILE_TYPE;
-      return ctx.reply(`⚠️ ${RESALE_LABEL} is not enabled.`, {
+      return ctx.reply(`⚠️ ${RESALE_LABEL_TITLE} is not enabled.`, {
         reply_markup: typeInlineKeyboard(
           Boolean(getCurrentPendingFile(sub)?.recheckEligible),
           RESALE_ENABLED,
@@ -3078,7 +3086,7 @@ ${text}
 
     if (!resellerCodeMatches(text)) {
       sub.stage = STAGE_WAIT_FILE_TYPE;
-      return ctx.reply(`❌ Wrong code. Choose another type.`, {
+      return ctx.reply(`❌ Wrong Code. Choose another type.`, {
         reply_markup: typeInlineKeyboard(
           Boolean(getCurrentPendingFile(sub)?.recheckEligible),
           RESALE_ENABLED,
@@ -3088,7 +3096,7 @@ ${text}
     }
 
     sub.resellerVerified = true;
-    await ctx.reply(`✅ Code accepted.`);
+    await ctx.reply(`✅ ${RESALE_LABEL_TITLE} Applied`);
     await finalizeFileTypeSelection(ctx, sub, "RESALE");
     return;
   }
@@ -3214,6 +3222,7 @@ app.get("/health", (req, res) => {
     resaleEnabled: RESALE_ENABLED,
     resalePriceKes: RESALE_PRICE_KES,
     resaleLabel: RESALE_LABEL,
+    discountPublicEnabled: DISCOUNT_PUBLIC_ENABLED,
     inactiveStartUtc: INACTIVE_START_UTC,
     inactiveEndUtc: INACTIVE_END_UTC,
     inactiveEndEat: INACTIVE_END_EAT,
@@ -3353,6 +3362,7 @@ app.listen(port, async () => {
   console.log(`Report processing message: ${reportProcessingTimeText().replace(/\*/g, "")}`);
   console.log(`Paid cancellation opens after max processing: ${REPORT_PROCESSING_MAX_MINUTES} minutes`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
+  console.log(`Discount public enabled: ${DISCOUNT_PUBLIC_ENABLED ? "YES" : "NO"}`);
   console.log(`Payment polling: every ${STATUS_POLL_INTERVAL_MS / 1000}s, max ${STATUS_POLL_MAX_ATTEMPTS} attempts`);
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
