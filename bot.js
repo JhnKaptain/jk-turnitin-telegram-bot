@@ -1200,9 +1200,14 @@ function batchSizeKeyboard() {
 }
 
 function typeInlineKeyboard(allowRecheck, allowResale, resaleVerified) {
-  const rows = [[Markup.button.callback(`✅ CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")]];
+  const rows = [];
 
-  if (allowRecheck) rows.push([Markup.button.callback(`🔁 RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")]);
+  if (allowRecheck) {
+    rows.push([Markup.button.callback(`🔁 CLICK TO RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")]);
+  } else {
+    rows.push([Markup.button.callback(`✅ CLICK TO CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")]);
+  }
+
   if (allowResale) rows.push([Markup.button.callback(resaleButtonLabel(resaleVerified), "TYPE_RESALE")]);
 
   rows.push([Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]);
@@ -1596,8 +1601,8 @@ async function askForFileType(ctx, sub) {
   const fileNumber = sub.currentFileIndex + 1;
 
   const recheckNote = file.recheckEligible
-    ? `✅ This file qualifies for *RECHECK*.\n\nChoose *CHECK* or *RECHECK*.`
-    : `ℹ️ Recheck not available for this file.\n\nIt will be treated as *CHECK*.`;
+    ? `✅ This file qualifies for *RECHECK*.\n\nTap *CLICK TO RECHECK* to continue.`
+    : `ℹ️ Recheck not available for this file.\n\nTap *CLICK TO CHECK* to continue.`;
 
   const resaleNote = RESALE_ENABLED && DISCOUNT_PUBLIC_ENABLED
     ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* is active.${discountTimeLineForMessage()}`
