@@ -1607,7 +1607,7 @@ async function askForFileType(ctx, sub) {
   const resaleNote = RESALE_ENABLED && DISCOUNT_PUBLIC_ENABLED
     ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* is active.${discountTimeLineForMessage()}`
     : RESALE_ENABLED
-      ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* is available with code.${discountTimeLineForMessage()}`
+      ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* Requires a Code.Wait For Public Access.${discountTimeLineForMessage()}`
       : "";
 
   await ctx.reply(
