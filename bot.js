@@ -156,6 +156,14 @@ const ADMIN_ID = Number(process.env.ADMIN_ID || 6569201830);
 const MAX_BATCH_FILES = 5;
 const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915").trim();
 
+const BOT_ONLINE_NAME = String(process.env.BOT_ONLINE_NAME || "JK Turnitin Reports (ONLINE)")
+  .trim()
+  .slice(0, 64);
+
+const BOT_OFFLINE_NAME = String(process.env.BOT_OFFLINE_NAME || "JK Turnitin Reports (OFFLINE)")
+  .trim()
+  .slice(0, 64);
+
 const PAYMENT_PROOF_RECIPIENT = String(
   process.env.PAYMENT_PROOF_RECIPIENT || "JOHNKAPTAIN SOLUTIONS HUB"
 ).trim();
@@ -267,6 +275,9 @@ const KEY_SEND_MPESA = "🧾 Payment Help";
 const KEY_CONTACT_SUPPORT = "💬 Contact Support Team";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
+const CLEAN_COPY_WARNING =
+  "⚠️ Before uploading, use a clean copy without institution names, logos, or cover pages. This helps avoid provider account flags.";
+
 const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
@@ -347,7 +358,7 @@ We’ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
 If urgent, WhatsApp call *0701730921*.
 `,
   sendDocHelp:
-    `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\nPlease don’t send as a photo.`,
+    `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\n${CLEAN_COPY_WARNING}\n\nPlease don’t send as a photo.`,
   paymentHelp:
     `🧾 Payment help:
 
@@ -390,6 +401,7 @@ let checkHistory = [];
 let usedProofCodes = {};
 let paidJobs = {};
 let dailySalesSummary = {};
+let lastAppliedBotNameMode = null;
 
 const STORE_FILE = path.join(__dirname, "paymentRefs.store.json");
 const CHECK_HISTORY_FILE = path.join(__dirname, "checkHistory.store.json");
@@ -520,10 +532,6 @@ function saveDailySalesSummary() {
   } catch (e) {
     console.error("Failed to save daily sales summary store:", e?.message || e);
   }
-}
-
-function getEatDateKeyFromTimestamp(ts) {
-  return moment(Number(ts || Date.now())).utcOffset(180).format("YYYY-MM-DD");
 }
 
 function getEatDayBoundsMs(dateKey) {
@@ -1516,6 +1524,33 @@ function isBotInactivePeriod() {
   return isTimeInWindowUTC(currentTime, INACTIVE_START_UTC, INACTIVE_END_UTC);
 }
 
+// =====================
+// BOT DISPLAY NAME STATUS
+// =====================
+async function syncBotDisplayName(force = false) {
+  const inactive = isBotInactivePeriod();
+  const mode = inactive ? "OFFLINE" : "ONLINE";
+  const desiredName = inactive ? BOT_OFFLINE_NAME : BOT_ONLINE_NAME;
+
+  if (!force && lastAppliedBotNameMode === mode) return;
+
+  try {
+    await bot.telegram.callApi("setMyName", { name: desiredName });
+    lastAppliedBotNameMode = mode;
+    console.log(`Bot display name synced: ${desiredName}`);
+  } catch (err) {
+    console.error("Failed to sync bot display name:", err?.description || err?.message || err);
+  }
+}
+
+function startBotDisplayNameScheduler() {
+  syncBotDisplayName(true);
+
+  setInterval(() => {
+    syncBotDisplayName(false);
+  }, 5 * 60 * 1000);
+}
+
 async function notifyInactivePeriod(ctx) {
   await replyMarkdownSafe(ctx, MESSAGES.inactive().trim(), { reply_markup: mainKeyboard() });
 }
@@ -1725,7 +1760,7 @@ async function beginSubmissionFlow(ctx) {
 
   if (existing && existing.stage === STAGE_WAIT_BATCH_SIZE) {
     await ctx.reply(
-      `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.`,
+      `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.\n\n${CLEAN_COPY_WARNING}`,
       { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
     );
     return;
@@ -1734,7 +1769,7 @@ async function beginSubmissionFlow(ctx) {
   submissions[userId] = createEmptySubmission();
 
   await ctx.reply(
-    `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.`,
+    `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.\n\n${CLEAN_COPY_WARNING}`,
     { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
   );
 }
@@ -1817,7 +1852,7 @@ async function finalizeFileTypeSelection(ctx, sub, kind) {
 
   sub.stage = STAGE_WAIT_UPLOADS;
   await ctx.reply(
-    `✅ ${typeDisplayName(kind)} saved for file ${justCompletedNumber}.\n\nSend file ${sub.files.length + 1} of ${sub.expectedFiles}.`,
+    `✅ ${typeDisplayName(kind)} saved for file ${justCompletedNumber}.\n\n${CLEAN_COPY_WARNING}\n\nSend file ${sub.files.length + 1} of ${sub.expectedFiles}.`,
     {
       parse_mode: "Markdown",
       reply_markup: uploadContinueKeyboard().reply_markup
@@ -2911,7 +2946,7 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
     return;
   }
 
-  await ctx.reply(`✅ Selected *${count}* file(s).\n\nSend file *1* of *${count}* as a document.`, {
+  await ctx.reply(`✅ Selected *${count}* file(s).\n\n${CLEAN_COPY_WARNING}\n\nSend file *1* of *${count}* as a document.`, {
     parse_mode: "Markdown",
     reply_markup: mainKeyboard()
   });
@@ -3375,6 +3410,9 @@ app.get("/health", (req, res) => {
     checkHistoryRecords: checkHistory.length,
     usedProofCodes: Object.keys(usedProofCodes).length,
     dailySalesSummaryLastSentDateKey: dailySalesSummary.lastSentDateKey || null,
+    botDisplayNameMode: lastAppliedBotNameMode,
+    botOnlineName: BOT_ONLINE_NAME,
+    botOfflineName: BOT_OFFLINE_NAME,
     statusPollIntervalSeconds: STATUS_POLL_INTERVAL_MS / 1000,
     statusPollMaxAttempts: STATUS_POLL_MAX_ATTEMPTS,
     recheckWindowHours: 24,
@@ -3538,6 +3576,7 @@ app.listen(port, async () => {
   console.log(`Payment polling: every ${STATUS_POLL_INTERVAL_MS / 1000}s, max ${STATUS_POLL_MAX_ATTEMPTS} attempts`);
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
+  console.log(`Bot names: ${BOT_ONLINE_NAME} / ${BOT_OFFLINE_NAME}`);
   console.log(`Daily payment summary: enabled at 00:00 EAT`);
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
@@ -3549,6 +3588,7 @@ app.listen(port, async () => {
     console.error("Failed to set Telegram webhook:", e?.description || e?.message || e);
   }
 
+  startBotDisplayNameScheduler();
   startDailySalesSummaryScheduler();
 });
 
