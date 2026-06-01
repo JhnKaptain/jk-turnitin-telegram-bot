@@ -276,7 +276,7 @@ const KEY_CONTACT_SUPPORT = "💬 Contact Support Team";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
 const CLEAN_COPY_WARNING =
-  "⚠️ Before uploading, use copy without institution names on cover pages or logos. This helps avoid turnitin provider account flags.";
+  "⚠️ Only Upload Files without institution names and logos on cover pages to avoid account bans.";
 
 const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
