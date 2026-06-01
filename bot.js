@@ -268,7 +268,15 @@ const KEY_CONTACT_SUPPORT = "💬 Contact Support Team";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
 const REPORTS_DELIVERED_MESSAGE =
-  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access other Writing Serices Here https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
+  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
+
+const AI_UNAVAILABLE_NOTE =
+  `ℹ️ AI writing detection is unavailable for this submission.
+
+Possible reasons:
+• Unsupported file type
+• Unsupported language
+• Qualifying text is fewer than 300 words or more than 30,000 words`;
 
 function discountTimeText() {
   if (!DISCOUNT_TIME_VISIBLE) return "";
@@ -381,11 +389,13 @@ let paymentRefs = {};
 let checkHistory = [];
 let usedProofCodes = {};
 let paidJobs = {};
+let dailySalesSummary = {};
 
 const STORE_FILE = path.join(__dirname, "paymentRefs.store.json");
 const CHECK_HISTORY_FILE = path.join(__dirname, "checkHistory.store.json");
 const USED_PROOF_CODES_FILE = path.join(__dirname, "usedProofCodes.store.json");
 const PAID_JOBS_FILE = path.join(__dirname, "paidJobs.store.json");
+const DAILY_SALES_SUMMARY_FILE = path.join(__dirname, "dailySalesSummary.store.json");
 
 // =====================
 // DUPLICATE UPDATE GUARD
@@ -489,6 +499,142 @@ setInterval(() => {
 
   if (changed) saveStore();
 }, 6 * 60 * 60 * 1000);
+
+// =====================
+// DAILY SALES SUMMARY
+// =====================
+function loadDailySalesSummary() {
+  try {
+    if (!fs.existsSync(DAILY_SALES_SUMMARY_FILE)) return;
+    const raw = fs.readFileSync(DAILY_SALES_SUMMARY_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") dailySalesSummary = parsed;
+  } catch (e) {
+    console.error("Failed to load daily sales summary store:", e?.message || e);
+  }
+}
+
+function saveDailySalesSummary() {
+  try {
+    fs.writeFileSync(DAILY_SALES_SUMMARY_FILE, JSON.stringify(dailySalesSummary, null, 2), "utf8");
+  } catch (e) {
+    console.error("Failed to save daily sales summary store:", e?.message || e);
+  }
+}
+
+function getEatDateKeyFromTimestamp(ts) {
+  return moment(Number(ts || Date.now())).utcOffset(180).format("YYYY-MM-DD");
+}
+
+function getEatDayBoundsMs(dateKey) {
+  const start = moment.parseZone(`${dateKey}T00:00:00+03:00`).valueOf();
+  const end = moment.parseZone(`${dateKey}T00:00:00+03:00`).add(1, "day").valueOf();
+  return { start, end };
+}
+
+function countTypesFromPaymentRef(ref, counts) {
+  if (Array.isArray(ref?.files) && ref.files.length > 0) {
+    for (const file of ref.files) {
+      const t = String(file?.type || "").toUpperCase();
+      if (t === "CHECK") counts.checks += 1;
+      else if (t === "RECHECK") counts.rechecks += 1;
+      else if (t === "RESALE") counts.resales += 1;
+    }
+    return;
+  }
+
+  const kind = String(ref?.kind || "").toUpperCase();
+
+  const checkMatch = kind.match(/(\d+)\s*CHECK\b/);
+  const recheckMatch = kind.match(/(\d+)\s*RECHECK\b/);
+
+  let resaleMatch = null;
+  if (RESALE_LABEL) {
+    resaleMatch = kind.match(new RegExp(`(\\d+)\\s*${RESALE_LABEL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"));
+  }
+  if (!resaleMatch) resaleMatch = kind.match(/(\d+)\s*DISCOUNT\b/i);
+  if (!resaleMatch) resaleMatch = kind.match(/(\d+)\s*RESALE\b/i);
+
+  if (checkMatch) counts.checks += Number(checkMatch[1] || 0);
+  if (recheckMatch) counts.rechecks += Number(recheckMatch[1] || 0);
+  if (resaleMatch) counts.resales += Number(resaleMatch[1] || 0);
+}
+
+function buildDailySalesSummary(dateKey) {
+  const { start, end } = getEatDayBoundsMs(dateKey);
+
+  const counts = {
+    payments: 0,
+    total: 0,
+    checks: 0,
+    rechecks: 0,
+    resales: 0
+  };
+
+  for (const ref of Object.values(paymentRefs || {})) {
+    const status = String(ref?.status || "").toUpperCase();
+    if (status !== "COMPLETE") continue;
+
+    const completedAt = Number(ref?.completedAt || ref?.paidAt || 0);
+    if (!completedAt || completedAt < start || completedAt >= end) continue;
+
+    counts.payments += 1;
+
+    const amount = Number(ref?.amount || 0);
+    if (Number.isFinite(amount)) counts.total += amount;
+
+    countTypesFromPaymentRef(ref, counts);
+  }
+
+  return counts;
+}
+
+async function sendDailySalesSummaryForPreviousEatDay() {
+  const dateKey = moment().utcOffset(180).subtract(1, "day").format("YYYY-MM-DD");
+
+  if (dailySalesSummary.lastSentDateKey === dateKey) {
+    return;
+  }
+
+  const summary = buildDailySalesSummary(dateKey);
+
+  const text =
+    `📊 Daily Payment Summary\n\n` +
+    `Date: ${dateKey}\n` +
+    `Successful payments: ${summary.payments}\n` +
+    `Total collected: ${summary.total.toLocaleString("en-KE")} KES\n\n` +
+    `CHECK: ${summary.checks}\n` +
+    `RECHECK: ${summary.rechecks}\n` +
+    `${RESALE_LABEL}: ${summary.resales}`;
+
+  await sendAdminMessage(text, { parse_mode: "Markdown" });
+
+  dailySalesSummary.lastSentDateKey = dateKey;
+  dailySalesSummary.lastSentAt = Date.now();
+  saveDailySalesSummary();
+}
+
+function msUntilNextEatMidnight() {
+  const nowEat = moment().utcOffset(180);
+  const nextEatMidnight = nowEat.clone().add(1, "day").startOf("day");
+  return Math.max(1000, nextEatMidnight.valueOf() - Date.now());
+}
+
+function startDailySalesSummaryScheduler() {
+  const delay = msUntilNextEatMidnight();
+
+  setTimeout(async () => {
+    try {
+      await sendDailySalesSummaryForPreviousEatDay();
+    } catch (e) {
+      console.error("Daily sales summary failed:", e?.message || e);
+    } finally {
+      startDailySalesSummaryScheduler();
+    }
+  }, delay);
+}
+
+loadDailySalesSummary();
 
 // =====================
 // PAID JOB STORE
@@ -1265,6 +1411,11 @@ function adminActionKeyboard(userId, variant) {
     rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
     rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
     rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+  } else if (variant === "document") {
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
+    rows.push([Markup.button.callback("ℹ️ AI Unavailable Note", `ADMIN_AI_NOTE_${userId}`)]);
   } else if (variant === "delivery") {
     rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
     rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
@@ -1546,14 +1697,14 @@ async function forwardAcceptedDocumentByIds(userId, chatId, messageId, username,
     await bot.telegram.copyMessage(ADMIN_ID, chatId, messageId, {
       caption: `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${usernameText}`,
       parse_mode: "Markdown",
-      reply_markup: adminActionKeyboard(userId, "delivery").reply_markup
+      reply_markup: adminActionKeyboard(userId, "document").reply_markup
     });
   } catch (err) {
     console.error("Failed to copy document to admin:", err?.message || err);
 
     await sendAdminMessage(
       `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${usernameText}${adminQuickCommands(userId)}`,
-      { adminButtons: "delivery" }
+      { adminButtons: "document" }
     );
 
     try {
@@ -1607,7 +1758,7 @@ async function askForFileType(ctx, sub) {
   const resaleNote = RESALE_ENABLED && DISCOUNT_PUBLIC_ENABLED
     ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* is active.${discountTimeLineForMessage()}`
     : RESALE_ENABLED
-      ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* Requires a Code.Wait For Public Access.${discountTimeLineForMessage()}`
+      ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* Requires a Code. Wait For Public Access.${discountTimeLineForMessage()}`
       : "";
 
   await ctx.reply(
@@ -2664,6 +2815,21 @@ bot.action(/^ADMIN_PAID_(\d+)$/, async (ctx) => {
   await ctx.reply(result.message);
 });
 
+bot.action(/^ADMIN_AI_NOTE_(\d+)$/, async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+
+  const userId = ctx.match[1];
+
+  try {
+    await bot.telegram.sendMessage(userId, AI_UNAVAILABLE_NOTE, { parse_mode: "Markdown" });
+    await ctx.answerCbQuery("AI note sent");
+    await ctx.reply(`✅ AI unavailable note sent to ${userId}`);
+  } catch (err) {
+    await ctx.answerCbQuery("Failed");
+    await ctx.reply("❌ Failed: " + (err?.message || err));
+  }
+});
+
 // =====================
 // START INLINE BUTTONS
 // =====================
@@ -3208,6 +3374,7 @@ app.get("/health", (req, res) => {
     processedUpdateCache: processedUpdateCache.size,
     checkHistoryRecords: checkHistory.length,
     usedProofCodes: Object.keys(usedProofCodes).length,
+    dailySalesSummaryLastSentDateKey: dailySalesSummary.lastSentDateKey || null,
     statusPollIntervalSeconds: STATUS_POLL_INTERVAL_MS / 1000,
     statusPollMaxAttempts: STATUS_POLL_MAX_ATTEMPTS,
     recheckWindowHours: 24,
@@ -3371,6 +3538,7 @@ app.listen(port, async () => {
   console.log(`Payment polling: every ${STATUS_POLL_INTERVAL_MS / 1000}s, max ${STATUS_POLL_MAX_ATTEMPTS} attempts`);
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
+  console.log(`Daily payment summary: enabled at 00:00 EAT`);
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
 
@@ -3380,6 +3548,8 @@ app.listen(port, async () => {
   } catch (e) {
     console.error("Failed to set Telegram webhook:", e?.description || e?.message || e);
   }
+
+  startDailySalesSummaryScheduler();
 });
 
 process.on("uncaughtException", (err) => {
