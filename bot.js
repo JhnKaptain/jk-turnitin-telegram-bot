@@ -401,13 +401,23 @@ let checkHistory = [];
 let usedProofCodes = {};
 let paidJobs = {};
 let dailySalesSummary = {};
+let dailySalesLedger = {};
 let lastAppliedBotNameMode = null;
 
-const STORE_FILE = path.join(__dirname, "paymentRefs.store.json");
-const CHECK_HISTORY_FILE = path.join(__dirname, "checkHistory.store.json");
-const USED_PROOF_CODES_FILE = path.join(__dirname, "usedProofCodes.store.json");
-const PAID_JOBS_FILE = path.join(__dirname, "paidJobs.store.json");
-const DAILY_SALES_SUMMARY_FILE = path.join(__dirname, "dailySalesSummary.store.json");
+const DATA_DIR = String(process.env.DATA_DIR || __dirname).trim();
+
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch (e) {
+  console.error("Failed to create DATA_DIR:", e?.message || e);
+}
+
+const STORE_FILE = path.join(DATA_DIR, "paymentRefs.store.json");
+const CHECK_HISTORY_FILE = path.join(DATA_DIR, "checkHistory.store.json");
+const USED_PROOF_CODES_FILE = path.join(DATA_DIR, "usedProofCodes.store.json");
+const PAID_JOBS_FILE = path.join(DATA_DIR, "paidJobs.store.json");
+const DAILY_SALES_SUMMARY_FILE = path.join(DATA_DIR, "dailySalesSummary.store.json");
+const DAILY_SALES_LEDGER_FILE = path.join(DATA_DIR, "dailySalesLedger.store.json");
 
 // =====================
 // DUPLICATE UPDATE GUARD
@@ -534,6 +544,38 @@ function saveDailySalesSummary() {
   }
 }
 
+function loadDailySalesLedger() {
+  try {
+    if (!fs.existsSync(DAILY_SALES_LEDGER_FILE)) return;
+    const raw = fs.readFileSync(DAILY_SALES_LEDGER_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") dailySalesLedger = parsed;
+  } catch (e) {
+    console.error("Failed to load daily sales ledger:", e?.message || e);
+  }
+
+  if (!dailySalesLedger || typeof dailySalesLedger !== "object") dailySalesLedger = {};
+  if (!dailySalesLedger.payments || typeof dailySalesLedger.payments !== "object") {
+    dailySalesLedger.payments = {};
+  }
+}
+
+function saveDailySalesLedger() {
+  try {
+    if (!dailySalesLedger.payments || typeof dailySalesLedger.payments !== "object") {
+      dailySalesLedger.payments = {};
+    }
+
+    fs.writeFileSync(DAILY_SALES_LEDGER_FILE, JSON.stringify(dailySalesLedger, null, 2), "utf8");
+  } catch (e) {
+    console.error("Failed to save daily sales ledger:", e?.message || e);
+  }
+}
+
+function getEatDateKeyFromTimestamp(ts) {
+  return moment(Number(ts || Date.now())).utcOffset(180).format("YYYY-MM-DD");
+}
+
 function getEatDayBoundsMs(dateKey) {
   const start = moment.parseZone(`${dateKey}T00:00:00+03:00`).valueOf();
   const end = moment.parseZone(`${dateKey}T00:00:00+03:00`).add(1, "day").valueOf();
@@ -558,8 +600,11 @@ function countTypesFromPaymentRef(ref, counts) {
 
   let resaleMatch = null;
   if (RESALE_LABEL) {
-    resaleMatch = kind.match(new RegExp(`(\\d+)\\s*${RESALE_LABEL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"));
+    resaleMatch = kind.match(
+      new RegExp(`(\\d+)\\s*${RESALE_LABEL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i")
+    );
   }
+
   if (!resaleMatch) resaleMatch = kind.match(/(\d+)\s*DISCOUNT\b/i);
   if (!resaleMatch) resaleMatch = kind.match(/(\d+)\s*RESALE\b/i);
 
@@ -568,9 +613,69 @@ function countTypesFromPaymentRef(ref, counts) {
   if (resaleMatch) counts.resales += Number(resaleMatch[1] || 0);
 }
 
-function buildDailySalesSummary(dateKey) {
-  const { start, end } = getEatDayBoundsMs(dateKey);
+function getTypeCountsFromPaymentRef(ref) {
+  const counts = { checks: 0, rechecks: 0, resales: 0 };
+  countTypesFromPaymentRef(ref, counts);
+  return counts;
+}
 
+function cleanupDailySalesLedger() {
+  if (!dailySalesLedger.payments || typeof dailySalesLedger.payments !== "object") {
+    dailySalesLedger.payments = {};
+    saveDailySalesLedger();
+    return;
+  }
+
+  const cutoffDateKey = moment().utcOffset(180).subtract(120, "days").format("YYYY-MM-DD");
+  let changed = false;
+
+  for (const [apiRef, record] of Object.entries(dailySalesLedger.payments)) {
+    const dateKey = String(record?.dateKey || "");
+    if (!dateKey || dateKey < cutoffDateKey) {
+      delete dailySalesLedger.payments[apiRef];
+      changed = true;
+    }
+  }
+
+  if (changed) saveDailySalesLedger();
+}
+
+function recordDailySale({ apiRef, ref, userId, invoiceId, source }) {
+  if (!apiRef || !ref) return;
+
+  if (!dailySalesLedger.payments || typeof dailySalesLedger.payments !== "object") {
+    dailySalesLedger.payments = {};
+  }
+
+  if (dailySalesLedger.payments[apiRef]) return;
+
+  const completedAt = Number(ref.completedAt || ref.paidAt || Date.now());
+  const dateKey = getEatDateKeyFromTimestamp(completedAt);
+  const typeCounts = getTypeCountsFromPaymentRef(ref);
+
+  dailySalesLedger.payments[apiRef] = {
+    apiRef,
+    invoiceId: invoiceId || ref.invoiceId || null,
+    userId: Number(userId || ref.userId || 0),
+    name: ref.name || "N/A",
+    username: ref.username || "N/A",
+    phone: ref.phone || null,
+    amount: Number(ref.amount || 0) || 0,
+    kind: ref.kind || "BATCH",
+    checks: typeCounts.checks,
+    rechecks: typeCounts.rechecks,
+    resales: typeCounts.resales,
+    completedAt,
+    dateKey,
+    source: source || ref.completionSource || "unknown",
+    createdAt: Date.now()
+  };
+
+  cleanupDailySalesLedger();
+  saveDailySalesLedger();
+}
+
+function buildDailySalesSummary(dateKey) {
   const counts = {
     payments: 0,
     total: 0,
@@ -579,19 +684,45 @@ function buildDailySalesSummary(dateKey) {
     resales: 0
   };
 
-  for (const ref of Object.values(paymentRefs || {})) {
+  const seenApiRefs = new Set();
+
+  if (!dailySalesLedger.payments || typeof dailySalesLedger.payments !== "object") {
+    dailySalesLedger.payments = {};
+  }
+
+  for (const [apiRef, record] of Object.entries(dailySalesLedger.payments)) {
+    if (String(record?.dateKey || "") !== String(dateKey)) continue;
+
+    seenApiRefs.add(apiRef);
+
+    counts.payments += 1;
+    counts.total += Number(record?.amount || 0) || 0;
+    counts.checks += Number(record?.checks || 0) || 0;
+    counts.rechecks += Number(record?.rechecks || 0) || 0;
+    counts.resales += Number(record?.resales || 0) || 0;
+  }
+
+  const { start, end } = getEatDayBoundsMs(dateKey);
+
+  for (const [apiRef, ref] of Object.entries(paymentRefs || {})) {
+    if (seenApiRefs.has(apiRef)) continue;
+
     const status = String(ref?.status || "").toUpperCase();
     if (status !== "COMPLETE") continue;
 
     const completedAt = Number(ref?.completedAt || ref?.paidAt || 0);
     if (!completedAt || completedAt < start || completedAt >= end) continue;
 
+    const typeCounts = getTypeCountsFromPaymentRef(ref);
+
     counts.payments += 1;
 
     const amount = Number(ref?.amount || 0);
     if (Number.isFinite(amount)) counts.total += amount;
 
-    countTypesFromPaymentRef(ref, counts);
+    counts.checks += typeCounts.checks;
+    counts.rechecks += typeCounts.rechecks;
+    counts.resales += typeCounts.resales;
   }
 
   return counts;
@@ -643,6 +774,9 @@ function startDailySalesSummaryScheduler() {
 }
 
 loadDailySalesSummary();
+loadDailySalesLedger();
+cleanupDailySalesLedger();
+setInterval(cleanupDailySalesLedger, 6 * 60 * 60 * 1000);
 
 // =====================
 // PAID JOB STORE
@@ -2092,13 +2226,24 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
     });
   }
 
+  const completedAt = Date.now();
+
   updatePaymentRef(apiRef, {
     status: "COMPLETE",
     invoiceId: invoiceId || ref.invoiceId || null,
-    completedAt: Date.now(),
+    completedAt,
     lastState: state || "COMPLETE",
     completionSource: source || "unknown"
   });
+
+  const completedRef = getPaymentRef(apiRef) || {
+    ...ref,
+    status: "COMPLETE",
+    invoiceId: invoiceId || ref.invoiceId || null,
+    completedAt,
+    lastState: state || "COMPLETE",
+    completionSource: source || "unknown"
+  };
 
   stopStatusPolling(apiRef);
 
@@ -2106,27 +2251,35 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   const userId = batchLookup?.userId || ref.userId;
   const sub = batchLookup?.sub || submissions[userId];
 
+  recordDailySale({
+    apiRef,
+    ref: completedRef,
+    userId,
+    invoiceId: invoiceId || ref.invoiceId || null,
+    source: source || "unknown"
+  });
+
   if (sub) {
     sub.paid = true;
     sub.stage = STAGE_PAID;
     sub.invoiceId = invoiceId || sub.invoiceId || ref.invoiceId || null;
   }
 
-  createPaidJob({ userId, apiRef, ref, invoiceId, source });
+  createPaidJob({ userId, apiRef, ref: completedRef, invoiceId, source });
 
-  const filesForHistory = sub?.files || ref.files || [];
+  const filesForHistory = sub?.files || completedRef.files || [];
 
   rememberPaidChecks({
     userId,
     files: filesForHistory,
-    batchId: ref.batchId || sub?.batchId || null,
+    batchId: completedRef.batchId || sub?.batchId || null,
     source: source || "payment-confirmed"
   });
 
   try {
     await bot.telegram.sendMessage(
       userId,
-      MESSAGES.paidMsgBatch(ref.amount, ref.summary || "Batch payment"),
+      MESSAGES.paidMsgBatch(completedRef.amount, completedRef.summary || "Batch payment"),
       { parse_mode: "Markdown" }
     );
   } catch (e) {
@@ -2134,12 +2287,12 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   }
 
   await sendAdminMessage(
-    `✅ PAID\nUser: ${userId}\nName: ${safeText(ref.name || "N/A")}\nUsername: @${safeText(
-      ref.username || "N/A"
-    )}\nPhone: ${formatPhone254ForAdmin(ref.phone || sub?.phone)}\nAmount: ${safeText(
-      ref.amount
-    )} KES\nType: ${safeText(ref.kind || "BATCH")}\nRef: ${safeText(
-      invoiceId || ref.invoiceId || apiRef || "N/A"
+    `✅ PAID\nUser: ${userId}\nName: ${safeText(completedRef.name || "N/A")}\nUsername: @${safeText(
+      completedRef.username || "N/A"
+    )}\nPhone: ${formatPhone254ForAdmin(completedRef.phone || sub?.phone)}\nAmount: ${safeText(
+      completedRef.amount
+    )} KES\nType: ${safeText(completedRef.kind || "BATCH")}\nRef: ${safeText(
+      invoiceId || completedRef.invoiceId || apiRef || "N/A"
     )}`,
     { adminButtons: "paid" }
   );
@@ -3043,9 +3196,9 @@ bot.on("document", async (ctx) => {
     };
 
     await ctx.reply(
-  `📦 First document received.\n\n${CLEAN_COPY_WARNING}\n\nChoose number of files. This is file 1.`,
-  { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
-);
+      `📦 First document received.\n\n${CLEAN_COPY_WARNING}\n\nChoose number of files. This is file 1.`,
+      { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
+    );
     return;
   }
 
@@ -3399,6 +3552,7 @@ app.get("/health", (req, res) => {
     timeUtc: moment.utc().format(),
     intasendTest: INTASEND_TEST,
     publicBaseUrl: PUBLIC_BASE_URL,
+    dataDir: DATA_DIR,
     secretKeyPresent: Boolean(INTASEND_SECRET_KEY),
     secretKeyLooksValid: String(INTASEND_SECRET_KEY).startsWith("ISSecretKey_"),
     publishableKeyPresent: Boolean(INTASEND_PUBLISHABLE_KEY),
@@ -3410,6 +3564,7 @@ app.get("/health", (req, res) => {
     checkHistoryRecords: checkHistory.length,
     usedProofCodes: Object.keys(usedProofCodes).length,
     dailySalesSummaryLastSentDateKey: dailySalesSummary.lastSentDateKey || null,
+    dailySalesLedgerPayments: Object.keys(dailySalesLedger.payments || {}).length,
     botDisplayNameMode: lastAppliedBotNameMode,
     botOnlineName: BOT_ONLINE_NAME,
     botOfflineName: BOT_OFFLINE_NAME,
@@ -3561,6 +3716,7 @@ const port = Number(process.env.PORT || 3000);
 app.listen(port, async () => {
   console.log(`Webhook server listening on port ${port}`);
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
+  console.log(`Data dir: ${DATA_DIR}`);
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
   console.log(`Report parsing: DISABLED`);
   console.log(`Till number: ${TILL_NUMBER}`);
@@ -3578,6 +3734,7 @@ app.listen(port, async () => {
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
   console.log(`Bot names: ${BOT_ONLINE_NAME} / ${BOT_OFFLINE_NAME}`);
   console.log(`Daily payment summary: enabled at 00:00 EAT`);
+  console.log(`Daily sales ledger payments loaded: ${Object.keys(dailySalesLedger.payments || {}).length}`);
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
 
