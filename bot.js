@@ -276,7 +276,7 @@ const KEY_CONTACT_SUPPORT = "💬 Contact Support Team";
 const KEY_CANCEL = "❌ Cancel / New submission";
 
 const CLEAN_COPY_WARNING =
-  "⚠️ Before uploading, use a clean copy without institution names, logos, or cover pages. This helps avoid provider account flags.";
+  "⚠️ Before uploading, use copy without institution names on cover pages or logos. This helps avoid turnitin provider account flags.";
 
 const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
@@ -3042,10 +3042,10 @@ bot.on("document", async (ctx) => {
       lastName: user.last_name || ""
     };
 
-    await ctx.reply(`📦 First document received.\n\nChoose number of files. This is file 1.`, {
-      parse_mode: "Markdown",
-      reply_markup: batchSizeKeyboard().reply_markup
-    });
+    await ctx.reply(
+  `📦 First document received.\n\n${CLEAN_COPY_WARNING}\n\nChoose number of files. This is file 1.`,
+  { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
+);
     return;
   }
 
