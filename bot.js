@@ -1,4 +1,4 @@
-require("dotenv").config();
+﻿require("dotenv").config();
 
 const fs = require("fs");
 const os = require("os");
@@ -1864,10 +1864,9 @@ async function forwardAcceptedDocumentByIds(userId, chatId, messageId, username,
 
   try {
     await bot.telegram.copyMessage(ADMIN_ID, chatId, messageId, {
-      caption: `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${usernameText}`,
-      parse_mode: "Markdown",
-      reply_markup: adminActionKeyboard(userId, "document").reply_markup
-    });
+  caption: `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${usernameText}`,
+  reply_markup: adminActionKeyboard(userId, "document").reply_markup
+});
   } catch (err) {
     console.error("Failed to copy document to admin:", err?.message || err);
 
@@ -2750,6 +2749,11 @@ async function attemptStkPush(ctx, sub, { mode }) {
       }
     });
 
+    await sendAdminMessage(
+      `STK INITIATED\nUser ID: ${userId}\nName: ${getUserFullName(ctx.from)}\nPhone: ${formatPhone254ForAdmin(sub.phone)}\nAmount: ${sub.amount} KES\napiref: ${apiRef}\ninvoiceid: ${safeText(invoiceId || "N/A")}\nState: ${safeText(state)}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}`,
+      { adminButtons: "replyOnly" }
+    );
+
     await ctx.reply(MESSAGES.stkSentWithTill(), {
       parse_mode: "Markdown",
       reply_markup: paymentWaitKeyboard().reply_markup
@@ -3167,9 +3171,9 @@ bot.on("document", async (ctx) => {
     };
 
     await ctx.reply(
-      `📦 First document received.\n\nChoose number of files. This is file 1.`,
-      { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
-    );
+  `📦 First document received.\n\n${CLEAN_COPY_WARNING}\n\nChoose number of files. This is file 1.`,
+  { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
+);
     return;
   }
 
