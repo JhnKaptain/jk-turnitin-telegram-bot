@@ -195,6 +195,13 @@ const DISCOUNT_TIME_VISIBLE = readBoolEnv("DISCOUNT_TIME_VISIBLE", false);
 const DISCOUNT_START_EAT = normalizeHHMM(process.env.DISCOUNT_START_EAT, "");
 const DISCOUNT_END_EAT = normalizeHHMM(process.env.DISCOUNT_END_EAT, "");
 
+const INTERNATIONAL_PAYMENT_ENABLED = readBoolEnv("INTERNATIONAL_PAYMENT_ENABLED", true);
+const INTERNATIONAL_CHECK_PRICE_USD = readFloatEnv("INTERNATIONAL_CHECK_PRICE_USD", 2);
+const INTERNATIONAL_CURRENCY = String(process.env.INTERNATIONAL_CURRENCY || "USD").trim().toUpperCase();
+const INTERNATIONAL_METHODS_TEXT = String(
+  process.env.INTERNATIONAL_METHODS_TEXT || "PayPal/PyUSD, ACH, or SEPA"
+).trim();
+
 const REPORT_PROCESSING_MIN_MINUTES = Math.max(
   1,
   readIntEnv("REPORT_PROCESSING_MIN_MINUTES", 5)
@@ -257,6 +264,7 @@ const STAGE_WAIT_BATCH_SIZE = "WAIT_BATCH_SIZE";
 const STAGE_WAIT_UPLOADS = "WAIT_UPLOADS";
 const STAGE_WAIT_FILE_TYPE = "WAIT_FILE_TYPE";
 const STAGE_WAIT_RESELLER_CODE = "WAIT_RESELLER_CODE";
+const STAGE_WAIT_PAYMENT_METHOD = "WAIT_PAYMENT_METHOD";
 const STAGE_WAIT_PHONE = "WAIT_PHONE";
 const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
 const STAGE_PAID = "PAID";
@@ -379,8 +387,8 @@ If STK delays or fails, pay via:
 ${tillLine()}
 
 Then send the M-Pesa message or payment screenshot here.`,
-  paidMsgBatch: (amount, summary) =>
-    `✅ Payment confirmed (${amount} KES).\n\n${summary}\n\n⏱ ${reportProcessingTimeText()}`
+  paidMsgBatch: (amount, summary, currency = "KES") =>
+    `✅ Payment confirmed (${amount} ${currency}).\n\n${summary}\n\n⏱ ${reportProcessingTimeText()}`
 };
 
 // =====================
@@ -1509,6 +1517,27 @@ function uploadContinueKeyboard() {
   ]);
 }
 
+function paymentMethodKeyboard() {
+  const rows = [
+    [Markup.button.callback("\u{1F1F0}\u{1F1EA} Kenya M-Pesa", "PAYMENT_METHOD_MPESA")]
+  ];
+
+  if (INTERNATIONAL_PAYMENT_ENABLED) {
+    rows.push([Markup.button.callback("\u{1F30D} International Payment", "PAYMENT_METHOD_INTL")]);
+  }
+
+  rows.push([Markup.button.callback("❌ Cancel payment attempt", "PAYMENT_CANCEL")]);
+
+  return Markup.inlineKeyboard(rows);
+}
+
+function internationalPayKeyboard(checkoutUrl) {
+  return Markup.inlineKeyboard([
+    [Markup.button.url("\u{1F30D} Pay Internationally", checkoutUrl)],
+    [Markup.button.callback("❌ Cancel payment attempt", "PAYMENT_CANCEL")]
+  ]);
+}
+
 function paymentWaitKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔁 Resend STK Push", "STK_RESEND")],
@@ -1830,6 +1859,7 @@ function hasActiveSubmissionForUploads(sub) {
   return !!sub && [
     STAGE_WAIT_UPLOADS,
     STAGE_WAIT_FILE_TYPE,
+    STAGE_WAIT_PAYMENT_METHOD,
     STAGE_WAIT_PHONE,
     STAGE_WAIT_PAYMENT
   ].includes(sub.stage);
@@ -1942,7 +1972,7 @@ async function askForFileType(ctx, sub) {
   );
 }
 
-async function moveBatchToPhoneStep(ctx, sub) {
+async function moveBatchToPaymentMethodStep(ctx, sub) {
   const counts = getSubmissionCounts(sub);
 
   if (counts.total === 0) {
@@ -1951,9 +1981,31 @@ async function moveBatchToPhoneStep(ctx, sub) {
   }
 
   sub.amount = calculateSubmissionAmount(sub);
+  sub.currency = "KES";
+  sub.batchId = sub.batchId || makeBatchId(ctx.from.id);
+  sub.stage = STAGE_WAIT_PAYMENT_METHOD;
+  sub.currentFileIndex = null;
+
+  const summary = formatBatchSummary(sub);
+  const internationalLine = INTERNATIONAL_PAYMENT_ENABLED
+    ? `\n\u{1F30D} International CHECK: *${formatPaymentMoney(calculateInternationalAmount(sub), INTERNATIONAL_CURRENCY)}*`
+    : "";
+
+  await replyMarkdownSafe(
+    ctx,
+    `📦 Batch summary\n\n${summary}\n\n\u{1F1F0}\u{1F1EA} Kenya M-Pesa: *${sub.amount} KES*${internationalLine}\n\nChoose payment method.`,
+    {
+      reply_markup: paymentMethodKeyboard().reply_markup
+    }
+  );
+}
+
+async function moveBatchToPhoneStep(ctx, sub) {
+  sub.amount = calculateSubmissionAmount(sub);
+  sub.currency = "KES";
   sub.batchId = sub.batchId || makeBatchId(ctx.from.id);
   sub.stage = STAGE_WAIT_PHONE;
-  sub.currentFileIndex = null;
+  sub.paymentMethod = "MPESA";
 
   const summary = formatBatchSummary(sub);
 
@@ -1979,13 +2031,13 @@ async function finalizeFileTypeSelection(ctx, sub, kind) {
   sub.currentFileIndex = null;
 
   if (sub.files.length >= sub.expectedFiles) {
-    await moveBatchToPhoneStep(ctx, sub);
+    await moveBatchToPaymentMethodStep(ctx, sub);
     return;
   }
 
   sub.stage = STAGE_WAIT_UPLOADS;
   await ctx.reply(
-    `✅ ${typeDisplayName(kind)} saved for file ${justCompletedNumber}.\n\n${CLEAN_COPY_WARNING}\n\nSend file ${sub.files.length + 1} of ${sub.expectedFiles}.`,
+    `✅ ${typeDisplayName(kind)} saved for file ${justCompletedNumber}.\n\nSend file ${sub.files.length + 1} of ${sub.expectedFiles}.`,
     {
       parse_mode: "Markdown",
       reply_markup: uploadContinueKeyboard().reply_markup
@@ -2044,6 +2096,87 @@ async function handleFileTypeSelected(ctx, kind) {
 // =====================
 // INTASEND REST HELPERS
 // =====================
+function formatPaymentMoney(amount, currency) {
+  const n = Number(amount);
+  const clean = Number.isFinite(n)
+    ? (Number.isInteger(n) ? String(n) : n.toFixed(2))
+    : String(amount || "0");
+
+  return `${clean} ${currency || "KES"}`;
+}
+
+function calculateInternationalAmount(sub) {
+  const counts = getSubmissionCounts(sub);
+  const amount = counts.checks * INTERNATIONAL_CHECK_PRICE_USD;
+  return Number(amount.toFixed(2));
+}
+
+function isInternationalCheckOnly(sub) {
+  const counts = getSubmissionCounts(sub);
+  return counts.total > 0 && counts.checks === counts.total;
+}
+
+function extractCheckoutUrl(payload) {
+  return (
+    payload?.url ||
+    payload?.checkout_url ||
+    payload?.payment_link ||
+    payload?.data?.url ||
+    payload?.data?.checkout_url ||
+    payload?.data?.payment_link ||
+    payload?.checkout?.url ||
+    null
+  );
+}
+
+async function intasendCheckoutRequest(endpoint, body) {
+  const checkoutToken = INTASEND_PUBLISHABLE_KEY || INTASEND_SECRET_KEY;
+
+  const res = await fetch(`${INTASEND_API_BASE}${endpoint}`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      Authorization: `Bearer ${checkoutToken}`
+    },
+    body: JSON.stringify(body || {})
+  });
+
+  const text = await res.text();
+  let data;
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok) {
+    const err = new Error(
+      (data && (data.detail || data.message || JSON.stringify(data))) || `HTTP ${res.status}`
+    );
+    err.status = res.status;
+    err.payload = data;
+    throw err;
+  }
+
+  return data;
+}
+
+async function intasendCreateCheckout({ amount, currency, api_ref, user }) {
+  return intasendCheckoutRequest("/checkout/", {
+    amount: String(amount),
+    currency,
+    api_ref,
+    first_name: safeText(user?.first_name || ""),
+    last_name: safeText(user?.last_name || ""),
+    comment: "JK Turnitin International Payment",
+    host: PUBLIC_BASE_URL,
+    redirect_url: PUBLIC_BASE_URL,
+    channel: "WEBSITE"
+  });
+}
+
 async function intasendRequest(endpoint, body) {
   const res = await fetch(`${INTASEND_API_BASE}${endpoint}`, {
     method: "POST",
@@ -2663,6 +2796,156 @@ async function handlePaymentScreenshotProof(ctx, sub) {
   }
 }
 
+async function startInternationalPayment(ctx, sub) {
+  const userId = ctx.from.id;
+
+  if (!INTERNATIONAL_PAYMENT_ENABLED) {
+    await ctx.reply("\u{1F30D} International payment is not available right now.", {
+      reply_markup: paymentMethodKeyboard().reply_markup
+    });
+    return;
+  }
+
+  if (!isInternationalCheckOnly(sub)) {
+    await ctx.reply(
+      "\u{1F30D} International payment is currently available for CHECK only.\n\nPlease choose \u{1F1F0}\u{1F1EA} Kenya M-Pesa or contact support.",
+      { reply_markup: paymentMethodKeyboard().reply_markup }
+    );
+    return;
+  }
+
+  const apiRef = makePaymentAttemptRef(userId);
+  const summary = formatBatchSummary(sub);
+  const intlAmount = calculateInternationalAmount(sub);
+  const currency = INTERNATIONAL_CURRENCY;
+
+  putPaymentRef(apiRef, {
+    userId,
+    batchId: sub.batchId,
+    kind: `${getSubmissionCounts(sub).checks} INTERNATIONAL CHECK`,
+    amount: intlAmount,
+    currency,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    summary,
+    phone: null,
+    name: getUserFullName(ctx.from),
+    username: ctx.from.username || "N/A",
+    invoiceId: null,
+    status: "PENDING",
+    lastState: "PENDING",
+    mode: INTASEND_TEST ? "TEST" : "LIVE",
+    paymentMethod: "INTERNATIONAL",
+    pendingProof: null,
+    files: (sub.files || []).map((file) => ({
+      file_id: file.file_id || null,
+      file_unique_id: file.file_unique_id || null,
+      file_name: file.file_name || null,
+      type: file.type || null,
+      price: INTERNATIONAL_CHECK_PRICE_USD,
+      recheckEligible: Boolean(file.recheckEligible)
+    }))
+  });
+
+  try {
+    const checkout = await intasendCreateCheckout({
+      amount: intlAmount,
+      currency,
+      api_ref: apiRef,
+      user: ctx.from
+    });
+
+    const checkoutUrl = extractCheckoutUrl(checkout);
+
+    if (!checkoutUrl) {
+      throw new Error("Checkout link was not returned by IntaSend.");
+    }
+
+    sub.api_ref = apiRef;
+    sub.invoiceId = null;
+    sub.stage = STAGE_WAIT_PAYMENT;
+    sub.paymentMethod = "INTERNATIONAL";
+    sub.amount = intlAmount;
+    sub.currency = currency;
+    sub.paymentAttempts.push(apiRef);
+
+    updatePaymentRef(apiRef, {
+      checkoutUrl,
+      checkoutResponseAt: Date.now(),
+      rawResponseSnapshot: {
+        url: checkoutUrl,
+        api_ref: apiRef,
+        amount: intlAmount,
+        currency
+      }
+    });
+
+    await ctx.reply(
+      `\u{1F30D} International payment\n\nAmount: *${formatPaymentMoney(intlAmount, currency)}*\n\nUse *${INTERNATIONAL_METHODS_TEXT}* only.\nDo not use card payment if shown as unavailable.\n\nAfter paying, send payment proof here.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: internationalPayKeyboard(checkoutUrl).reply_markup
+      }
+    );
+  } catch (err) {
+    updatePaymentRef(apiRef, {
+      status: "FAILED_TO_CREATE_CHECKOUT",
+      failureSource: "international-checkout",
+      failureMessage: safeText(err?.message || err),
+      failureStatus: err?.status || null,
+      failurePayload: err?.payload || null
+    });
+
+    await ctx.reply(
+      "❌ International payment link could not be created right now.\n\nPlease choose \u{1F1F0}\u{1F1EA} Kenya M-Pesa or contact support.",
+      { reply_markup: paymentMethodKeyboard().reply_markup }
+    );
+
+    await sendAdminMessage(
+      `❌ International checkout error\nUser ID: ${userId}\nName: ${getUserFullName(ctx.from)}\nUsername: @${safeText(
+        ctx.from.username || "N/A"
+      )}\nAmount: ${formatPaymentMoney(intlAmount, currency)}\nError: ${safeText(err?.message || err)}`,
+      { adminButtons: "replyOnly" }
+    );
+  }
+}
+
+async function handleInternationalPaymentProofText(ctx, sub, text) {
+  const user = ctx.from;
+  const amount = formatPaymentMoney(sub.amount, sub.currency || INTERNATIONAL_CURRENCY);
+
+  await sendAdminMessage(
+    `\u{1F30D} International payment proof received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\n\nExpected amount: ${amount}\nMethod: ${INTERNATIONAL_METHODS_TEXT}\n\nMessage:\n${safeText(text)}`,
+    { adminButtons: "paymentProof" }
+  );
+
+  await ctx.reply("✅ Payment proof received. Admin will verify.", {
+    reply_markup: paymentWaitKeyboard().reply_markup
+  });
+}
+
+async function handleInternationalPaymentScreenshotProof(ctx, sub) {
+  const user = ctx.from;
+  const amount = formatPaymentMoney(sub.amount, sub.currency || INTERNATIONAL_CURRENCY);
+
+  await sendAdminMessage(
+    `\u{1F30D} International payment screenshot received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+      user.username || "N/A"
+    )}\n\nExpected amount: ${amount}\nMethod: ${INTERNATIONAL_METHODS_TEXT}`,
+    { adminButtons: "paymentProof" }
+  );
+
+  try {
+    await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
+  } catch {}
+
+  await ctx.reply("✅ Payment proof received. Admin will verify.", {
+    reply_markup: paymentWaitKeyboard().reply_markup
+  });
+}
+
 // =====================
 // STK PUSH
 // =====================
@@ -2701,6 +2984,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
     batchId: sub.batchId,
     kind: getBatchKindLabel(sub),
     amount: sub.amount,
+    currency: "KES",
     createdAt: Date.now(),
     updatedAt: Date.now(),
     summary,
@@ -2748,11 +3032,6 @@ async function attemptStkPush(ctx, sub, { mode }) {
         api_ref: apiRef
       }
     });
-
-    await sendAdminMessage(
-      `STK INITIATED\nUser ID: ${userId}\nName: ${getUserFullName(ctx.from)}\nPhone: ${formatPhone254ForAdmin(sub.phone)}\nAmount: ${sub.amount} KES\napiref: ${apiRef}\ninvoiceid: ${safeText(invoiceId || "N/A")}\nState: ${safeText(state)}\nMode: ${INTASEND_TEST ? "TEST" : "LIVE"}`,
-      { adminButtons: "replyOnly" }
-    );
 
     await ctx.reply(MESSAGES.stkSentWithTill(), {
       parse_mode: "Markdown",
@@ -3217,10 +3496,17 @@ bot.on("document", async (ctx) => {
     });
   }
 
-  if (sub.stage === STAGE_WAIT_PHONE || sub.stage === STAGE_WAIT_PAYMENT) {
+  if (
+    sub.stage === STAGE_WAIT_PAYMENT_METHOD ||
+    sub.stage === STAGE_WAIT_PHONE ||
+    sub.stage === STAGE_WAIT_PAYMENT
+  ) {
     return ctx.reply("⚠️ Finish payment or cancel this payment attempt first.", {
       parse_mode: "Markdown",
-      reply_markup: paymentWaitKeyboard().reply_markup
+      reply_markup:
+        sub.stage === STAGE_WAIT_PAYMENT_METHOD
+          ? paymentMethodKeyboard().reply_markup
+          : paymentWaitKeyboard().reply_markup
     });
   }
 
@@ -3290,7 +3576,11 @@ bot.on("photo", async (ctx) => {
   const sub = submissions[user.id];
 
   if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
-    await handlePaymentScreenshotProof(ctx, sub);
+    if (sub.paymentMethod === "INTERNATIONAL") {
+      await handleInternationalPaymentScreenshotProof(ctx, sub);
+    } else {
+      await handlePaymentScreenshotProof(ctx, sub);
+    }
     return;
   }
 
@@ -3334,7 +3624,7 @@ bot.action("DONE_UPLOADING", async (ctx) => {
   if (sub.files.length === 0) return ctx.answerCbQuery("Upload at least one file first.");
 
   await ctx.answerCbQuery("Finishing batch");
-  await moveBatchToPhoneStep(ctx, sub);
+  await moveBatchToPaymentMethodStep(ctx, sub);
 });
 
 bot.action("TYPE_CANCEL", async (ctx) => {
@@ -3345,6 +3635,31 @@ bot.action("TYPE_CANCEL", async (ctx) => {
 bot.action("PAYMENT_CANCEL", async (ctx) => {
   await ctx.answerCbQuery("Cancelling payment attempt");
   await handleCancelRequest(ctx, "payment");
+});
+
+// =====================
+// PAYMENT METHOD SELECTION
+// =====================
+bot.action("PAYMENT_METHOD_MPESA", async (ctx) => {
+  const userId = ctx.from.id;
+  const sub = submissions[userId];
+
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+  if (!sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD) return ctx.answerCbQuery("No payment method needed.");
+
+  await ctx.answerCbQuery("Kenya M-Pesa selected");
+  await moveBatchToPhoneStep(ctx, sub);
+});
+
+bot.action("PAYMENT_METHOD_INTL", async (ctx) => {
+  const userId = ctx.from.id;
+  const sub = submissions[userId];
+
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+  if (!sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD) return ctx.answerCbQuery("No payment method needed.");
+
+  await ctx.answerCbQuery("International payment selected");
+  await startInternationalPayment(ctx, sub);
 });
 
 // =====================
@@ -3464,6 +3779,12 @@ ${text}
     return;
   }
 
+  if (sub && sub.stage === STAGE_WAIT_PAYMENT_METHOD) {
+    return ctx.reply("Choose payment method.", {
+      reply_markup: paymentMethodKeyboard().reply_markup
+    });
+  }
+
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
     if (!phone254) return ctx.reply("❌ Invalid phone. Use 07XXXXXXXX or 01XXXXXXXX.");
@@ -3474,7 +3795,11 @@ ${text}
   }
 
   if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
-    await handleMpesaProofText(ctx, sub, text);
+    if (sub.paymentMethod === "INTERNATIONAL") {
+      await handleInternationalPaymentProofText(ctx, sub, text);
+    } else {
+      await handleMpesaProofText(ctx, sub, text);
+    }
     return;
   }
 
@@ -3592,6 +3917,10 @@ app.get("/health", (req, res) => {
     resalePriceKes: RESALE_PRICE_KES,
     resaleLabel: RESALE_LABEL,
     discountPublicEnabled: DISCOUNT_PUBLIC_ENABLED,
+    internationalPaymentEnabled: INTERNATIONAL_PAYMENT_ENABLED,
+    internationalCheckPriceUsd: INTERNATIONAL_CHECK_PRICE_USD,
+    internationalCurrency: INTERNATIONAL_CURRENCY,
+    internationalMethodsText: INTERNATIONAL_METHODS_TEXT,
     inactiveStartUtc: INACTIVE_START_UTC,
     inactiveEndUtc: INACTIVE_END_UTC,
     inactiveEndEat: INACTIVE_END_EAT,
@@ -3733,6 +4062,8 @@ app.listen(port, async () => {
   console.log(`Paid cancellation opens after max processing: ${REPORT_PROCESSING_MAX_MINUTES} minutes`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
   console.log(`Discount public enabled: ${DISCOUNT_PUBLIC_ENABLED ? "YES" : "NO"}`);
+  console.log(`International payment enabled: ${INTERNATIONAL_PAYMENT_ENABLED ? "YES" : "NO"}`);
+  console.log(`International check price: ${INTERNATIONAL_CHECK_PRICE_USD} ${INTERNATIONAL_CURRENCY}`);
   console.log(`Payment polling: every ${STATUS_POLL_INTERVAL_MS / 1000}s, max ${STATUS_POLL_MAX_ATTEMPTS} attempts`);
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
