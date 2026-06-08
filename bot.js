@@ -2130,7 +2130,11 @@ function extractCheckoutUrl(payload) {
 }
 
 async function intasendCheckoutRequest(endpoint, body) {
-  const checkoutToken = INTASEND_PUBLISHABLE_KEY || INTASEND_SECRET_KEY;
+  const checkoutToken = INTASEND_SECRET_KEY;
+
+  if (!checkoutToken) {
+    throw new Error("Missing IntaSend secret key for checkout.");
+  }
 
   const res = await fetch(`${INTASEND_API_BASE}${endpoint}`, {
     method: "POST",
