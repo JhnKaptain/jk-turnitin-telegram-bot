@@ -8,6 +8,13 @@ const express = require("express");
 const moment = require("moment");
 const qs = require("querystring");
 
+let IntaSend = null;
+try {
+  IntaSend = require("intasend-node");
+} catch {
+  IntaSend = null;
+}
+
 let Tesseract = null;
 try {
   Tesseract = require("tesseract.js");
@@ -2168,16 +2175,31 @@ async function intasendCheckoutRequest(endpoint, body) {
 }
 
 async function intasendCreateCheckout({ amount, currency, api_ref, user }) {
-  return intasendCheckoutRequest("/checkout/", {
-    amount: String(amount),
-    currency,
-    api_ref,
+  if (!IntaSend) {
+    throw new Error("intasend-node package missing. Run npm install intasend-node");
+  }
+
+  if (!INTASEND_PUBLISHABLE_KEY) {
+    throw new Error("Missing IntaSend publishable key for checkout.");
+  }
+
+  const intasend = new IntaSend(
+    INTASEND_PUBLISHABLE_KEY,
+    INTASEND_SECRET_KEY,
+    INTASEND_TEST
+  );
+
+  const collection = intasend.collection();
+
+  return collection.charge({
     first_name: safeText(user?.first_name || ""),
     last_name: safeText(user?.last_name || ""),
+    amount: Number(amount),
+    currency,
+    api_ref,
     comment: "JK Turnitin International Payment",
     host: PUBLIC_BASE_URL,
-    redirect_url: PUBLIC_BASE_URL,
-    channel: "WEBSITE"
+    redirect_url: PUBLIC_BASE_URL
   });
 }
 
