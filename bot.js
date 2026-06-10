@@ -7,6 +7,7 @@ const { Telegraf, Markup } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
 const qs = require("querystring");
+const crypto = require("crypto");
 
 let IntaSend = null;
 try {
@@ -209,6 +210,22 @@ const INTERNATIONAL_METHODS_TEXT = String(
   process.env.INTERNATIONAL_METHODS_TEXT || "PayPal/PyUSD, ACH, or SEPA"
 ).trim();
 
+const INTERNATIONAL_GATEWAY = String(process.env.INTERNATIONAL_GATEWAY || "INTASEND")
+  .trim()
+  .toUpperCase();
+
+const PAYSTACK_ENABLED = readBoolEnv("PAYSTACK_ENABLED", false);
+const PAYSTACK_SECRET_KEY = String(process.env.PAYSTACK_SECRET_KEY || "").trim();
+const PAYSTACK_PUBLIC_KEY = String(process.env.PAYSTACK_PUBLIC_KEY || "").trim();
+const PAYSTACK_BASE_URL = "https://api.paystack.co";
+const PAYSTACK_CHANNELS = String(process.env.PAYSTACK_CHANNELS || "card,apple_pay")
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
+const PAYSTACK_EMAIL_DOMAIN = String(process.env.PAYSTACK_EMAIL_DOMAIN || "jkturnitin.local")
+  .replace(/[^a-zA-Z0-9.-]/g, "")
+  .trim() || "jkturnitin.local";
+
 const REPORT_PROCESSING_MIN_MINUTES = Math.max(
   1,
   readIntEnv("REPORT_PROCESSING_MIN_MINUTES", 5)
@@ -272,6 +289,7 @@ const STAGE_WAIT_UPLOADS = "WAIT_UPLOADS";
 const STAGE_WAIT_FILE_TYPE = "WAIT_FILE_TYPE";
 const STAGE_WAIT_RESELLER_CODE = "WAIT_RESELLER_CODE";
 const STAGE_WAIT_PAYMENT_METHOD = "WAIT_PAYMENT_METHOD";
+const STAGE_WAIT_INTERNATIONAL_EMAIL = "WAIT_INTERNATIONAL_EMAIL";
 const STAGE_WAIT_PHONE = "WAIT_PHONE";
 const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
 const STAGE_PAID = "PAID";
@@ -297,12 +315,7 @@ const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
 const AI_UNAVAILABLE_NOTE =
-  `ℹ️ AI writing detection is unavailable for this submission.
-
-Possible reasons:
-• Unsupported file type
-• Unsupported language
-• Qualifying text is fewer than 300 words or more than 30,000 words`;
+  `ℹ️ ℹ️ AI Writing Report Unavailable\n\nTurnitin AI report may not show if the file:\n• Has fewer than 300 words of essay/prose content\n• Has over 30,000 words of essay/prose content\n• Is not in English, Spanish, or Japanese\n• Is not .docx, .pdf, .txt, or .rtf\n\nIf unavailable, only the similarity report may be provided.`;
 
 function discountTimeText() {
   if (!DISCOUNT_TIME_VISIBLE) return "";
@@ -1867,6 +1880,7 @@ function hasActiveSubmissionForUploads(sub) {
     STAGE_WAIT_UPLOADS,
     STAGE_WAIT_FILE_TYPE,
     STAGE_WAIT_PAYMENT_METHOD,
+    STAGE_WAIT_INTERNATIONAL_EMAIL,
     STAGE_WAIT_PHONE,
     STAGE_WAIT_PAYMENT
   ].includes(sub.stage);
@@ -2271,6 +2285,128 @@ async function intasendGet(endpoint, query = {}) {
   return data;
 }
 
+function isPaystackInternationalGateway() {
+  return INTERNATIONAL_GATEWAY === "PAYSTACK" && PAYSTACK_ENABLED;
+}
+
+function normalizeEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "";
+  return email;
+}
+
+function fallbackPaystackEmail(userId) {
+  return `telegram_${userId}@${PAYSTACK_EMAIL_DOMAIN}`;
+}
+
+function paystackAmountSubunits(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.round(n * 100);
+}
+
+function normalizePaystackState(status) {
+  const s = String(status || "").trim().toLowerCase();
+  if (s === "success") return "COMPLETE";
+  if (["failed", "reversed"].includes(s)) return "FAILED";
+  if (["abandoned"].includes(s)) return "CANCELLED";
+  if (["pending", "ongoing"].includes(s)) return "PENDING";
+  return s.toUpperCase() || "UNKNOWN";
+}
+
+function extractPaystackCheckoutUrl(payload) {
+  return payload?.data?.authorization_url || payload?.authorization_url || null;
+}
+
+async function paystackRequest(endpoint, { method = "GET", body = null } = {}) {
+  if (!PAYSTACK_SECRET_KEY) {
+    throw new Error("Missing PAYSTACK_SECRET_KEY.");
+  }
+
+  const res = await fetch(`${PAYSTACK_BASE_URL}${endpoint}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+      "content-type": "application/json",
+      accept: "application/json"
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  const text = await res.text();
+  let data;
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok || data?.status === false) {
+    const err = new Error(data?.message || data?.raw || `Paystack HTTP ${res.status}`);
+    err.status = res.status;
+    err.payload = data;
+    throw err;
+  }
+
+  return data;
+}
+
+async function paystackInitializeTransaction({ amount, currency, reference, user, email }) {
+  const cleanEmail = normalizeEmail(email) || fallbackPaystackEmail(user?.id || "user");
+  const amountSubunits = paystackAmountSubunits(amount);
+
+  if (!amountSubunits) throw new Error("Invalid Paystack amount.");
+
+  const body = {
+    email: cleanEmail,
+    amount: String(amountSubunits),
+    currency,
+    reference,
+    callback_url: `${PUBLIC_BASE_URL}/paystack/callback`,
+    metadata: {
+      user_id: user?.id || null,
+      telegram_name: getUserFullName(user),
+      username: user?.username || "N/A",
+      source: "telegram-bot",
+      service: "international-check"
+    }
+  };
+
+  if (PAYSTACK_CHANNELS.length > 0) body.channels = PAYSTACK_CHANNELS;
+
+  return paystackRequest("/transaction/initialize", {
+    method: "POST",
+    body
+  });
+}
+
+async function paystackVerifyTransaction(reference) {
+  const resp = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`);
+  const data = resp?.data || {};
+
+  return {
+    raw: resp,
+    invoiceId: data.id || data.reference || reference,
+    apiRef: data.reference || reference,
+    state: normalizePaystackState(data.status),
+    failedReason: data.gateway_response || data.message || null,
+    source: "paystack-verify"
+  };
+}
+
+function verifyPaystackWebhook(req) {
+  if (!PAYSTACK_SECRET_KEY) return false;
+  const signature = String(req.headers["x-paystack-signature"] || "").trim();
+  const raw = req.rawBody || JSON.stringify(req.body || {});
+  const computed = crypto
+    .createHmac("sha512", PAYSTACK_SECRET_KEY)
+    .update(raw)
+    .digest("hex");
+
+  return signature && computed === signature;
+}
+
 function extractApiRef(payload) {
   return (
     payload?.api_ref ||
@@ -2506,6 +2642,12 @@ async function handlePaymentAttemptFailed({ apiRef, invoiceId, state, source, re
 }
 
 async function queryPaymentStatus(invoiceId, apiRef) {
+  const existingRefForGateway = apiRef ? getPaymentRef(apiRef) : null;
+
+  if (existingRefForGateway?.paymentGateway === "PAYSTACK") {
+    return paystackVerifyTransaction(apiRef);
+  }
+
   let best = null;
   let lastError = null;
 
@@ -2840,6 +2982,16 @@ async function startInternationalPayment(ctx, sub) {
     return;
   }
 
+  const gateway = isPaystackInternationalGateway() ? "PAYSTACK" : "INTASEND";
+
+  if (gateway === "PAYSTACK" && !normalizeEmail(sub.internationalEmail)) {
+    sub.stage = STAGE_WAIT_INTERNATIONAL_EMAIL;
+    await ctx.reply("\u{1F30D} Send email address for payment receipt.", {
+      reply_markup: paymentMethodKeyboard().reply_markup
+    });
+    return;
+  }
+
   const apiRef = makePaymentAttemptRef(userId);
   const summary = formatBatchSummary(sub);
   const intlAmount = calculateInternationalAmount(sub);
@@ -2855,6 +3007,7 @@ async function startInternationalPayment(ctx, sub) {
     updatedAt: Date.now(),
     summary,
     phone: null,
+    email: normalizeEmail(sub.internationalEmail) || null,
     name: getUserFullName(ctx.from),
     username: ctx.from.username || "N/A",
     invoiceId: null,
@@ -2862,6 +3015,7 @@ async function startInternationalPayment(ctx, sub) {
     lastState: "PENDING",
     mode: INTASEND_TEST ? "TEST" : "LIVE",
     paymentMethod: "INTERNATIONAL",
+    paymentGateway: gateway,
     pendingProof: null,
     files: (sub.files || []).map((file) => ({
       file_id: file.file_id || null,
@@ -2874,40 +3028,65 @@ async function startInternationalPayment(ctx, sub) {
   });
 
   try {
-    const checkout = await intasendCreateCheckout({
-      amount: intlAmount,
-      currency,
-      api_ref: apiRef,
-      user: ctx.from
-    });
+    let checkout;
+    let checkoutUrl;
+    let invoiceId = null;
 
-    const checkoutUrl = extractCheckoutUrl(checkout);
+    if (gateway === "PAYSTACK") {
+      checkout = await paystackInitializeTransaction({
+        amount: intlAmount,
+        currency,
+        reference: apiRef,
+        user: ctx.from,
+        email: sub.internationalEmail
+      });
+
+      checkoutUrl = extractPaystackCheckoutUrl(checkout);
+      invoiceId = checkout?.data?.access_code || null;
+    } else {
+      checkout = await intasendCreateCheckout({
+        amount: intlAmount,
+        currency,
+        api_ref: apiRef,
+        user: ctx.from
+      });
+
+      checkoutUrl = extractCheckoutUrl(checkout);
+      invoiceId = null;
+    }
 
     if (!checkoutUrl) {
-      throw new Error("Checkout link was not returned by IntaSend.");
+      throw new Error(`${gateway} checkout link was not returned.`);
     }
 
     sub.api_ref = apiRef;
-    sub.invoiceId = null;
+    sub.invoiceId = invoiceId;
     sub.stage = STAGE_WAIT_PAYMENT;
     sub.paymentMethod = "INTERNATIONAL";
+    sub.paymentGateway = gateway;
     sub.amount = intlAmount;
     sub.currency = currency;
     sub.paymentAttempts.push(apiRef);
 
     updatePaymentRef(apiRef, {
       checkoutUrl,
+      invoiceId,
       checkoutResponseAt: Date.now(),
       rawResponseSnapshot: {
         url: checkoutUrl,
         api_ref: apiRef,
         amount: intlAmount,
-        currency
+        currency,
+        gateway
       }
     });
 
+    if (gateway === "PAYSTACK") {
+      startStatusPolling({ userId, apiRef, invoiceId: null });
+    }
+
     await ctx.reply(
-      `\u{1F30D} International payment\n\nAmount: *${formatPaymentMoney(intlAmount, currency)}*\n\nUse *${INTERNATIONAL_METHODS_TEXT}* only.\nDo not use card payment if shown as unavailable.\n\nAfter paying, send payment proof here.`,
+      `\u{1F30D} International payment\n\nAmount: *${formatPaymentMoney(intlAmount, currency)}*\n\nUse the available checkout method.\nAfter paying, send payment proof here.`,
       {
         parse_mode: "Markdown",
         reply_markup: internationalPayKeyboard(checkoutUrl).reply_markup
@@ -2916,7 +3095,7 @@ async function startInternationalPayment(ctx, sub) {
   } catch (err) {
     updatePaymentRef(apiRef, {
       status: "FAILED_TO_CREATE_CHECKOUT",
-      failureSource: "international-checkout",
+      failureSource: `${gateway.toLowerCase()}-checkout`,
       failureMessage: safeText(err?.message || err),
       failureStatus: err?.status || null,
       failurePayload: err?.payload || null
@@ -2928,7 +3107,7 @@ async function startInternationalPayment(ctx, sub) {
     );
 
     await sendAdminMessage(
-      `❌ International checkout error\nUser ID: ${userId}\nName: ${getUserFullName(ctx.from)}\nUsername: @${safeText(
+      `❌ International checkout error\nGateway: ${gateway}\nUser ID: ${userId}\nName: ${getUserFullName(ctx.from)}\nUsername: @${safeText(
         ctx.from.username || "N/A"
       )}\nAmount: ${formatPaymentMoney(intlAmount, currency)}\nError: ${safeText(err?.message || err)}`,
       { adminButtons: "replyOnly" }
@@ -3524,6 +3703,7 @@ bot.on("document", async (ctx) => {
 
   if (
     sub.stage === STAGE_WAIT_PAYMENT_METHOD ||
+    sub.stage === STAGE_WAIT_INTERNATIONAL_EMAIL ||
     sub.stage === STAGE_WAIT_PHONE ||
     sub.stage === STAGE_WAIT_PAYMENT
   ) {
@@ -3805,6 +3985,15 @@ ${text}
     return;
   }
 
+  if (sub && sub.stage === STAGE_WAIT_INTERNATIONAL_EMAIL) {
+    const email = normalizeEmail(text);
+    if (!email) return ctx.reply("❌ Invalid email address. Send a valid email.");
+
+    sub.internationalEmail = email;
+    await startInternationalPayment(ctx, sub);
+    return;
+  }
+
   if (sub && sub.stage === STAGE_WAIT_PAYMENT_METHOD) {
     return ctx.reply("Choose payment method.", {
       reply_markup: paymentMethodKeyboard().reply_markup
@@ -3954,6 +4143,58 @@ app.get("/health", (req, res) => {
   });
 });
 
+app.get("/paystack/callback", (req, res) => {
+  res.status(200).send("Payment received. Return to Telegram.");
+});
+
+app.post("/paystack/webhook", (req, res) => {
+  if (!verifyPaystackWebhook(req)) {
+    return res.status(401).send("Invalid signature");
+  }
+
+  res.status(200).send("OK");
+
+  setImmediate(async () => {
+    try {
+      const payload = req.body || {};
+      const event = String(payload.event || "");
+      const data = payload.data || {};
+      const reference = String(data.reference || "").trim();
+
+      if (!reference) return;
+
+      const ref = getPaymentRef(reference);
+      if (!ref) {
+        await sendAdminMessage(`⚠️ Paystack webhook unknown reference\
+Ref: ${safeText(reference)}\
+Event: ${safeText(event)}`);
+        return;
+      }
+
+      updatePaymentRef(reference, {
+        lastWebhookAt: Date.now(),
+        lastState: normalizePaystackState(data.status),
+        invoiceId: data.id || ref.invoiceId || null
+      });
+
+      if (event === "charge.success" || normalizePaystackState(data.status) === "COMPLETE") {
+        const verified = await paystackVerifyTransaction(reference);
+
+        if (verified.state === "COMPLETE") {
+          await markPaymentComplete({
+            apiRef: reference,
+            invoiceId: verified.invoiceId || data.id || null,
+            state: "COMPLETE",
+            source: "paystack-webhook"
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Paystack webhook processing error:", err?.message || err);
+    }
+  });
+});
+
 app.get("/intasend/webhook", (req, res) => {
   const qChallenge = req.query?.challenge;
   if (!qChallenge) return res.status(200).send("OK");
@@ -4089,6 +4330,9 @@ app.listen(port, async () => {
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
   console.log(`Discount public enabled: ${DISCOUNT_PUBLIC_ENABLED ? "YES" : "NO"}`);
   console.log(`International payment enabled: ${INTERNATIONAL_PAYMENT_ENABLED ? "YES" : "NO"}`);
+  console.log(`International gateway: ${INTERNATIONAL_GATEWAY}`);
+  console.log(`Paystack enabled: ${PAYSTACK_ENABLED ? "YES" : "NO"}`);
+  console.log(`Paystack channels: ${PAYSTACK_CHANNELS.join(",") || "default"}`);
   console.log(`International check price: ${INTERNATIONAL_CHECK_PRICE_USD} ${INTERNATIONAL_CURRENCY}`);
   console.log(`Payment polling: every ${STATUS_POLL_INTERVAL_MS / 1000}s, max ${STATUS_POLL_MAX_ATTEMPTS} attempts`);
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
