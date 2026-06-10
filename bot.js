@@ -315,7 +315,15 @@ const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
 const AI_UNAVAILABLE_NOTE =
-  `ℹ️ ℹ️ AI Writing Report Unavailable\n\nTurnitin AI report may not show if the file:\n• Has fewer than 300 words of essay/prose content\n• Has over 30,000 words of essay/prose content\n• Is not in English, Spanish, or Japanese\n• Is not .docx, .pdf, .txt, or .rtf\n\nIf unavailable, only the similarity report may be provided.`;
+  `ℹ️ ℹ️ AI Writing Report Unavailable
+
+📌 Turnitin AI may not show when:
+
+📝 Essay/prose content is below 300 words or above 30,000 words
+🌐 File language is not English, Spanish, or Japanese
+📄 File type is not .docx, .pdf, .txt, or .rtf
+
+✅ If AI is unavailable, only the similarity report may be provided.`;
 
 function discountTimeText() {
   if (!DISCOUNT_TIME_VISIBLE) return "";
