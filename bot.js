@@ -2945,7 +2945,7 @@ async function startInternationalPayment(ctx, sub) {
     });
 
     await ctx.reply(
-      `\u{1F30D} International payment\n\nAmount: *${formatPaymentMoney(intlAmount, currency)}*\n\nUse *${INTERNATIONAL_METHODS_TEXT}* only.\nDo not use card payment if shown as unavailable.\n\nAfter paying, send payment proof here.`,
+      `\u{1F30D} International payment\n\nAmount: *${formatPaymentMoney(intlAmount, currency)}*\n\nUse *${INTERNATIONAL_METHODS_TEXT}* only.\nDo not use card payment if shown as unavailable.\n\nAfter paying, return to Telegram.\nThe bot will confirm automatically.\n\nIf it does not confirm within 2 minutes, send payment proof here.`,
       {
         parse_mode: "Markdown",
         reply_markup: internationalPayKeyboard(checkoutUrl).reply_markup
