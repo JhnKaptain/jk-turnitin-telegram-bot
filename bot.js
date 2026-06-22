@@ -2874,8 +2874,8 @@ function internationalBankFallbackLines(apiRef) {
     "",
     "Backup only (manual bank transfer):",
     "Bank: *" + safeText(INTERNATIONAL_BANK_NAME || "Co-operative Bank") + "*",
-    "Account: *" + safeText(INTERNATIONAL_BANK_ACCOUNT_NUMBER) + "*",
-    "Reference: *" + safeText(apiRef) + "*",
+    "*Account Number:* *" + safeText(INTERNATIONAL_BANK_ACCOUNT_NUMBER) + "*",
+    "*Payment Description:* *" + safeText(apiRef) + "*",
     "",
     "After manual bank payment, send a screenshot here."
   ];
@@ -2900,8 +2900,8 @@ function buildInternationalPaymentMessage({ intlAmount, currency, apiRef }) {
     "",
     "If asked, choose *Send to Another Bank* > *Co-operative Bank*.",
     "",
-    "\u26A0\uFE0F Enter BOTH the account number and the *Reference Number* shown on the checkout page.",
-    "The *Reference Number* is important for automatic confirmation.",
+    "\u26A0\uFE0F Enter BOTH the *Account Number* and the *Reference Number* shown on the checkout page.",
+    "Put the *Reference Number* in *Payment Description*.",
     "",
     "The bot will confirm automatically after successful payment.",
     "",
