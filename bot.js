@@ -212,8 +212,15 @@ const INTERNATIONAL_SIMILARITY_ONLY_PRICE = readFloatEnv(
 );
 const INTERNATIONAL_CURRENCY = String(process.env.INTERNATIONAL_CURRENCY || "USD").trim().toUpperCase();
 const INTERNATIONAL_METHODS_TEXT = String(
-  process.env.INTERNATIONAL_METHODS_TEXT || "PayPal/PyUSD, ACH, or SEPA"
+  process.env.INTERNATIONAL_METHODS_TEXT || "PesaLink or available bank checkout methods"
 ).trim();
+
+const INTERNATIONAL_BANK_FALLBACK_ENABLED = readBoolEnv("INTERNATIONAL_BANK_FALLBACK_ENABLED", true);
+const INTERNATIONAL_BANK_NAME = String(process.env.INTERNATIONAL_BANK_NAME || "Co-operative Bank").trim();
+const INTERNATIONAL_BANK_ACCOUNT_NUMBER = String(
+  process.env.INTERNATIONAL_BANK_ACCOUNT_NUMBER || "01102610456001"
+).replace(/[^0-9A-Za-z-]/g, "").trim();
+const INTERNATIONAL_BANK_ACCOUNT_NAME = String(process.env.INTERNATIONAL_BANK_ACCOUNT_NAME || "").trim();
 
 const REPORT_PROCESSING_MIN_MINUTES = Math.max(
   1,
@@ -2860,6 +2867,53 @@ async function handlePaymentScreenshotProof(ctx, sub) {
   }
 }
 
+function internationalBankFallbackLines(apiRef) {
+  if (!INTERNATIONAL_BANK_FALLBACK_ENABLED || !INTERNATIONAL_BANK_ACCOUNT_NUMBER) return [];
+
+  return [
+    "",
+    "Backup only (manual bank transfer):",
+    "Bank: *" + safeText(INTERNATIONAL_BANK_NAME || "Co-operative Bank") + "*",
+    "Account: *" + safeText(INTERNATIONAL_BANK_ACCOUNT_NUMBER) + "*",
+    "Reference: *" + safeText(apiRef) + "*",
+    "",
+    "After manual bank payment, send a screenshot here."
+  ];
+}
+
+function internationalBankVerificationLine() {
+  if (!INTERNATIONAL_BANK_ACCOUNT_NAME) return "";
+  return "\nExpected bank recipient: " + safeText(INTERNATIONAL_BANK_ACCOUNT_NAME);
+}
+
+function buildInternationalPaymentMessage({ intlAmount, currency, apiRef }) {
+  const amountText = formatPaymentMoney(intlAmount, currency);
+
+  const lines = [
+    "\u{1F30D} International payment",
+    "",
+    "Amount: *" + amountText + "*",
+    "Reference: *" + safeText(apiRef) + "*",
+    "",
+    "Recommended automatic method:",
+    "Tap *Pay Internationally*, choose *PesaLink* or available bank checkout, then complete in your banking app.",
+    "",
+    "If asked, choose *Send to Another Bank* > *Co-operative Bank*.",
+    "",
+    "\u26A0\uFE0F Enter BOTH the account number and the *Reference Number* shown on the checkout page.",
+    "The *Reference Number* is important for automatic confirmation.",
+    "",
+    "The bot will confirm automatically after successful payment.",
+    "",
+    "If it does not confirm within 2 minutes, send payment proof here.",
+    "",
+    "For non-KES accounts, your bank can convert. Make sure the final received amount is *" + amountText + "*.",
+    ...internationalBankFallbackLines(apiRef)
+  ];
+
+  return lines.join("\n");
+}
+
 async function startInternationalPayment(ctx, sub) {
   const userId = ctx.from.id;
 
@@ -2945,7 +2999,7 @@ async function startInternationalPayment(ctx, sub) {
     });
 
     await ctx.reply(
-      `\u{1F30D} International payment\n\nAmount: *${formatPaymentMoney(intlAmount, currency)}*\n\nUse *${INTERNATIONAL_METHODS_TEXT}* only.\nDo not use card payment if shown as unavailable.\n\nAfter paying, return to Telegram.\nThe bot will confirm automatically.\n\nIf it does not confirm within 2 minutes, send payment proof here.`,
+      buildInternationalPaymentMessage({ intlAmount, currency, apiRef }),
       {
         parse_mode: "Markdown",
         reply_markup: internationalPayKeyboard(checkoutUrl).reply_markup
@@ -2981,7 +3035,7 @@ async function handleInternationalPaymentProofText(ctx, sub, text) {
   await sendAdminMessage(
     `\u{1F30D} International payment proof received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\n\nExpected amount: ${amount}\nMethod: ${INTERNATIONAL_METHODS_TEXT}\n\nMessage:\n${safeText(text)}`,
+    )}\n\nExpected amount: ${amount}\nMethod: ${INTERNATIONAL_METHODS_TEXT}${internationalBankVerificationLine()}\n\nMessage:\n${safeText(text)}`,
     { adminButtons: "paymentProof" }
   );
 
@@ -2997,7 +3051,7 @@ async function handleInternationalPaymentScreenshotProof(ctx, sub) {
   await sendAdminMessage(
     `\u{1F30D} International payment screenshot received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
       user.username || "N/A"
-    )}\n\nExpected amount: ${amount}\nMethod: ${INTERNATIONAL_METHODS_TEXT}`,
+    )}\n\nExpected amount: ${amount}\nMethod: ${INTERNATIONAL_METHODS_TEXT}${internationalBankVerificationLine()}`,
     { adminButtons: "paymentProof" }
   );
 
@@ -3994,6 +4048,10 @@ app.get("/health", (req, res) => {
     internationalSimilarityOnlyPrice: INTERNATIONAL_SIMILARITY_ONLY_PRICE,
     internationalCurrency: INTERNATIONAL_CURRENCY,
     internationalMethodsText: INTERNATIONAL_METHODS_TEXT,
+    internationalBankFallbackEnabled: INTERNATIONAL_BANK_FALLBACK_ENABLED,
+    internationalBankName: INTERNATIONAL_BANK_NAME,
+    internationalBankAccountNumber: INTERNATIONAL_BANK_ACCOUNT_NUMBER,
+    internationalBankAccountNameSet: Boolean(INTERNATIONAL_BANK_ACCOUNT_NAME),
     inactiveStartUtc: INACTIVE_START_UTC,
     inactiveEndUtc: INACTIVE_END_UTC,
     inactiveEndEat: INACTIVE_END_EAT,
@@ -4138,6 +4196,7 @@ app.listen(port, async () => {
   console.log(`International payment enabled: ${INTERNATIONAL_PAYMENT_ENABLED ? "YES" : "NO"}`);
   console.log(`International check/recheck price: ${INTERNATIONAL_CHECK_PRICE_USD} ${INTERNATIONAL_CURRENCY}`);
   console.log(`International similarity only price: ${INTERNATIONAL_SIMILARITY_ONLY_PRICE} ${INTERNATIONAL_CURRENCY}`);
+  console.log(`International bank fallback: ${INTERNATIONAL_BANK_FALLBACK_ENABLED ? "YES" : "NO"}`);
   console.log(`Payment polling: every ${STATUS_POLL_INTERVAL_MS / 1000}s, max ${STATUS_POLL_MAX_ATTEMPTS} attempts`);
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
