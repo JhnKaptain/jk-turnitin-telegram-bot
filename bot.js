@@ -1747,7 +1747,7 @@ function startBotDisplayNameScheduler() {
 
   setInterval(() => {
     syncBotDisplayName(false);
-  }, 5 * 60 * 1000);
+  }, 60 * 1000);
 }
 
 async function notifyInactivePeriod(ctx) {
@@ -3213,6 +3213,37 @@ bot.start(async (ctx) => {
 // =====================
 // ADMIN COMMANDS
 // =====================
+bot.command("mode", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  const nowUtc = moment.utc().format("YYYY-MM-DD HH:mm");
+  const nowEat = moment().utcOffset(180).format("YYYY-MM-DD HH:mm");
+  const inactive = isBotInactivePeriod();
+  const desiredName = inactive ? BOT_OFFLINE_NAME : BOT_ONLINE_NAME;
+
+  await ctx.reply(
+    "Bot mode check\n\n" +
+    "Now UTC: " + nowUtc + "\n" +
+    "Now EAT: " + nowEat + "\n" +
+    "Inactive UTC: " + INACTIVE_START_UTC + " to " + INACTIVE_END_UTC + "\n" +
+    "Inactive ends EAT: " + INACTIVE_END_EAT_DISPLAY + "\n" +
+    "Current mode: " + (inactive ? "OFFLINE" : "ONLINE") + "\n" +
+    "Target name: " + desiredName + "\n" +
+    "Last applied: " + (lastAppliedBotNameMode || "N/A")
+  );
+});
+
+bot.command("syncname", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  await syncBotDisplayName(true);
+
+  const inactive = isBotInactivePeriod();
+  await ctx.reply(
+    "Bot name sync forced.\n\nCurrent mode: " + (inactive ? "OFFLINE" : "ONLINE")
+  );
+});
+
 bot.command("reply", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
