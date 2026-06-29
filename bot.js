@@ -4531,7 +4531,8 @@ app.listen(port, async () => {
   console.log(`Report processing message: ${reportProcessingTimeText().replace(/\*/g, "")}`);
   console.log(`Paid cancellation opens after max processing: ${REPORT_PROCESSING_MAX_MINUTES} minutes`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, SIMILARITY=${SIMILARITY_ONLY_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
-  console.log(`Discount public active now: ${isDiscountPublicActive() ? "YES" : "NO"}`);\n  console.log(`Discount public mode: ${DISCOUNT_START_EAT && DISCOUNT_END_EAT ? "AUTO TIME WINDOW" : "MANUAL ENV"}`);
+  console.log(`Discount public active now: ${isDiscountPublicActive() ? "YES" : "NO"}`);
+  console.log(`Discount public mode: ${DISCOUNT_START_EAT && DISCOUNT_END_EAT ? "AUTO TIME WINDOW" : "MANUAL ENV"}`);
   console.log(`Kenyan bank payment enabled: ${INTERNATIONAL_PAYMENT_ENABLED ? "YES" : "NO"}`);
   console.log(`International check/recheck price: ${INTERNATIONAL_CHECK_PRICE_USD} ${INTERNATIONAL_CURRENCY}`);
   console.log(`International similarity only price: ${INTERNATIONAL_SIMILARITY_ONLY_PRICE} ${INTERNATIONAL_CURRENCY}`);
