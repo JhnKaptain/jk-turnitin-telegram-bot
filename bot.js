@@ -359,7 +359,7 @@ function resalePublicPriceText() {
 function resaleButtonLabel(resaleVerified) {
   if (!RESALE_ENABLED) return "";
 
-  if (DISCOUNT_PUBLIC_ENABLED || resaleVerified) {
+  if (isDiscountPublicActive() || resaleVerified) {
     return `🏷️ Use ${RESALE_LABEL_TITLE} (${RESALE_PRICE_KES} KES)`;
   }
 
@@ -391,8 +391,8 @@ JK Turnitin Reports Bot
 • Recheck: ${recheck} KES${SIMILARITY_ONLY_ENABLED ? `\n• Similarity Report Only: ${SIMILARITY_ONLY_PRICE_KES} KES` : ""}${RESALE_ENABLED ? `\n• ${RESALE_LABEL_TITLE}: ${resalePublicPriceText()}` : ""}
 
 🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.
-${RESALE_ENABLED && !DISCOUNT_PUBLIC_ENABLED ? `\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}
-${RESALE_ENABLED && DISCOUNT_PUBLIC_ENABLED ? `\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}
+${RESALE_ENABLED && !isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}
+${RESALE_ENABLED && isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}
 `,
   inactive: () => `
 ⏳ Turnitin checks are paused right now.
@@ -414,7 +414,7 @@ ${tillLine()}
 
 Then send the M-Pesa message or payment screenshot here.
 
-🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED && !DISCOUNT_PUBLIC_ENABLED ? `\n\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}${RESALE_ENABLED && DISCOUNT_PUBLIC_ENABLED ? `\n\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}`,
+🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED && !isDiscountPublicActive() ? `\n\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}${RESALE_ENABLED && isDiscountPublicActive() ? `\n\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}`,
   askPhoneBatch: (summary, amount) =>
     `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
   stkSentWithTill: () =>
@@ -1746,6 +1746,33 @@ function isBotInactivePeriod() {
   return isTimeInWindowUTC(currentTime, INACTIVE_START_UTC, INACTIVE_END_UTC);
 }
 
+function isDiscountPublicActive() {
+  const hasWindow = Boolean(DISCOUNT_START_EAT && DISCOUNT_END_EAT);
+
+  if (!hasWindow) {
+    return DISCOUNT_PUBLIC_ENABLED;
+  }
+
+  const currentEat = moment().utcOffset(180).format("HH:mm");
+  return isTimeInWindowUTC(currentEat, DISCOUNT_START_EAT, DISCOUNT_END_EAT);
+}
+
+function discountPublicModeText() {
+  const currentEat = moment().utcOffset(180).format("HH:mm");
+  const hasWindow = Boolean(DISCOUNT_START_EAT && DISCOUNT_END_EAT);
+
+  if (!hasWindow) {
+    return "Manual env mode. DISCOUNT_PUBLIC_ENABLED=" + (DISCOUNT_PUBLIC_ENABLED ? "1" : "0");
+  }
+
+  return (
+    "Auto time mode\n" +
+    "Now EAT: " + currentEat + "\n" +
+    "Window: " + DISCOUNT_START_EAT + " to " + DISCOUNT_END_EAT + " EAT\n" +
+    "Public discount active: " + (isDiscountPublicActive() ? "YES" : "NO")
+  );
+}
+
 // =====================
 // BOT DISPLAY NAME STATUS
 // =====================
@@ -2023,7 +2050,7 @@ async function askForFileType(ctx, sub) {
     ? `✅ This file qualifies for *RECHECK*.\n\nTap *CLICK TO RECHECK* to continue.${similarityHint}`
     : `ℹ️ Recheck not available for this file.\n\nTap *CLICK TO CHECK* to continue.${similarityHint}`;
 
-  const resaleNote = RESALE_ENABLED && DISCOUNT_PUBLIC_ENABLED
+  const resaleNote = RESALE_ENABLED && isDiscountPublicActive()
     ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* is active.${discountTimeLineForMessage()}`
     : RESALE_ENABLED
       ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* Requires a Code. Wait For Public Access.${discountTimeLineForMessage()}`
@@ -2152,7 +2179,7 @@ async function handleFileTypeSelected(ctx, kind) {
       return ctx.reply(`⚠️ ${RESALE_LABEL_TITLE} is not enabled right now.`);
     }
 
-    if (DISCOUNT_PUBLIC_ENABLED) {
+    if (isDiscountPublicActive()) {
       sub.resellerVerified = true;
       await ctx.answerCbQuery(`${RESALE_LABEL_TITLE} Applied`);
       await ctx.reply(`✅ ${RESALE_LABEL_TITLE} Applied`);
@@ -3458,6 +3485,16 @@ bot.start(async (ctx) => {
 // =====================
 // ADMIN COMMANDS
 // =====================
+bot.command("discountmode", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  await ctx.reply(
+    "Discount mode check\n\n" +
+    discountPublicModeText() + "\n\n" +
+    "Button: " + (isDiscountPublicActive() ? "PUBLIC DISCOUNT" : "CODE REQUIRED")
+  );
+});
+
 bot.command("mode", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -4334,7 +4371,11 @@ app.get("/health", (req, res) => {
     resaleEnabled: RESALE_ENABLED,
     resalePriceKes: RESALE_PRICE_KES,
     resaleLabel: RESALE_LABEL,
-    discountPublicEnabled: DISCOUNT_PUBLIC_ENABLED,
+    discountPublicEnabled: isDiscountPublicActive(),
+    discountPublicConfigured: DISCOUNT_PUBLIC_ENABLED,
+    discountPublicAutoWindowSet: Boolean(DISCOUNT_START_EAT && DISCOUNT_END_EAT),
+    discountStartEat: DISCOUNT_START_EAT,
+    discountEndEat: DISCOUNT_END_EAT,
     internationalPaymentEnabled: INTERNATIONAL_PAYMENT_ENABLED,
     internationalCheckPriceUsd: INTERNATIONAL_CHECK_PRICE_USD,
     internationalSimilarityOnlyPrice: INTERNATIONAL_SIMILARITY_ONLY_PRICE,
@@ -4490,7 +4531,7 @@ app.listen(port, async () => {
   console.log(`Report processing message: ${reportProcessingTimeText().replace(/\*/g, "")}`);
   console.log(`Paid cancellation opens after max processing: ${REPORT_PROCESSING_MAX_MINUTES} minutes`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, SIMILARITY=${SIMILARITY_ONLY_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
-  console.log(`Discount public enabled: ${DISCOUNT_PUBLIC_ENABLED ? "YES" : "NO"}`);
+  console.log(`Discount public active now: ${isDiscountPublicActive() ? "YES" : "NO"}`);\n  console.log(`Discount public mode: ${DISCOUNT_START_EAT && DISCOUNT_END_EAT ? "AUTO TIME WINDOW" : "MANUAL ENV"}`);
   console.log(`Kenyan bank payment enabled: ${INTERNATIONAL_PAYMENT_ENABLED ? "YES" : "NO"}`);
   console.log(`International check/recheck price: ${INTERNATIONAL_CHECK_PRICE_USD} ${INTERNATIONAL_CURRENCY}`);
   console.log(`International similarity only price: ${INTERNATIONAL_SIMILARITY_ONLY_PRICE} ${INTERNATIONAL_CURRENCY}`);
