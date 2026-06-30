@@ -2011,7 +2011,6 @@ function buildAdminDocumentCaption({ userId, name, usernameText, file, fileNumbe
   const total = Number(expectedFiles || 0) || "?";
   const fileName = safeText(file?.file_name || file?.fileName || "N/A");
   const service = adminReportTypeLabel(file?.type);
-  const instruction = adminReportInstruction(file?.type);
   const price = file?.price ? String(file.price) + " KES" : "Not selected yet";
 
   const lines = [
@@ -2019,7 +2018,6 @@ function buildAdminDocumentCaption({ userId, name, usernameText, file, fileNumbe
     "",
     "File: " + fileNo + "/" + total,
     "Service: " + service,
-    instruction,
     "Price: " + price,
     "Filename: " + fileName
   ];
