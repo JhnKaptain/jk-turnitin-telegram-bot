@@ -1981,26 +1981,105 @@ function createStoredFileFromDocument(userId, doc) {
   };
 }
 
-async function forwardAcceptedDocumentByIds(userId, chatId, messageId, username, firstName, lastName) {
-  const name = `${safeText(firstName)} ${safeText(lastName)}`.replace(/\s+/g, " ").trim() || "N/A";
-  const usernameText = safeText(username || "N/A");
+function adminReportTypeLabel(kind) {
+  const t = String(kind || "").toUpperCase();
+
+  if (t === "CHECK") return "CHECK - FULL REPORT";
+  if (t === "RECHECK") return "RECHECK - FULL REPORT";
+  if (t === "SIMILARITY") return "SIMILARITY ONLY";
+  if (t === "RESALE") return RESALE_LABEL_TITLE.toUpperCase() + " - FULL REPORT";
+
+  return "PENDING SERVICE CHOICE";
+}
+
+function adminReportInstruction(kind) {
+  const t = String(kind || "").toUpperCase();
+
+  if (t === "SIMILARITY") {
+    return "Generate: Similarity report only. DO NOT generate AI report.";
+  }
+
+  if (t === "CHECK" || t === "RECHECK" || t === "RESALE") {
+    return "Generate: Similarity + AI report where available.";
+  }
+
+  return "Generate: Wait until client chooses service.";
+}
+
+function buildAdminDocumentCaption({ userId, name, usernameText, file, fileNumber, expectedFiles }) {
+  const fileNo = Number(fileNumber || 0) || "?";
+  const total = Number(expectedFiles || 0) || "?";
+  const fileName = safeText(file?.file_name || file?.fileName || "N/A");
+  const service = adminReportTypeLabel(file?.type);
+  const instruction = adminReportInstruction(file?.type);
+  const price = file?.price ? String(file.price) + " KES" : "Not selected yet";
+
+  const lines = [
+    "📨 Document received",
+    "",
+    "File: " + fileNo + "/" + total,
+    "Service: " + service,
+    instruction,
+    "Price: " + price,
+    "Filename: " + fileName
+  ];
+
+  if (file?.recheckEligible) {
+    lines.push("Recheck eligibility: YES (" + safeText(file.recheckHoursLeft || "?") + "h left)");
+  }
+
+  lines.push(
+    "",
+    "User ID: " + userId,
+    "Name: " + safeText(name),
+    "Username: @" + safeText(usernameText || "N/A")
+  );
+
+  return lines.join("\n");
+}
+
+async function sendSelectedDocumentToAdmin(user, sub, file, fileNumber) {
+  if (!file) return;
+  if (file.adminSentAt) return;
+
+  const userId = user.id;
+  const name = getUserFullName(user);
+  const usernameText = safeText(user.username || "N/A");
+
+  const caption = buildAdminDocumentCaption({
+    userId,
+    name,
+    usernameText,
+    file,
+    fileNumber,
+    expectedFiles: sub?.expectedFiles
+  });
 
   try {
-    await bot.telegram.copyMessage(ADMIN_ID, chatId, messageId, {
-  caption: `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${usernameText}`,
-  reply_markup: adminActionKeyboard(userId, "document").reply_markup
-});
-  } catch (err) {
-    console.error("Failed to copy document to admin:", err?.message || err);
+    if (!file.sourceChatId || !file.sourceMessageId) {
+      throw new Error("Missing original document message details.");
+    }
 
+    const copied = await bot.telegram.copyMessage(ADMIN_ID, file.sourceChatId, file.sourceMessageId, {
+      caption,
+      reply_markup: adminActionKeyboard(userId, "document").reply_markup
+    });
+
+    file.adminSentAt = Date.now();
+    file.adminMessageId = copied?.message_id || null;
+  } catch (err) {
     await sendAdminMessage(
-      `📨 Document received\nUser ID: ${userId}\nName: ${name}\nUsername: @${usernameText}${adminQuickCommands(userId)}`,
+      "⚠️ Document selected but copy failed. Details below.\n\n" + caption,
       { adminButtons: "document" }
     );
 
     try {
-      await bot.telegram.forwardMessage(ADMIN_ID, chatId, messageId);
+      if (file.sourceChatId && file.sourceMessageId) {
+        await bot.telegram.forwardMessage(ADMIN_ID, file.sourceChatId, file.sourceMessageId);
+      }
     } catch {}
+
+    file.adminSentAt = Date.now();
   }
 }
 
@@ -2139,6 +2218,9 @@ async function finalizeFileTypeSelection(ctx, sub, kind) {
   if (kind === "RESALE") file.price = RESALE_PRICE_KES;
 
   const justCompletedNumber = sub.currentFileIndex + 1;
+
+  await sendSelectedDocumentToAdmin(ctx.from, sub, file, justCompletedNumber);
+
   sub.currentFileIndex = null;
 
   if (sub.files.length >= sub.expectedFiles) {
@@ -3790,6 +3872,12 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
       file_name: pending.fileName
     });
 
+    storedFile.sourceChatId = pending.chatId;
+    storedFile.sourceMessageId = pending.messageId;
+    storedFile.sourceUsername = pending.username || "N/A";
+    storedFile.sourceFirstName = pending.firstName || "";
+    storedFile.sourceLastName = pending.lastName || "";
+
     sub.files.push(storedFile);
     sub.currentFileIndex = sub.files.length - 1;
     sub.stage = STAGE_WAIT_FILE_TYPE;
@@ -3799,15 +3887,6 @@ bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
       parse_mode: "Markdown",
       reply_markup: mainKeyboard()
     });
-
-    await forwardAcceptedDocumentByIds(
-      pending.userId,
-      pending.chatId,
-      pending.messageId,
-      pending.username,
-      pending.firstName,
-      pending.lastName
-    );
 
     await askForFileType(ctx, sub);
     return;
@@ -3948,18 +4027,15 @@ bot.on("document", async (ctx) => {
   const doc = ctx.message.document;
   const storedFile = createStoredFileFromDocument(user.id, doc);
 
+  storedFile.sourceChatId = ctx.chat.id;
+  storedFile.sourceMessageId = ctx.message.message_id;
+  storedFile.sourceUsername = user.username || "N/A";
+  storedFile.sourceFirstName = user.first_name || "";
+  storedFile.sourceLastName = user.last_name || "";
+
   sub.files.push(storedFile);
   sub.currentFileIndex = sub.files.length - 1;
   sub.stage = STAGE_WAIT_FILE_TYPE;
-
-  await forwardAcceptedDocumentByIds(
-    user.id,
-    ctx.chat.id,
-    ctx.message.message_id,
-    user.username || "N/A",
-    user.first_name || "",
-    user.last_name || ""
-  );
 
   await askForFileType(ctx, sub);
 });
