@@ -160,7 +160,7 @@ if (!INTASEND_PUBLISHABLE_KEY) {
 
 const INTASEND_API_BASE = "https://api.intasend.com/api/v1";
 const ADMIN_ID = Number(process.env.ADMIN_ID || 6569201830);
-const MAX_BATCH_FILES = 5;
+const MAX_BATCH_FILES = 10;
 const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915").trim();
 
 const BOT_ONLINE_NAME = String(process.env.BOT_ONLINE_NAME || "JK Turnitin Reports (ONLINE)")
@@ -1530,13 +1530,18 @@ function batchSizeKeyboard() {
     [
       Markup.button.callback("1", "BATCH_COUNT_1"),
       Markup.button.callback("2", "BATCH_COUNT_2"),
-      Markup.button.callback("3", "BATCH_COUNT_3")
-    ],
-    [
+      Markup.button.callback("3", "BATCH_COUNT_3"),
       Markup.button.callback("4", "BATCH_COUNT_4"),
       Markup.button.callback("5", "BATCH_COUNT_5")
     ],
-    [Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]
+    [
+      Markup.button.callback("6", "BATCH_COUNT_6"),
+      Markup.button.callback("7", "BATCH_COUNT_7"),
+      Markup.button.callback("8", "BATCH_COUNT_8"),
+      Markup.button.callback("9", "BATCH_COUNT_9"),
+      Markup.button.callback("10", "BATCH_COUNT_10")
+    ],
+    [Markup.button.callback("\u274C Cancel document", "TYPE_CANCEL")]
   ]);
 }
 
@@ -3848,7 +3853,7 @@ bot.hears(KEY_CANCEL, async (ctx) => {
 // =====================
 // BATCH SIZE SELECTION
 // =====================
-bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
+bot.action(/^BATCH_COUNT_(\d{1,2})$/, async (ctx) => {
   const count = Number(ctx.match[1]);
   const userId = ctx.from.id;
 
