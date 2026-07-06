@@ -435,10 +435,10 @@ If urgent, WhatsApp call *0701730921*.
 
 Default method: *STK Push*.
 
-If STK delays or fails, pay via:
-${tillLine()}
+If STK delays or fails, pay manually via:
+*Buy Goods Till:* ${TILL_NUMBER}
 
-Then send the M-Pesa message or payment screenshot here.
+If payment is not confirmed within *1 minute*, send the M-Pesa confirmation message or payment screenshot here.
 
 🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED && !isDiscountPublicActive() ? `\n\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}${RESALE_ENABLED && isDiscountPublicActive() ? `\n\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}`,
   askPhoneBatch: (summary, amount) =>
@@ -446,10 +446,10 @@ Then send the M-Pesa message or payment screenshot here.
   stkSentWithTill: () =>
     `✅ STK Push sent. Check your phone and enter PIN.
 
-If STK delays or fails, pay via:
-${tillLine()}
+If STK delays or fails, pay manually via:
+*Buy Goods Till:* ${TILL_NUMBER}
 
-Then send the M-Pesa message or payment screenshot here.`,
+If payment is not confirmed within *1 minute*, send the M-Pesa confirmation message or payment screenshot here.`,
   paidMsgBatch: (amount, summary, currency = "KES") =>
     `✅ Payment confirmed (${amount} ${currency}).\n\n${summary}\n\n⏱ ${reportProcessingTimeText()}`
 };
@@ -2891,7 +2891,7 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
     try {
       await bot.telegram.sendMessage(
         userId,
-        `⏳ Payment not confirmed yet.\n\nYou may pay via:\n${tillLine()}\n\nThen send the M-Pesa message or screenshot here.`,
+        `⏳ Payment not confirmed yet.\n\nIf you already paid and confirmation takes more than *1 minute*, send the M-Pesa confirmation message or payment screenshot here.\n\nManual payment:\n*Buy Goods Till:* ${TILL_NUMBER}`,
         { parse_mode: "Markdown", reply_markup: paymentWaitKeyboard().reply_markup }
       );
     } catch {}
@@ -3277,7 +3277,7 @@ function buildTzOtherPaymentMessage({ amount, currency, apiRef }) {
     "Name: *" + safeText(TZ_OTHER_RECIPIENT_NAME) + "*",
     "",
     "Wait up to *" + TZ_OTHER_PROOF_WAIT_MINUTES + " minutes* for admin confirmation.",
-    "If not confirmed, send the payment message or screenshot here.",
+    "If confirmation takes more than 1 minute, send the payment message or screenshot here.",
     "",
     "Other countries: send to the Safaricom M-Pesa number using Remitly, WorldRemit, Wise, Taptap Send, or similar."
   ];
