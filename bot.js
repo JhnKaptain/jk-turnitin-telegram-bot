@@ -1673,12 +1673,17 @@ function adminActionKeyboard(userId, variant) {
     rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
     rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
   } else if (variant === "document") {
-    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
-    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
-    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
-    rows.push([Markup.button.callback("ℹ️ AI Unavailable Note", `ADMIN_AI_NOTE_${userId}`)]);
-    rows.push([Markup.button.callback("⭐ AI Star Note", `ADMIN_AI_STAR_NOTE_${userId}`)]);
-    rows.push([Markup.button.callback("🧾 Till Payment Notice", `ADMIN_TILL_NOTICE_${userId}`)]);
+    rows.push([
+      Markup.button.callback("📦 Filebatch", `ADMIN_FILEBATCH_${userId}`),
+      Markup.button.callback("💬 Reply", `ADMIN_REPLY_${userId}`),
+      Markup.button.callback("✅ Confirm", `ADMIN_PAID_${userId}`)
+    ]);
+
+    rows.push([
+      Markup.button.callback("ℹ️ AI Unavail", `ADMIN_AI_NOTE_${userId}`),
+      Markup.button.callback("🧾 Till", `ADMIN_TILL_NOTICE_${userId}`),
+      Markup.button.callback("⭐ AI Star", `ADMIN_AI_STAR_NOTE_${userId}`)
+    ]);
   } else if (variant === "delivery") {
     rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
     rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
