@@ -334,51 +334,29 @@ const AI_UNAVAILABLE_NOTE =
 ✅ If AI is unavailable, only the similarity report may be provided.`;
 
 const AI_STAR_NOTE =
+  `⭐ *AI Report Asterisk*
 
-  `⭐ About the AI Report Asterisk
+An asterisk (\\*%) appears when AI detection is below *20%*.
 
+At *1–19%*, Turnitin may not show the exact percentage or AI highlights because results are less reliable.
 
+To get highlights for revision, add AI content at the end of the file to boost detection to at least *20%*, then request a *paid recheck*.
 
-An asterisk (*%) appears when AI detection is below 20%.
-
-
-
-In this range, the result is less reliable, so the report may not show an exact percentage or highlighted text. This helps reduce misinterpretation.
-
-
-
-Highlights are shown only when the detected AI writing reaches the report threshold. ADD AI CONTENT AT THE END OF THE FILE TO BOOST THE PERCENTAGE TO AT LEAST 20% AND REQUEST FOR A PAID RECHECK IF YOU NEED HIGHLIGHTS.  The revised file must be submitted again as a new paid submission. 
-
-
-
-All submissions are paid for.`;
+The revised file must be submitted again. *All submissions are paid for.*`;
 
 function mpesaTillNoticeMessage() {
-
   return [
-
-    "🧾 M-Pesa Payment Notice",
-
+    "🧾 *M-Pesa Payment Notice*",
     "",
-
     "The M-Pesa STK prompt gateway is currently experiencing technical issues.",
-
     "",
-
-    "Please pay manually via Buy Goods Till Number:",
-
-    TILL_NUMBER,
-
+    "Please pay manually via *Buy Goods Till Number:*",
+    "*" + TILL_NUMBER + "*",
     "",
-
-    "After payment, send the M-Pesa confirmation message or payment screenshot here for verification.",
-
+    "If payment is not confirmed within *1 minute*, send the M-Pesa confirmation message or payment screenshot here for verification.",
     "",
-
     "STK prompts will resume once the gateway is stable."
-
-  ].join("\n");
-
+  ].join("\\n");
 }
 
 function discountTimeText() {
@@ -3881,7 +3859,7 @@ bot.action(/^ADMIN_AI_STAR_NOTE_(\d+)$/, async (ctx) => {
 
   try {
 
-    await bot.telegram.sendMessage(userId, AI_STAR_NOTE);
+    await bot.telegram.sendMessage(userId, AI_STAR_NOTE, { parse_mode: "Markdown" });
 
     await ctx.answerCbQuery("AI star note sent");
 
@@ -3911,7 +3889,7 @@ bot.action(/^ADMIN_TILL_NOTICE_(\d+)$/, async (ctx) => {
 
   try {
 
-    await bot.telegram.sendMessage(userId, mpesaTillNoticeMessage());
+    await bot.telegram.sendMessage(userId, mpesaTillNoticeMessage(), { parse_mode: "Markdown" });
 
     await ctx.answerCbQuery("Till notice sent");
 
