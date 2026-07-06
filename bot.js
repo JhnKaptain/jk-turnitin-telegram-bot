@@ -356,7 +356,7 @@ function mpesaTillNoticeMessage() {
     "If payment is not confirmed within *1 minute*, send the M-Pesa confirmation message or payment screenshot here for verification.",
     "",
     "STK prompts will resume once the gateway is stable."
-  ].join("\\n");
+  ].join("\n");
 }
 
 function discountTimeText() {
