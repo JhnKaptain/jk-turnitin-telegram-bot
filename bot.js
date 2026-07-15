@@ -1669,9 +1669,14 @@ function adminActionKeyboard(userId, variant) {
   const rows = [];
 
   if (variant === "paymentProof") {
-    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
-    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
-    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([
+      Markup.button.callback("💬 Reply", `ADMIN_REPLY_${userId}`),
+      Markup.button.callback("✅ Confirm", `ADMIN_PAID_${userId}`)
+    ]);
+
+    rows.push([Markup.button.callback("🛑 Cancel Pay", `ADMIN_CANCEL_PAYMENT_${userId}`)]);
+
+    rows.push([Markup.button.callback("📦 Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
   } else if (variant === "document") {
     rows.push([
       Markup.button.callback("📦 Filebatch", `ADMIN_FILEBATCH_${userId}`),
@@ -1679,24 +1684,26 @@ function adminActionKeyboard(userId, variant) {
       Markup.button.callback("✅ Confirm", `ADMIN_PAID_${userId}`)
     ]);
 
+    rows.push([Markup.button.callback("🛑 Cancel Pay", `ADMIN_CANCEL_PAYMENT_${userId}`)]);
+
     rows.push([
       Markup.button.callback("ℹ️ AI Unavail", `ADMIN_AI_NOTE_${userId}`),
       Markup.button.callback("🧾 Till", `ADMIN_TILL_NOTICE_${userId}`),
       Markup.button.callback("⭐ AI Star", `ADMIN_AI_STAR_NOTE_${userId}`)
     ]);
   } else if (variant === "delivery") {
-    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
-    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
-    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
+    rows.push([Markup.button.callback("📦 Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("✅ Confirm", `ADMIN_PAID_${userId}`)]);
   } else if (variant === "paid") {
-    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
-    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("📦 Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply", `ADMIN_REPLY_${userId}`)]);
   } else if (variant === "replyOnly") {
-    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply", `ADMIN_REPLY_${userId}`)]);
   } else {
-    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
-    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
-    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
+    rows.push([Markup.button.callback("📦 Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("✅ Confirm", `ADMIN_PAID_${userId}`)]);
   }
 
   return Markup.inlineKeyboard(rows);
@@ -2600,6 +2607,12 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   const ref = getPaymentRef(apiRef);
   if (!ref) return false;
   if (ref.status === "COMPLETE") return false;
+
+  const currentStatus = String(ref.status || "").toUpperCase();
+  if (["ADMIN_CANCELLED", "CANCELLED", "FAILED", "EXPIRED"].includes(currentStatus)) {
+    stopStatusPolling(apiRef);
+    return false;
+  }
 
   if (ref.pendingProof?.code && !isProofCodeUsed(ref.pendingProof.code)) {
     rememberUsedProofCode(ref.pendingProof.code, {
@@ -3736,7 +3749,7 @@ bot.command("cancelreply", async (ctx) => {
 
 function findLatestPendingPaymentRefByUser(userId) {
   const entries = Object.entries(paymentRefs)
-    .filter(([apiRef, value]) => String(value?.userId) === String(userId) && value?.status !== "COMPLETE")
+    .filter(([apiRef, value]) => String(value?.userId) === String(userId) && !isPaymentRefClosedForAdmin(value))
     .sort((a, b) => Number(b[1]?.createdAt || 0) - Number(a[1]?.createdAt || 0));
 
   return entries[0] || null;
@@ -3759,6 +3772,81 @@ async function manuallyConfirmLatestPaymentForUser(userId, source) {
     ok: true,
     apiRef,
     message: `✅ Manually marked latest payment complete for user ${userId}`
+  };
+}
+
+function isPaymentRefClosedForAdmin(ref) {
+  const status = String(ref?.status || "").toUpperCase();
+  return ["COMPLETE", "ADMIN_CANCELLED", "CANCELLED", "FAILED", "EXPIRED"].includes(status);
+}
+
+function findOpenPaymentRefsByUser(userId) {
+  return Object.entries(paymentRefs)
+    .filter(([apiRef, value]) => String(value?.userId) === String(userId) && !isPaymentRefClosedForAdmin(value))
+    .sort((a, b) => Number(b[1]?.createdAt || 0) - Number(a[1]?.createdAt || 0));
+}
+
+async function cancelPaymentProcessForUser(userId, source) {
+  const sub = submissions[userId];
+
+  if (sub?.paid || sub?.stage === STAGE_PAID) {
+    return {
+      ok: false,
+      message: `⚠️ User ${userId} is already marked paid. Do not cancel payment from here.`
+    };
+  }
+
+  const refsByApi = new Map(findOpenPaymentRefsByUser(userId));
+
+  if (Array.isArray(sub?.paymentAttempts)) {
+    for (const apiRef of sub.paymentAttempts) {
+      const ref = getPaymentRef(apiRef);
+      if (ref && String(ref.userId) === String(userId) && !isPaymentRefClosedForAdmin(ref)) {
+        refsByApi.set(apiRef, ref);
+      }
+      stopStatusPolling(apiRef);
+    }
+  }
+
+  if (sub?.api_ref) stopStatusPolling(sub.api_ref);
+
+  let cancelledRefs = 0;
+
+  for (const [apiRef] of refsByApi.entries()) {
+    stopStatusPolling(apiRef);
+    updatePaymentRef(apiRef, {
+      status: "ADMIN_CANCELLED",
+      cancelledAt: Date.now(),
+      lastState: "ADMIN_CANCELLED",
+      cancelSource: source || "admin-button"
+    });
+    cancelledRefs += 1;
+  }
+
+  if (!sub && cancelledRefs === 0) {
+    return {
+      ok: false,
+      message: `❌ No active unpaid payment process found for user ${userId}.`
+    };
+  }
+
+  resetSubmission(userId);
+
+  try {
+    await bot.telegram.sendMessage(
+      userId,
+      "❌ Your payment attempt for the uploaded document has been cancelled by admin.\n\nYou can start again by tapping *Send Document*.",
+      { parse_mode: "Markdown", reply_markup: mainKeyboard() }
+    );
+  } catch (err) {
+    await sendAdminMessage(
+      `⚠️ Payment process cancelled for user ${userId}, but user message failed: ${safeText(err?.message || err)}`
+    );
+  }
+
+  return {
+    ok: true,
+    message: `✅ Payment process cancelled for user ${userId}.\nStopped ${cancelledRefs} pending payment reference(s).`
   };
 }
 
@@ -3832,6 +3920,16 @@ bot.action(/^ADMIN_PAID_(\d+)$/, async (ctx) => {
 
   await ctx.answerCbQuery("Checking pending payment...");
   const result = await manuallyConfirmLatestPaymentForUser(userId, "admin-manual-button");
+  await ctx.reply(result.message);
+});
+
+bot.action(/^ADMIN_CANCEL_PAYMENT_(\d+)$/, async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+
+  const userId = ctx.match[1];
+
+  await ctx.answerCbQuery("Cancelling payment...");
+  const result = await cancelPaymentProcessForUser(userId, "admin-cancel-button");
   await ctx.reply(result.message);
 });
 
