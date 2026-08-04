@@ -1,4 +1,4 @@
-﻿require("dotenv").config();
+require("dotenv").config();
 
 const fs = require("fs");
 const os = require("os");
@@ -1573,20 +1573,51 @@ function batchSizeKeyboard() {
 
 function typeInlineKeyboard(allowRecheck, allowResale, resaleVerified) {
   const rows = [];
+  const publicDiscountExclusive = isPublicDiscountExclusiveMode();
 
-  if (allowRecheck) {
-    rows.push([Markup.button.callback(`\u{1F501} CLICK TO RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")]);
-  } else {
-    rows.push([Markup.button.callback(`\u2705 CLICK TO CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")]);
+  if (!publicDiscountExclusive) {
+    if (allowRecheck) {
+      rows.push([
+        Markup.button.callback(
+          `\u{1F501} CLICK TO RECHECK (${RECHECK_PRICE_KES} KES)`,
+          "TYPE_RECHECK"
+        )
+      ]);
+    } else {
+      rows.push([
+        Markup.button.callback(
+          `\u2705 CLICK TO CHECK (${CHECK_PRICE_KES} KES)`,
+          "TYPE_CHECK"
+        )
+      ]);
+    }
   }
 
   if (SIMILARITY_ONLY_ENABLED) {
-    rows.push([Markup.button.callback(`\u{1F4CA} SIMILARITY REPORT ONLY (${SIMILARITY_ONLY_PRICE_KES} KES)`, "TYPE_SIMILARITY")]);
+    rows.push([
+      Markup.button.callback(
+        `\u{1F4CA} SIMILARITY REPORT ONLY (${SIMILARITY_ONLY_PRICE_KES} KES)`,
+        "TYPE_SIMILARITY"
+      )
+    ]);
   }
 
-  if (allowResale) rows.push([Markup.button.callback(resaleButtonLabel(resaleVerified), "TYPE_RESALE")]);
+  if (allowResale) {
+    rows.push([
+      Markup.button.callback(
+        resaleButtonLabel(resaleVerified),
+        "TYPE_RESALE"
+      )
+    ]);
+  }
 
-  rows.push([Markup.button.callback("\u274C Cancel document", "TYPE_CANCEL")]);
+  rows.push([
+    Markup.button.callback(
+      "\u274C Cancel document",
+      "TYPE_CANCEL"
+    )
+  ]);
+
   return Markup.inlineKeyboard(rows);
 }
 
@@ -1800,6 +1831,10 @@ function isDiscountPublicActive() {
 
   const currentEat = moment().utcOffset(180).format("HH:mm");
   return isTimeInWindowUTC(currentEat, DISCOUNT_START_EAT, DISCOUNT_END_EAT);
+}
+
+function isPublicDiscountExclusiveMode() {
+  return RESALE_ENABLED && isDiscountPublicActive();
 }
 
 function discountPublicModeText() {
@@ -2168,12 +2203,23 @@ async function askForFileType(ctx, sub) {
     ? `\n\n\u{1F4CA} You can also choose *SIMILARITY REPORT ONLY* if you do not need AI report.`
     : "";
 
-  const recheckNote = file.recheckEligible
-    ? `✅ This file qualifies for *RECHECK*.\n\nTap *CLICK TO RECHECK* to continue.${similarityHint}`
-    : `ℹ️ Recheck not available for this file.\n\nTap *CLICK TO CHECK* to continue.${similarityHint}`;
+  const recheckNote = isPublicDiscountExclusiveMode()
+    ? [
+        SIMILARITY_ONLY_ENABLED
+          ? `📊 Choose *SIMILARITY REPORT ONLY* if you only need the similarity report.`
+          : "",
+        RESALE_ENABLED
+          ? `🏷️ Public *${RESALE_LABEL_TITLE}* is available now. Choose it for the discounted full report.`
+          : ""
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+    : file.recheckEligible
+      ? `✅ This file qualifies for *RECHECK*.\n\nTap *CLICK TO RECHECK* to continue.${similarityHint}`
+      : `ℹ️ Recheck not available for this file.\n\nTap *CLICK TO CHECK* to continue.${similarityHint}`;
 
-  const resaleNote = RESALE_ENABLED && isDiscountPublicActive()
-    ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* is active.${discountTimeLineForMessage()}`
+  const resaleNote = isPublicDiscountExclusiveMode()
+    ? discountTimeLineForMessage()
     : RESALE_ENABLED
       ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* Requires a Code. Wait For Public Access.${discountTimeLineForMessage()}`
       : "";
@@ -4306,11 +4352,55 @@ bot.on("photo", async (ctx) => {
 // =====================
 bot.action("TYPE_CHECK", async (ctx) => {
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+
+  if (isPublicDiscountExclusiveMode()) {
+    const sub = submissions[ctx.from.id];
+
+    await ctx.answerCbQuery("CHECK is hidden during the public discount.");
+
+    return ctx.reply(
+      `🏷️ Public ${RESALE_LABEL_TITLE} is active. Choose ${
+        SIMILARITY_ONLY_ENABLED
+          ? `SIMILARITY REPORT ONLY or ${RESALE_LABEL_TITLE}.`
+          : `${RESALE_LABEL_TITLE}.`
+      }`,
+      {
+        reply_markup: typeInlineKeyboard(
+          Boolean(getCurrentPendingFile(sub)?.recheckEligible),
+          RESALE_ENABLED,
+          Boolean(sub?.resellerVerified)
+        ).reply_markup
+      }
+    );
+  }
+
   await handleFileTypeSelected(ctx, "CHECK");
 });
 
 bot.action("TYPE_RECHECK", async (ctx) => {
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+
+  if (isPublicDiscountExclusiveMode()) {
+    const sub = submissions[ctx.from.id];
+
+    await ctx.answerCbQuery("RECHECK is hidden during the public discount.");
+
+    return ctx.reply(
+      `🏷️ Public ${RESALE_LABEL_TITLE} is active. Choose ${
+        SIMILARITY_ONLY_ENABLED
+          ? `SIMILARITY REPORT ONLY or ${RESALE_LABEL_TITLE}.`
+          : `${RESALE_LABEL_TITLE}.`
+      }`,
+      {
+        reply_markup: typeInlineKeyboard(
+          Boolean(getCurrentPendingFile(sub)?.recheckEligible),
+          RESALE_ENABLED,
+          Boolean(sub?.resellerVerified)
+        ).reply_markup
+      }
+    );
+  }
+
   await handleFileTypeSelected(ctx, "RECHECK");
 });
 
@@ -4643,6 +4733,7 @@ app.get("/health", (req, res) => {
     resalePriceKes: RESALE_PRICE_KES,
     resaleLabel: RESALE_LABEL,
     discountPublicEnabled: isDiscountPublicActive(),
+    publicDiscountExclusiveButtons: isPublicDiscountExclusiveMode(),
     discountPublicConfigured: DISCOUNT_PUBLIC_ENABLED,
     discountPublicAutoWindowSet: Boolean(DISCOUNT_START_EAT && DISCOUNT_END_EAT),
     discountStartEat: DISCOUNT_START_EAT,
@@ -4803,6 +4894,7 @@ app.listen(port, async () => {
   console.log(`Paid cancellation opens after max processing: ${REPORT_PROCESSING_MAX_MINUTES} minutes`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, SIMILARITY=${SIMILARITY_ONLY_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
   console.log(`Discount public active now: ${isDiscountPublicActive() ? "YES" : "NO"}`);
+  console.log(`Public discount exclusive buttons: ${isPublicDiscountExclusiveMode() ? "YES" : "NO"}`);
   console.log(`Discount public mode: ${DISCOUNT_START_EAT && DISCOUNT_END_EAT ? "AUTO TIME WINDOW" : "MANUAL ENV"}`);
   console.log(`Kenyan bank payment enabled: ${INTERNATIONAL_PAYMENT_ENABLED ? "YES" : "NO"}`);
   console.log(`International check/recheck price: ${INTERNATIONAL_CHECK_PRICE_USD} ${INTERNATIONAL_CURRENCY}`);
