@@ -422,24 +422,16 @@ const MESSAGES = {
   welcome: (check, recheck, resale) => `
 JK Turnitin Reports Bot
 
-📎 *How to Upload*
-
-1️⃣ Attach your first file directly using Telegram's 📎 button and choose *File/Document*
-2️⃣ Choose how many files are in the batch (1-${MAX_BATCH_FILES})
-3️⃣ Upload any remaining files one by one as *documents*
-4️⃣ The bot checks eligibility and shows the available service option(s). Tap the service you want
-5️⃣ After all files are ready, choose your payment method
-6️⃣ For *M-Pesa STK*, enter the phone number that should receive the prompt (07XXXXXXXX / 01XXXXXXXX), approve the STK, then pay *once* for the whole batch
-
-ℹ️ The *Upload Procedure* button is optional help. You can send your first document directly without tapping it.
-
-💰 Pricing
+💰 *Pricing*
 • Check: ${check} KES
 • Recheck: ${recheck} KES${SIMILARITY_ONLY_ENABLED ? `\n• Similarity Report Only: ${SIMILARITY_ONLY_PRICE_KES} KES` : ""}${RESALE_ENABLED ? `\n• ${RESALE_LABEL_TITLE}: ${resalePublicPriceText()}` : ""}
 
-🔁 The bot automatically checks whether the uploaded file qualifies for RECHECK. Recheck requires the same file to have been checked and paid within the last 24 hours.
-${RESALE_ENABLED && !isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} currently requires a code.${discountTimeLineForMessage()}` : ""}
-${RESALE_ENABLED && isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} is currently available without a code.${discountTimeLineForMessage()}` : ""}
+🔁 *Recheck*
+The bot automatically checks whether an uploaded file qualifies for *RECHECK*.
+Recheck is available only when the same file was checked and paid within the last 24 hours.
+
+${RESALE_ENABLED && !isDiscountPublicActive() ? `🏷️ *${RESALE_LABEL_TITLE}*\n${RESALE_LABEL_TITLE} currently requires a code.${discountTimeLineForMessage()}` : ""}
+${RESALE_ENABLED && isDiscountPublicActive() ? `🏷️ *${RESALE_LABEL_TITLE}*\n${RESALE_LABEL_TITLE} is currently available without a code.${discountTimeLineForMessage()}` : ""}
 `,  inactive: () => `
 ⏳ Turnitin checks are paused right now.
 We’ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
@@ -3679,7 +3671,7 @@ bot.start(async (ctx) => {
 
   await replyMarkdownSafe(
     ctx,
-    `${MESSAGES.welcome(CHECK_PRICE_KES, RECHECK_PRICE_KES, RESALE_PRICE_KES)}\n\n📎 Send your first document directly below. *Upload Procedure* is optional help.`,
+    MESSAGES.welcome(CHECK_PRICE_KES, RECHECK_PRICE_KES, RESALE_PRICE_KES),
     { reply_markup: startInlineKeyboard().reply_markup }
   );
 });
