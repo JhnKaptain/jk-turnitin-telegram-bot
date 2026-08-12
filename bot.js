@@ -402,28 +402,45 @@ function tillLine() {
   return `Till: ${TILL_NUMBER}`;
 }
 
+const UPLOAD_PROCEDURE_MESSAGE = [
+  "📎 Upload Procedure",
+  "",
+  "You do not need to tap this button before uploading.",
+  "",
+  "1️⃣ Tap Telegram's 📎 attachment button beside the message box.",
+  "2️⃣ Choose File/Document.",
+  "3️⃣ Send your DOC/PDF file directly.",
+  "4️⃣ After the first file is received, choose the total number of files in the batch.",
+  "5️⃣ Upload any remaining files as documents.",
+  "",
+  "The bot will then check the file and show the available service options.",
+  "",
+  "⚠️ Do not send the document as a photo.",
+  CLEAN_COPY_WARNING
+].join("\n");
 const MESSAGES = {
   welcome: (check, recheck, resale) => `
 JK Turnitin Reports Bot
 
-📎 *To upload*
+📎 *How to Upload*
+
 1️⃣ Attach your first file directly using Telegram's 📎 button and choose *File/Document*
 2️⃣ Choose how many files are in the batch (1-${MAX_BATCH_FILES})
 3️⃣ Upload any remaining files one by one as *documents*
-4️⃣ Choose *CHECK*, *RECHECK*${RESALE_ENABLED ? ` or *${RESALE_LABEL_TITLE}*` : ""} where eligible
-5️⃣ Pay *once* for the whole batch
+4️⃣ The bot checks eligibility and shows the available service option(s). Tap the service you want
+5️⃣ After all files are ready, choose your payment method
+6️⃣ For *M-Pesa STK*, enter the phone number that should receive the prompt (07XXXXXXXX / 01XXXXXXXX), approve the STK, then pay *once* for the whole batch
 
-ℹ️ *Upload Procedure* is only a help button. You do not need to tap it before sending a file.
+ℹ️ The *Upload Procedure* button is optional help. You can send your first document directly without tapping it.
 
 💰 Pricing
 • Check: ${check} KES
 • Recheck: ${recheck} KES${SIMILARITY_ONLY_ENABLED ? `\n• Similarity Report Only: ${SIMILARITY_ONLY_PRICE_KES} KES` : ""}${RESALE_ENABLED ? `\n• ${RESALE_LABEL_TITLE}: ${resalePublicPriceText()}` : ""}
 
-🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.
-${RESALE_ENABLED && !isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}
-${RESALE_ENABLED && isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}
-`,
-  inactive: () => `
+🔁 The bot automatically checks whether the uploaded file qualifies for RECHECK. Recheck requires the same file to have been checked and paid within the last 24 hours.
+${RESALE_ENABLED && !isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} currently requires a code.${discountTimeLineForMessage()}` : ""}
+${RESALE_ENABLED && isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} is currently available without a code.${discountTimeLineForMessage()}` : ""}
+`,  inactive: () => `
 ⏳ Turnitin checks are paused right now.
 We’ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
 
@@ -431,9 +448,7 @@ We’ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
 
 If urgent, WhatsApp call *0701730921*.
 `,
-  sendDocHelp:
-    `t’t send as a photo.`,
-  paymentHelp:
+  sendDocHelp: UPLOAD_PROCEDURE_MESSAGE,  paymentHelp:
     `🧾 Payment help:
 
 Default method: *STK Push*.
@@ -2164,56 +2179,38 @@ async function sendSelectedDocumentToAdmin(user, sub, file, fileNumber) {
   }
 }
 
+async function showUploadProcedure(ctx) {
+  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
+    return notifyInactivePeriod(ctx);
+  }
+
+  return ctx.reply(UPLOAD_PROCEDURE_MESSAGE, {
+    reply_markup: mainKeyboard()
+  });
+}
+
+async function showUploadProcedure(ctx) {
+  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
+    return notifyInactivePeriod(ctx);
+  }
+
+  return ctx.reply(UPLOAD_PROCEDURE_MESSAGE, {
+    reply_markup: mainKeyboard()
+  });
+}
+
+async function showUploadProcedure(ctx) {
+  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
+    return notifyInactivePeriod(ctx);
+  }
+
+  return ctx.reply(UPLOAD_PROCEDURE_MESSAGE, {
+    reply_markup: mainKeyboard()
+  });
+}
+
 async function beginSubmissionFlow(ctx) {
-  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) return notifyInactivePeriod(ctx);
-
-  if (ctx.from.id === ADMIN_ID) {
-    return replyMarkdownSafe(ctx, MESSAGES.sendDocHelp, { reply_markup: mainKeyboard() });
-  }
-
-  const sub = submissions[ctx.from.id];
-
-  if (sub?.stage === STAGE_WAIT_BATCH_SIZE && sub.pendingInitialDocument) {
-    return ctx.reply(
-      `📎 *Upload Procedure*\n\nYour first document is already received. Choose the total number of files in this batch.`,
-      { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
-    );
-  }
-
-  if (sub?.stage === STAGE_WAIT_UPLOADS) {
-    return ctx.reply(
-      `📎 *Upload Procedure*\n\nYour batch is already active. Send file *${sub.files.length + 1}* of *${sub.expectedFiles}* using Telegram's 📎 attachment button and choose *File/Document*.\n\n${CLEAN_COPY_WARNING}\n\nNo restart is needed.`,
-      { parse_mode: "Markdown", reply_markup: uploadContinueKeyboard().reply_markup }
-    );
-  }
-
-  if (sub?.stage === STAGE_WAIT_FILE_TYPE || sub?.stage === STAGE_WAIT_RESELLER_CODE) {
-    return ctx.reply("✅ Your upload is already active. Choose the report type for the last file first.", {
-      parse_mode: "Markdown",
-      reply_markup: typeInlineKeyboard(
-        Boolean(getCurrentPendingFile(sub)?.recheckEligible),
-        RESALE_ENABLED,
-        Boolean(sub.resellerVerified)
-      ).reply_markup
-    });
-  }
-
-  if (
-    sub &&
-    [STAGE_WAIT_PAYMENT_METHOD, STAGE_WAIT_PHONE, STAGE_WAIT_PAYMENT].includes(sub.stage)
-  ) {
-    return ctx.reply(
-      "✅ Your submission is already active. Finish the current payment step or cancel it. There is no need to restart.",
-      {
-        reply_markup:
-          sub.stage === STAGE_WAIT_PAYMENT_METHOD
-            ? paymentMethodKeyboard().reply_markup
-            : paymentWaitKeyboard().reply_markup
-      }
-    );
-  }
-
-  return replyMarkdownSafe(ctx, MESSAGES.sendDocHelp, { reply_markup: mainKeyboard() });
+  return showUploadProcedure(ctx);
 }
 async function showPaymentHelp(ctx) {
   if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) return notifyInactivePeriod(ctx);
