@@ -311,7 +311,7 @@ const STATUS_POLL_MAX_ATTEMPTS = readIntEnv("STATUS_POLL_MAX_ATTEMPTS", 180);
 // =====================
 // UI TEXT
 // =====================
-const KEY_SEND_DOC = "📄 Send Document";
+const KEY_SEND_DOC = "📎 Upload Procedure";
 const KEY_SEND_MPESA = "🧾 Payment Help";
 const KEY_CONTACT_SUPPORT = "💬 Contact Support Team";
 const KEY_CANCEL = "❌ Cancel / New submission";
@@ -406,11 +406,14 @@ const MESSAGES = {
   welcome: (check, recheck, resale) => `
 JK Turnitin Reports Bot
 
-1️⃣ Tap *Send Document*
-2️⃣ Choose how many files you want to upload (1-${MAX_BATCH_FILES})
-3️⃣ Upload your files one by one as *documents*
+📎 *To upload*
+1️⃣ Attach your first file directly using Telegram's 📎 button and choose *File/Document*
+2️⃣ Choose how many files are in the batch (1-${MAX_BATCH_FILES})
+3️⃣ Upload any remaining files one by one as *documents*
 4️⃣ Choose *CHECK*, *RECHECK*${RESALE_ENABLED ? ` or *${RESALE_LABEL_TITLE}*` : ""} where eligible
 5️⃣ Pay *once* for the whole batch
+
+ℹ️ *Upload Procedure* is only a help button. You do not need to tap it before sending a file.
 
 💰 Pricing
 • Check: ${check} KES
@@ -429,7 +432,7 @@ We’ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
 If urgent, WhatsApp call *0701730921*.
 `,
   sendDocHelp:
-    `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\n${CLEAN_COPY_WARNING}\n\nPlease don’t send as a photo.`,
+    `t’t send as a photo.`,
   paymentHelp:
     `🧾 Payment help:
 
@@ -2168,25 +2171,50 @@ async function beginSubmissionFlow(ctx) {
     return replyMarkdownSafe(ctx, MESSAGES.sendDocHelp, { reply_markup: mainKeyboard() });
   }
 
-  const userId = ctx.from.id;
-  const existing = submissions[userId];
+  const sub = submissions[ctx.from.id];
 
-  if (existing && existing.stage === STAGE_WAIT_BATCH_SIZE) {
-    await ctx.reply(
-      `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.\n\n${CLEAN_COPY_WARNING}`,
+  if (sub?.stage === STAGE_WAIT_BATCH_SIZE && sub.pendingInitialDocument) {
+    return ctx.reply(
+      `📎 *Upload Procedure*\n\nYour first document is already received. Choose the total number of files in this batch.`,
       { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
     );
-    return;
   }
 
-  submissions[userId] = createEmptySubmission();
+  if (sub?.stage === STAGE_WAIT_UPLOADS) {
+    return ctx.reply(
+      `📎 *Upload Procedure*\n\nYour batch is already active. Send file *${sub.files.length + 1}* of *${sub.expectedFiles}* using Telegram's 📎 attachment button and choose *File/Document*.\n\n${CLEAN_COPY_WARNING}\n\nNo restart is needed.`,
+      { parse_mode: "Markdown", reply_markup: uploadContinueKeyboard().reply_markup }
+    );
+  }
 
-  await ctx.reply(
-    `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.\n\n${CLEAN_COPY_WARNING}`,
-    { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
-  );
+  if (sub?.stage === STAGE_WAIT_FILE_TYPE || sub?.stage === STAGE_WAIT_RESELLER_CODE) {
+    return ctx.reply("✅ Your upload is already active. Choose the report type for the last file first.", {
+      parse_mode: "Markdown",
+      reply_markup: typeInlineKeyboard(
+        Boolean(getCurrentPendingFile(sub)?.recheckEligible),
+        RESALE_ENABLED,
+        Boolean(sub.resellerVerified)
+      ).reply_markup
+    });
+  }
+
+  if (
+    sub &&
+    [STAGE_WAIT_PAYMENT_METHOD, STAGE_WAIT_PHONE, STAGE_WAIT_PAYMENT].includes(sub.stage)
+  ) {
+    return ctx.reply(
+      "✅ Your submission is already active. Finish the current payment step or cancel it. There is no need to restart.",
+      {
+        reply_markup:
+          sub.stage === STAGE_WAIT_PAYMENT_METHOD
+            ? paymentMethodKeyboard().reply_markup
+            : paymentWaitKeyboard().reply_markup
+      }
+    );
+  }
+
+  return replyMarkdownSafe(ctx, MESSAGES.sendDocHelp, { reply_markup: mainKeyboard() });
 }
-
 async function showPaymentHelp(ctx) {
   if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
@@ -3654,7 +3682,7 @@ bot.start(async (ctx) => {
 
   await replyMarkdownSafe(
     ctx,
-    `${MESSAGES.welcome(CHECK_PRICE_KES, RECHECK_PRICE_KES, RESALE_PRICE_KES)}\nTap the button below to begin.`,
+    `${MESSAGES.welcome(CHECK_PRICE_KES, RECHECK_PRICE_KES, RESALE_PRICE_KES)}\n\n📎 Send your first document directly below. *Upload Procedure* is optional help.`,
     { reply_markup: startInlineKeyboard().reply_markup }
   );
 });
@@ -3881,7 +3909,7 @@ async function cancelPaymentProcessForUser(userId, source) {
   try {
     await bot.telegram.sendMessage(
       userId,
-      "❌ Your payment attempt for the uploaded document has been cancelled by admin.\n\nYou can start again by tapping *Send Document*.",
+      "❌ Your payment attempt for the uploaded document has been cancelled by admin.\n\nYou can start again by sending your first document directly.",
       { parse_mode: "Markdown", reply_markup: mainKeyboard() }
     );
   } catch (err) {
@@ -4059,7 +4087,7 @@ bot.action(/^ADMIN_TILL_NOTICE_(\d+)$/, async (ctx) => {
 // START INLINE BUTTONS
 // =====================
 bot.action("START_SEND_DOC", async (ctx) => {
-  await ctx.answerCbQuery("Starting");
+  await ctx.answerCbQuery("Upload instructions");
   await beginSubmissionFlow(ctx);
 });
 
@@ -4075,6 +4103,11 @@ bot.hears(KEY_SEND_DOC, async (ctx) => {
   await beginSubmissionFlow(ctx);
 });
 
+bot.hears("📄 Send Document", async (ctx) => {
+  await beginSubmissionFlow(ctx);
+});
+
+// Old Telegram keyboards may remain cached briefly; treat the old button as help only.
 bot.hears(KEY_SEND_MPESA, async (ctx) => {
   await showPaymentHelp(ctx);
 });
@@ -4341,7 +4374,7 @@ bot.on("photo", async (ctx) => {
     });
   }
 
-  await ctx.reply("⚠️ Tap *Send Document* and upload as document.", {
+  await ctx.reply("⚠️ Use Telegram's 📎 attachment button and send the file as a *document*.", {
     parse_mode: "Markdown",
     reply_markup: startInlineKeyboard().reply_markup
   });
@@ -4645,7 +4678,7 @@ ${text}
   }
 
   if (!sub) {
-    return ctx.reply("Tap *Send Document* to start.", {
+    return ctx.reply("📎 Send your first file directly using Telegram's attachment button and choose *File/Document*. No start button is required.", {
       parse_mode: "Markdown",
       reply_markup: startInlineKeyboard().reply_markup
     });
