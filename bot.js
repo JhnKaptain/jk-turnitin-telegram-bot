@@ -405,17 +405,14 @@ function tillLine() {
 const UPLOAD_PROCEDURE_MESSAGE = [
   "📎 Upload Procedure",
   "",
-  "You do not need to tap this button before uploading.",
-  "",
   "1️⃣ Tap Telegram's 📎 attachment button beside the message box.",
   "2️⃣ Choose File/Document.",
   "3️⃣ Send your DOC/PDF file directly.",
-  "4️⃣ After the first file is received, choose the total number of files in the batch.",
-  "5️⃣ Upload any remaining files as documents.",
+  "4️⃣ After the first file is received, choose the total number of files to check.",
+  "5️⃣ Upload any remaining files as documents if any.",
   "",
   "The bot will then check the file and show the available service options.",
   "",
-  "⚠️ Do not send the document as a photo.",
   CLEAN_COPY_WARNING
 ].join("\n");
 const MESSAGES = {
@@ -426,13 +423,12 @@ JK Turnitin Reports Bot
 • Check: ${check} KES
 • Recheck: ${recheck} KES${SIMILARITY_ONLY_ENABLED ? `\n• Similarity Report Only: ${SIMILARITY_ONLY_PRICE_KES} KES` : ""}${RESALE_ENABLED ? `\n• ${RESALE_LABEL_TITLE}: ${resalePublicPriceText()}` : ""}
 
-🔁 *Recheck*
-The bot automatically checks whether an uploaded file qualifies for *RECHECK*.
 Recheck is available only when the same file was checked and paid within the last 24 hours.
 
 ${RESALE_ENABLED && !isDiscountPublicActive() ? `🏷️ *${RESALE_LABEL_TITLE}*\n${RESALE_LABEL_TITLE} currently requires a code.${discountTimeLineForMessage()}` : ""}
 ${RESALE_ENABLED && isDiscountPublicActive() ? `🏷️ *${RESALE_LABEL_TITLE}*\n${RESALE_LABEL_TITLE} is currently available without a code.${discountTimeLineForMessage()}` : ""}
-`,  inactive: () => `
+`,
+  inactive: () => `
 ⏳ Turnitin checks are paused right now.
 We’ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
 
@@ -440,7 +436,8 @@ We’ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
 
 If urgent, WhatsApp call *0701730921*.
 `,
-  sendDocHelp: UPLOAD_PROCEDURE_MESSAGE,  paymentHelp:
+  sendDocHelp: UPLOAD_PROCEDURE_MESSAGE,
+  paymentHelp:
     `🧾 Payment help:
 
 Default method: *STK Push*.
@@ -2180,27 +2177,6 @@ async function showUploadProcedure(ctx) {
     reply_markup: mainKeyboard()
   });
 }
-
-async function showUploadProcedure(ctx) {
-  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
-    return notifyInactivePeriod(ctx);
-  }
-
-  return ctx.reply(UPLOAD_PROCEDURE_MESSAGE, {
-    reply_markup: mainKeyboard()
-  });
-}
-
-async function showUploadProcedure(ctx) {
-  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
-    return notifyInactivePeriod(ctx);
-  }
-
-  return ctx.reply(UPLOAD_PROCEDURE_MESSAGE, {
-    reply_markup: mainKeyboard()
-  });
-}
-
 async function beginSubmissionFlow(ctx) {
   return showUploadProcedure(ctx);
 }
