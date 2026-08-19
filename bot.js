@@ -504,6 +504,10 @@ const BOT_USERS_FILE = path.join(DATA_DIR, "botUsers.store.json");
 
 const BROADCAST_INTERVAL_MS = Math.max(50, readIntEnv("BROADCAST_INTERVAL_MS", 60));
 const BROADCAST_PREVIEW_TTL_MS = 15 * 60 * 1000;
+const DISCOUNT_BROADCAST_CHECK_MS = Math.max(
+  15000,
+  readIntEnv("DISCOUNT_BROADCAST_CHECK_SECONDS", 30) * 1000
+);
 
 // =====================
 // BOT USER REGISTRY + BROADCAST HELPERS
@@ -804,6 +808,104 @@ async function runBroadcast(message, recipientIds) {
     skipped,
     newlyInactive
   };
+}
+
+function getActiveDiscountBroadcastWindow() {
+  if (!RESALE_ENABLED || !DISCOUNT_START_EAT || !DISCOUNT_END_EAT) return null;
+  if (DISCOUNT_START_EAT === DISCOUNT_END_EAT || !isDiscountPublicActive()) return null;
+
+  const nowEat = moment().utcOffset(180);
+  const [sh, sm] = DISCOUNT_START_EAT.split(":").map(Number);
+  const [eh, em] = DISCOUNT_END_EAT.split(":").map(Number);
+
+  let start = nowEat.clone().startOf("day").hour(sh).minute(sm).second(0).millisecond(0);
+  let end = nowEat.clone().startOf("day").hour(eh).minute(em).second(0).millisecond(0);
+
+  if (DISCOUNT_START_EAT > DISCOUNT_END_EAT) {
+    if (nowEat.format("HH:mm") < DISCOUNT_END_EAT) start.subtract(1, "day");
+    else end.add(1, "day");
+  }
+
+  return {
+    key: `${start.format("YYYY-MM-DDTHH:mm")}|${end.format("YYYY-MM-DDTHH:mm")}`,
+    fromText: formatHHMMTo12HourStrict(DISCOUNT_START_EAT) || DISCOUNT_START_EAT,
+    toText: formatHHMMTo12HourStrict(DISCOUNT_END_EAT) || DISCOUNT_END_EAT,
+    price: RESALE_PRICE_KES
+  };
+}
+
+function discountBroadcastMessage(windowInfo) {
+  return [
+    "🏷️ DISCOUNT IS NOW OPEN!",
+    "",
+    `Get your full Turnitin report for only ${windowInfo.price} KES during the current discount period.`,
+    "",
+    "⏰ Discount Period",
+    `From: ${windowInfo.fromText} EAT`,
+    `To: ${windowInfo.toText} EAT`,
+    "",
+    "📎 Upload your document now to take advantage of the discounted rate before the offer closes."
+  ].join("\n");
+}
+
+async function createDiscountBroadcastPreview(force = false) {
+  cleanupPendingBroadcasts();
+
+  const windowInfo = getActiveDiscountBroadcastWindow();
+  if (!windowInfo) return { ok: false, reason: "inactive" };
+
+  if (!force && broadcastMeta.lastDiscountPreviewWindowKey === windowInfo.key) {
+    return { ok: false, reason: "already-previewed" };
+  }
+
+  const recipientIds = getActiveBotUserIds();
+  if (!recipientIds.length) return { ok: false, reason: "no-recipients" };
+
+  const message = discountBroadcastMessage(windowInfo);
+  const token = makeBroadcastToken();
+
+  pendingBroadcasts[token] = {
+    message,
+    recipientIds,
+    createdAt: Date.now(),
+    kind: "discount",
+    discountWindow: windowInfo
+  };
+
+  try {
+    await bot.telegram.sendMessage(
+      ADMIN_ID,
+      "📢 DISCOUNT BROADCAST PREVIEW\n\n" +
+        message +
+        "\n\n" +
+        `Recipients: ${recipientIds.length} active user(s)\n` +
+        "This preview expires in 15 minutes.\n\n" +
+        "Nothing will be sent unless you choose SEND TO ALL.",
+      { reply_markup: broadcastPreviewKeyboard(token).reply_markup }
+    );
+  } catch (err) {
+    delete pendingBroadcasts[token];
+    throw err;
+  }
+
+  broadcastMeta.lastDiscountPreviewWindowKey = windowInfo.key;
+  broadcastMeta.lastDiscountPreviewAt = Date.now();
+  saveBotUsers();
+
+  return { ok: true, windowInfo, recipients: recipientIds.length };
+}
+
+async function checkAutomaticDiscountBroadcastPreview() {
+  try {
+    await createDiscountBroadcastPreview(false);
+  } catch (err) {
+    console.error("Automatic discount broadcast preview failed:", err?.message || err);
+  }
+}
+
+function startDiscountBroadcastPreviewScheduler() {
+  setTimeout(checkAutomaticDiscountBroadcastPreview, 3000);
+  setInterval(checkAutomaticDiscountBroadcastPreview, DISCOUNT_BROADCAST_CHECK_MS);
 }
 
 loadBotUsers();
@@ -4310,6 +4412,35 @@ bot.command("broadcast", async (ctx) => {
   );
 });
 
+bot.command("discountbroadcast", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  if (!DISCOUNT_START_EAT || !DISCOUNT_END_EAT) {
+    return ctx.reply("❌ No timed public discount window is configured.");
+  }
+
+  if (!isDiscountPublicActive()) {
+    return ctx.reply(
+      "ℹ️ Public discount is currently closed.\n\n" +
+        `Period: ${formatHHMMTo12HourStrict(DISCOUNT_START_EAT)} - ${formatHHMMTo12HourStrict(DISCOUNT_END_EAT)} EAT\n` +
+        `Price: ${RESALE_PRICE_KES} KES`
+    );
+  }
+
+  try {
+    const result = await createDiscountBroadcastPreview(true);
+    if (result.ok) {
+      return ctx.reply("✅ Fresh discount broadcast preview created.");
+    }
+    if (result.reason === "no-recipients") {
+      return ctx.reply("❌ No active registered users are available for broadcast.");
+    }
+    return ctx.reply("❌ Discount broadcast preview could not be created.");
+  } catch (err) {
+    return ctx.reply("❌ Failed to create preview: " + String(err?.message || err));
+  }
+});
+
 // =====================
 // ADMIN QUICK ACTION BUTTONS
 // =====================
@@ -4344,6 +4475,32 @@ bot.action(/^BROADCAST_SEND_([A-Za-z0-9]+)$/, async (ctx) => {
   if (!pending) {
     await ctx.answerCbQuery("Broadcast preview expired");
     return ctx.reply("⚠️ Broadcast preview is no longer available.");
+  }
+
+  if (pending.kind === "discount") {
+    const currentWindow = getActiveDiscountBroadcastWindow();
+
+    if (!currentWindow || currentWindow.key !== pending.discountWindow?.key) {
+      delete pendingBroadcasts[token];
+      await ctx.answerCbQuery("Discount period closed", { show_alert: true });
+
+      try {
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
+      } catch {}
+
+      return ctx.reply("❌ Discount broadcast not sent because that discount period is no longer active.");
+    }
+
+    if (Number(currentWindow.price) !== Number(pending.discountWindow?.price)) {
+      delete pendingBroadcasts[token];
+      await ctx.answerCbQuery("Discount price changed", { show_alert: true });
+
+      try {
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
+      } catch {}
+
+      return ctx.reply("⚠️ Discount price changed. Use /discountbroadcast to create a fresh preview.");
+    }
   }
 
   if (broadcastInProgress) {
@@ -5362,6 +5519,7 @@ app.listen(port, async () => {
   console.log(`Discount public active now: ${isDiscountPublicActive() ? "YES" : "NO"}`);
   console.log(`Public discount exclusive buttons: ${isPublicDiscountExclusiveMode() ? "YES" : "NO"}`);
   console.log(`Discount public mode: ${DISCOUNT_START_EAT && DISCOUNT_END_EAT ? "AUTO TIME WINDOW" : "MANUAL ENV"}`);
+  console.log(`Discount broadcast preview check: every ${DISCOUNT_BROADCAST_CHECK_MS / 1000}s`);
   console.log(`Kenyan bank payment enabled: ${INTERNATIONAL_PAYMENT_ENABLED ? "YES" : "NO"}`);
   console.log(`International check/recheck price: ${INTERNATIONAL_CHECK_PRICE_USD} ${INTERNATIONAL_CURRENCY}`);
   console.log(`International similarity only price: ${INTERNATIONAL_SIMILARITY_ONLY_PRICE} ${INTERNATIONAL_CURRENCY}`);
@@ -5384,6 +5542,7 @@ app.listen(port, async () => {
 
   startBotDisplayNameScheduler();
   startDailySalesSummaryScheduler();
+  startDiscountBroadcastPreviewScheduler();
 });
 
 process.on("uncaughtException", (err) => {
