@@ -1976,6 +1976,206 @@ function mainKeyboard() {
   };
 }
 
+function adminDashboardKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback("📢 Broadcast", "ADMIN_DASH_BROADCAST"),
+      Markup.button.callback("🏷️ Discount", "ADMIN_DASH_DISCOUNT")
+    ],
+    [
+      Markup.button.callback("📊 Broadcast Stats", "ADMIN_DASH_STATS"),
+      Markup.button.callback("⚙️ Bot Status", "ADMIN_DASH_MODE")
+    ],
+    [
+      Markup.button.callback("💬 User Support", "ADMIN_DASH_SUPPORT"),
+      Markup.button.callback("📦 File Delivery", "ADMIN_DASH_DELIVERY")
+    ],
+    [
+      Markup.button.callback("💳 Payments", "ADMIN_DASH_PAYMENTS"),
+      Markup.button.callback("📋 All Commands", "ADMIN_DASH_COMMANDS")
+    ],
+    [Markup.button.callback("🔄 Sync Bot Name", "ADMIN_DASH_SYNCNAME")]
+  ]);
+}
+
+function adminBackKeyboard(extraRows = []) {
+  return Markup.inlineKeyboard([
+    ...(extraRows || []),
+    [Markup.button.callback("🏠 Admin Dashboard", "ADMIN_DASH_HOME")]
+  ]);
+}
+
+function adminDiscountKeyboard() {
+  const rows = [];
+
+  if (DISCOUNT_START_EAT && DISCOUNT_END_EAT && isDiscountPublicActive()) {
+    rows.push([
+      Markup.button.callback("🏷️ Create Discount Preview", "ADMIN_DASH_DISCOUNT_PREVIEW")
+    ]);
+  }
+
+  return adminBackKeyboard(rows);
+}
+
+function adminDashboardText() {
+  const stats = getBotUserStats();
+  const inactive = isBotInactivePeriod();
+  const discountActive = isDiscountPublicActive();
+
+  return [
+    "🛠️ JK TURNITIN ADMIN DASHBOARD",
+    "",
+    "🤖 Bot mode: " + (inactive ? "OFFLINE WINDOW" : "ONLINE"),
+    "🏷️ Discount: " + (discountActive ? "OPEN • " + RESALE_PRICE_KES + " KES" : "CLOSED"),
+    "👥 Broadcast users: " + stats.active + " active",
+    "",
+    "Choose an admin tool below."
+  ].join("\n");
+}
+
+function adminBroadcastStatsText() {
+  const stats = getBotUserStats();
+  const lastAt = Number(broadcastMeta?.lastBroadcastAt || 0);
+  const lastText = lastAt
+    ? moment(lastAt).utcOffset(180).format("YYYY-MM-DD HH:mm:ss [EAT]")
+    : "Never";
+
+  return [
+    "📊 BROADCAST STATS",
+    "",
+    "Registered: " + stats.registered,
+    "Active: " + stats.active,
+    "Inactive/blocked: " + stats.inactive,
+    "Broadcast running: " + (broadcastInProgress ? "YES" : "NO"),
+    "Last broadcast: " + lastText,
+    "Last delivered: " + Number(broadcastMeta?.lastBroadcastDelivered || 0),
+    "Last failed: " + Number(broadcastMeta?.lastBroadcastFailed || 0)
+  ].join("\n");
+}
+
+function adminModeText() {
+  const nowUtc = moment.utc().format("YYYY-MM-DD HH:mm");
+  const nowEat = moment().utcOffset(180).format("YYYY-MM-DD HH:mm");
+  const inactive = isBotInactivePeriod();
+  const desiredName = inactive ? BOT_OFFLINE_NAME : BOT_ONLINE_NAME;
+
+  return [
+    "⚙️ BOT STATUS",
+    "",
+    "Now UTC: " + nowUtc,
+    "Now EAT: " + nowEat,
+    "Inactive UTC: " + INACTIVE_START_UTC + " to " + INACTIVE_END_UTC,
+    "Inactive ends EAT: " + INACTIVE_END_EAT_DISPLAY,
+    "Current mode: " + (inactive ? "OFFLINE" : "ONLINE"),
+    "Target name: " + desiredName,
+    "Last applied: " + (lastAppliedBotNameMode || "N/A")
+  ].join("\n");
+}
+
+function adminDiscountPanelText() {
+  const active = isDiscountPublicActive();
+  const hasTimedWindow = Boolean(DISCOUNT_START_EAT && DISCOUNT_END_EAT);
+  const periodText = hasTimedWindow
+    ? formatHHMMTo12HourStrict(DISCOUNT_START_EAT) + " to " + formatHHMMTo12HourStrict(DISCOUNT_END_EAT) + " EAT"
+    : "Manual environment mode";
+
+  return [
+    "🏷️ DISCOUNT CONTROL",
+    "",
+    "Status: " + (active ? "OPEN" : "CLOSED"),
+    "Price: " + RESALE_PRICE_KES + " KES",
+    "Period: " + periodText,
+    "Mode: " + (hasTimedWindow ? "AUTOMATIC TIME WINDOW" : "MANUAL"),
+    "",
+    active && hasTimedWindow
+      ? "Tap Create Discount Preview to prepare the current offer for SEND / CANCEL approval."
+      : hasTimedWindow
+        ? "The preview button will appear automatically when the discount period opens."
+        : "Use /discountmode to review the manual discount setting."
+  ].join("\n");
+}
+
+function adminAllCommandsText() {
+  return [
+    "📋 ADMIN COMMANDS",
+    "",
+    "Dashboard",
+    "/adminhelp - Open this button dashboard",
+    "/admin - Dashboard alias",
+    "",
+    "Broadcasting",
+    "/broadcast <message> - Create custom broadcast preview",
+    "/broadcaststats - Broadcast user and delivery stats",
+    "/discountbroadcast - Create current discount preview",
+    "",
+    "Discount + bot",
+    "/discountmode - Check discount mode",
+    "/mode - Check bot operating status",
+    "/syncname - Force bot display-name sync",
+    "",
+    "Support",
+    "/reply <userId> <message> - Reply to a user",
+    "/cancelreply - Cancel reply session",
+    "",
+    "File delivery",
+    "/filebatch <userId> [caption] - Open delivery batch",
+    "/donebatch - Finish delivery batch",
+    "/cancelbatch - Cancel delivery batch",
+    "",
+    "Payments",
+    "/paiduser <userId> - Confirm latest user payment",
+    "/paidref <apiRef> - Confirm payment reference"
+  ].join("\n");
+}
+
+async function showAdminScreen(ctx, textValue, keyboard, edit = false) {
+  const extra = { reply_markup: keyboard.reply_markup };
+
+  if (edit && ctx.callbackQuery?.message) {
+    try {
+      await ctx.editMessageText(textValue, extra);
+      return;
+    } catch (err) {
+      const msg = String(err?.description || err?.message || err || "");
+      if (/message is not modified/i.test(msg)) return;
+    }
+  }
+
+  await ctx.reply(textValue, extra);
+}
+
+async function showAdminDashboard(ctx, edit = false) {
+  return showAdminScreen(ctx, adminDashboardText(), adminDashboardKeyboard(), edit);
+}
+
+async function syncAdminCommandMenu() {
+  const commands = [
+    { command: "adminhelp", description: "Open admin button dashboard" },
+    { command: "broadcast", description: "Create custom broadcast preview" },
+    { command: "broadcaststats", description: "View broadcast statistics" },
+    { command: "discountbroadcast", description: "Create discount broadcast preview" },
+    { command: "discountmode", description: "Check discount mode" },
+    { command: "mode", description: "Check bot status" },
+    { command: "syncname", description: "Sync bot display name" },
+    { command: "reply", description: "Reply to a user" },
+    { command: "filebatch", description: "Open report delivery batch" },
+    { command: "donebatch", description: "Finish report delivery batch" },
+    { command: "cancelbatch", description: "Cancel report delivery batch" },
+    { command: "paiduser", description: "Confirm latest user payment" },
+    { command: "paidref", description: "Confirm payment reference" }
+  ];
+
+  try {
+    await bot.telegram.callApi("setMyCommands", {
+      commands,
+      scope: { type: "chat", chat_id: ADMIN_ID }
+    });
+    console.log("Admin Telegram command menu synced");
+  } catch (err) {
+    console.error("Failed to sync admin command menu:", err?.description || err?.message || err);
+  }
+}
+
 function startInlineKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback(KEY_SEND_DOC, "START_SEND_DOC")],
@@ -4057,7 +4257,10 @@ bot.start(async (ctx) => {
   const user = ctx.from;
 
   if (user.id === ADMIN_ID) {
-    await replyMarkdownSafe(ctx, "👋 Admin mode is ready.", { reply_markup: mainKeyboard() });
+    await ctx.reply("👋 Admin mode is ready. Use the dashboard below or /adminhelp anytime.", {
+      reply_markup: { remove_keyboard: true }
+    });
+    await showAdminDashboard(ctx);
     return;
   }
 
@@ -4080,6 +4283,16 @@ bot.start(async (ctx) => {
 // =====================
 // ADMIN COMMANDS
 // =====================
+bot.command("adminhelp", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+  await showAdminDashboard(ctx);
+});
+
+bot.command("admin", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+  await showAdminDashboard(ctx);
+});
+
 bot.command("discountmode", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -4444,6 +4657,167 @@ bot.command("discountbroadcast", async (ctx) => {
 // =====================
 // ADMIN QUICK ACTION BUTTONS
 // =====================
+bot.action("ADMIN_DASH_HOME", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+  await showAdminDashboard(ctx, true);
+});
+
+bot.action("ADMIN_DASH_BROADCAST", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+
+  const stats = getBotUserStats();
+  await showAdminScreen(
+    ctx,
+    [
+      "📢 CUSTOM BROADCAST",
+      "",
+      "Create a custom message with:",
+      "/broadcast <message>",
+      "",
+      "Active recipients: " + stats.active,
+      "",
+      "The bot will show a preview with SEND TO ALL and CANCEL before anything is delivered."
+    ].join("\n"),
+    adminBackKeyboard([
+      [Markup.button.callback("📊 View Broadcast Stats", "ADMIN_DASH_STATS")]
+    ]),
+    true
+  );
+});
+
+bot.action("ADMIN_DASH_STATS", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+  await showAdminScreen(ctx, adminBroadcastStatsText(), adminBackKeyboard(), true);
+});
+
+bot.action("ADMIN_DASH_DISCOUNT", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+  await showAdminScreen(ctx, adminDiscountPanelText(), adminDiscountKeyboard(), true);
+});
+
+bot.action("ADMIN_DASH_DISCOUNT_PREVIEW", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+
+  if (!DISCOUNT_START_EAT || !DISCOUNT_END_EAT) {
+    return ctx.answerCbQuery("No timed discount window configured.", { show_alert: true });
+  }
+
+  if (!isDiscountPublicActive()) {
+    return ctx.answerCbQuery("Discount is currently closed.", { show_alert: true });
+  }
+
+  await ctx.answerCbQuery("Creating preview...");
+
+  try {
+    const result = await createDiscountBroadcastPreview(true);
+    if (result.ok) {
+      await ctx.reply("✅ Fresh discount broadcast preview created. Choose SEND TO ALL or CANCEL on the preview.");
+      return;
+    }
+    if (result.reason === "no-recipients") {
+      await ctx.reply("❌ No active registered users are available for broadcast.");
+      return;
+    }
+    await ctx.reply("❌ Discount broadcast preview could not be created.");
+  } catch (err) {
+    await ctx.reply("❌ Failed to create preview: " + String(err?.message || err));
+  }
+});
+
+bot.action("ADMIN_DASH_MODE", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+  await showAdminScreen(ctx, adminModeText(), adminBackKeyboard(), true);
+});
+
+bot.action("ADMIN_DASH_SYNCNAME", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery("Syncing bot name...");
+  await syncBotDisplayName(true);
+
+  const inactive = isBotInactivePeriod();
+  await showAdminScreen(
+    ctx,
+    "✅ Bot display name sync completed.\n\nCurrent mode: " + (inactive ? "OFFLINE" : "ONLINE"),
+    adminBackKeyboard(),
+    true
+  );
+});
+
+bot.action("ADMIN_DASH_SUPPORT", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+  await showAdminScreen(
+    ctx,
+    [
+      "💬 USER SUPPORT",
+      "",
+      "/reply <userId> <message>",
+      "Send a direct support reply.",
+      "",
+      "/cancelreply",
+      "Cancel an active reply session.",
+      "",
+      "Tip: User notifications also include a Reply button when available."
+    ].join("\n"),
+    adminBackKeyboard(),
+    true
+  );
+});
+
+bot.action("ADMIN_DASH_DELIVERY", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+  await showAdminScreen(
+    ctx,
+    [
+      "📦 FILE DELIVERY",
+      "",
+      "/filebatch <userId> [caption]",
+      "Open a delivery batch for a user.",
+      "",
+      "/donebatch",
+      "Finish the active batch and close delivery.",
+      "",
+      "/cancelbatch",
+      "Cancel the active delivery batch."
+    ].join("\n"),
+    adminBackKeyboard(),
+    true
+  );
+});
+
+bot.action("ADMIN_DASH_PAYMENTS", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+  await showAdminScreen(
+    ctx,
+    [
+      "💳 PAYMENT ADMIN",
+      "",
+      "/paiduser <userId>",
+      "Manually confirm the latest pending payment for a user.",
+      "",
+      "/paidref <apiRef>",
+      "Manually confirm a specific payment reference.",
+      "",
+      "Use manual confirmation only after you have verified the payment."
+    ].join("\n"),
+    adminBackKeyboard(),
+    true
+  );
+});
+
+bot.action("ADMIN_DASH_COMMANDS", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+  await showAdminScreen(ctx, adminAllCommandsText(), adminBackKeyboard(), true);
+});
+
 bot.action(/^BROADCAST_CANCEL_([A-Za-z0-9]+)$/, async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
 
@@ -5539,6 +5913,8 @@ app.listen(port, async () => {
   } catch (e) {
     console.error("Failed to set Telegram webhook:", e?.description || e?.message || e);
   }
+
+  await syncAdminCommandMenu();
 
   startBotDisplayNameScheduler();
   startDailySalesSummaryScheduler();
