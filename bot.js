@@ -319,6 +319,15 @@ const KEY_CANCEL = "❌ Cancel / New submission";
 const CLEAN_COPY_WARNING =
   "⚠️ Only Upload Files without institution names and logos on cover pages to avoid account bans.";
 
+const CLEAN_COPY_NEXT_SUBMISSION_NOTE =
+  `⚠️ *IMPORTANT FOR YOUR NEXT SUBMISSION*
+
+Please remove all institution names and/or logos from the cover page before uploading your paper.
+
+Only upload a clean copy with no school, college, university, or other institution name/logo on the cover page. This helps protect the Turnitin account from restrictions or bans.
+
+Please make sure this is done before your next submission. Thank you.`;
+
 const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
@@ -1513,10 +1522,21 @@ function cleanupCheckHistory() {
 }
 
 function normalizeFileNameForRecheck(name) {
-  return String(name || "")
+  const clean = String(name || "")
     .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
+    .replace(/\s+/g, " ");
+
+  const extensionMatch = clean.match(/(\.[^.]+)$/);
+  const extension = extensionMatch ? extensionMatch[1] : "";
+  let baseName = extension ? clean.slice(0, -extension.length) : clean;
+
+  // Ignore only duplicate-download suffixes (1) through (10)
+  // immediately before the file extension.
+  baseName = baseName
+    .replace(/\s+\((?:[1-9]|10)\)$/, "")
+    .trim();
+
+  return (baseName + extension).toLowerCase();
 }
 
 function sameFileIdentity(record, userId, fileName, fileUniqueId) {
@@ -2353,6 +2373,13 @@ function adminActionKeyboard(userId, variant) {
       Markup.button.callback("ℹ️ AI Unavail", `ADMIN_AI_NOTE_${userId}`),
       Markup.button.callback("🧾 Till", `ADMIN_TILL_NOTICE_${userId}`),
       Markup.button.callback("⭐ AI Star", `ADMIN_AI_STAR_NOTE_${userId}`)
+    ]);
+
+    rows.push([
+      Markup.button.callback(
+        "🚫 REMOVE LOGO/NAME",
+        `ADMIN_CLEAN_COPY_NOTE_${userId}`
+      )
     ]);
   } else if (variant === "delivery") {
     rows.push([Markup.button.callback("📦 Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
@@ -4977,6 +5004,27 @@ bot.action(/^ADMIN_AI_NOTE_(\d+)$/, async (ctx) => {
   }
 });
 
+
+
+bot.action(/^ADMIN_CLEAN_COPY_NOTE_(\d+)$/, async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+
+  const userId = ctx.match[1];
+
+  try {
+    await bot.telegram.sendMessage(
+      userId,
+      CLEAN_COPY_NEXT_SUBMISSION_NOTE,
+      { parse_mode: "Markdown" }
+    );
+
+    await ctx.answerCbQuery("Clean-copy note sent");
+    await ctx.reply("✅ Remove logo/name reminder sent to " + userId);
+  } catch (err) {
+    await ctx.answerCbQuery("Failed");
+    await ctx.reply("❌ Failed: " + (err?.message || err));
+  }
+});
 
 
 bot.action(/^ADMIN_AI_STAR_NOTE_(\d+)$/, async (ctx) => {
