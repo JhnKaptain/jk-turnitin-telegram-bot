@@ -160,7 +160,7 @@ if (!INTASEND_PUBLISHABLE_KEY) {
 
 const INTASEND_API_BASE = "https://api.intasend.com/api/v1";
 const ADMIN_ID = Number(process.env.ADMIN_ID || 6569201830);
-const MAX_BATCH_FILES = 10;
+const MAX_BATCH_FILES = 5;
 const TILL_NUMBER = String(process.env.TILL_NUMBER || "6164915").trim();
 
 const BOT_ONLINE_NAME = String(process.env.BOT_ONLINE_NAME || "JK Turnitin Reports (ONLINE)")
@@ -183,11 +183,6 @@ const PAYMENT_OCR_TIMEOUT_MS = PAYMENT_OCR_TIMEOUT_SECONDS * 1000;
 
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
 const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
-
-const DAILY_SUMMARY_TOTAL_FACTOR = readFloatEnv(
-  "DAILY_SUMMARY_TOTAL_FACTOR",
-  0.75
-);
 const SIMILARITY_ONLY_ENABLED = readBoolEnv("SIMILARITY_ONLY_ENABLED", true);
 const SIMILARITY_ONLY_PRICE_KES = readIntEnv("SIMILARITY_ONLY_PRICE_KES", 100);
 const RESALE_PRICE_KES = readIntEnv(
@@ -274,7 +269,7 @@ function reportProcessingTimeText() {
     return `Reports take *${REPORT_PROCESSING_MIN_MINUTES} minutes* (${REPORT_PROCESSING_LABEL}).`;
   }
 
-  return `Reports take *${REPORT_PROCESSING_MIN_MINUTES}â€“${REPORT_PROCESSING_MAX_MINUTES} minutes* (${REPORT_PROCESSING_LABEL}).`;
+  return `Reports take *${REPORT_PROCESSING_MIN_MINUTES}–${REPORT_PROCESSING_MAX_MINUTES} minutes* (${REPORT_PROCESSING_LABEL}).`;
 }
 
 const RECHECK_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -316,62 +311,27 @@ const STATUS_POLL_MAX_ATTEMPTS = readIntEnv("STATUS_POLL_MAX_ATTEMPTS", 180);
 // =====================
 // UI TEXT
 // =====================
-const KEY_SEND_DOC = "ðŸ“Ž Upload Procedure";
-const KEY_SEND_MPESA = "ðŸ§¾ Payment Help";
-const KEY_CONTACT_SUPPORT = "ðŸ’¬ Contact Support Team";
-const KEY_CANCEL = "âŒ Cancel / New submission";
+const KEY_SEND_DOC = "📄 Send Document";
+const KEY_SEND_MPESA = "🧾 Payment Help";
+const KEY_CONTACT_SUPPORT = "💬 Contact Support Team";
+const KEY_CANCEL = "❌ Cancel / New submission";
 
 const CLEAN_COPY_WARNING =
-  "âš ï¸ Only Upload Files without institution names and logos on cover pages to avoid account bans.";
-
-const CLEAN_COPY_NEXT_SUBMISSION_NOTE =
-  `âš ï¸ *IMPORTANT FOR YOUR NEXT SUBMISSION*
-
-Please remove all institution names and/or logos from the cover page before uploading your paper.
-
-Only upload a clean copy with no school, college, university, or other institution name/logo on the cover page. This helps protect the Turnitin account from restrictions or bans.
-
-Please make sure this is done before your next submission. Thank you.`;
+  "⚠️ Only Upload Files without institution names and logos on cover pages to avoid account bans.";
 
 const REPORTS_DELIVERED_MESSAGE =
-  "âœ… Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
+  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
 const AI_UNAVAILABLE_NOTE =
-  `â„¹ï¸ AI Writing Report Unavailable
+  `ℹ️ AI Writing Report Unavailable
 
-ðŸ“Œ Turnitin AI may not show when:
+📌 Turnitin AI may not show when:
 
-ðŸ“ Essay/prose content is below 300 words or above 30,000 words
-ðŸŒ File language is not English, Spanish, or Japanese
-ðŸ“„ File type is not .docx, .pdf, .txt, or .rtf
+📝 Essay/prose content is below 300 words or above 30,000 words
+🌐 File language is not English, Spanish, or Japanese
+📄 File type is not .docx, .pdf, .txt, or .rtf
 
-âœ… If AI is unavailable, only the similarity report may be provided.`;
-
-const AI_STAR_NOTE =
-  `â­ *AI Report Asterisk*
-
-An asterisk (\\*%) appears when AI detection is below *20%*.
-
-At *1â€“19%*, Turnitin may not show the exact percentage or AI highlights because results are less reliable.
-
-To get highlights for revision, add AI content at the end of the file to boost detection to at least *20%*, then request a *paid recheck*.
-
-The revised file must be submitted again. *All submissions are paid for.*`;
-
-function mpesaTillNoticeMessage() {
-  return [
-    "ðŸ§¾ *M-Pesa Payment Notice*",
-    "",
-    "The M-Pesa STK prompt gateway is currently experiencing technical issues.",
-    "",
-    "Please pay manually via *Buy Goods Till Number:*",
-    "*" + TILL_NUMBER + "*",
-    "",
-    "If payment is not confirmed within *1 minute*, send the M-Pesa confirmation message or payment screenshot here for verification.",
-    "",
-    "STK prompts will resume once the gateway is stable."
-  ].join("\n");
-}
+✅ If AI is unavailable, only the similarity report may be provided.`;
 
 function discountTimeText() {
   if (!DISCOUNT_TIME_VISIBLE) return "";
@@ -387,7 +347,7 @@ function discountTimeText() {
 
 function discountTimeLineForMessage() {
   const text = discountTimeText();
-  return text ? `\nâ° ${text}` : "";
+  return text ? `\n⏰ ${text}` : "";
 }
 
 function resalePublicPriceText() {
@@ -400,10 +360,10 @@ function resaleButtonLabel(resaleVerified) {
   if (!RESALE_ENABLED) return "";
 
   if (isDiscountPublicActive() || resaleVerified) {
-    return `ðŸ·ï¸ Use ${RESALE_LABEL_TITLE} (${RESALE_PRICE_KES} KES)`;
+    return `🏷️ Use ${RESALE_LABEL_TITLE} (${RESALE_PRICE_KES} KES)`;
   }
 
-  return `ðŸ·ï¸ ${RESALE_LABEL_TITLE} Code`;
+  return `🏷️ ${RESALE_LABEL_TITLE} Code`;
 }
 
 function typeDisplayName(kind) {
@@ -416,63 +376,56 @@ function tillLine() {
   return `Till: ${TILL_NUMBER}`;
 }
 
-const UPLOAD_PROCEDURE_MESSAGE = [
-  "ðŸ“Ž Upload Procedure",
-  "",
-  "1ï¸âƒ£ Tap Telegram's ðŸ“Ž attachment button beside the message box.",
-  "2ï¸âƒ£ Choose File/Document.",
-  "3ï¸âƒ£ Send your DOC/PDF file directly.",
-  "4ï¸âƒ£ After the first file is received, choose the total number of files to check.",
-  "5ï¸âƒ£ Upload any remaining files as documents if any.",
-  "",
-  "The bot will then check the file and show the available service options.",
-  "",
-  CLEAN_COPY_WARNING
-].join("\n");
 const MESSAGES = {
   welcome: (check, recheck, resale) => `
 JK Turnitin Reports Bot
 
-ðŸ’° *Pricing*
-â€¢ Check: ${check} KES
-â€¢ Recheck: ${recheck} KES${SIMILARITY_ONLY_ENABLED ? `\nâ€¢ Similarity Report Only: ${SIMILARITY_ONLY_PRICE_KES} KES` : ""}${RESALE_ENABLED ? `\nâ€¢ ${RESALE_LABEL_TITLE}: ${resalePublicPriceText()}` : ""}
+1️⃣ Tap *Send Document*
+2️⃣ Choose how many files you want to upload (1-${MAX_BATCH_FILES})
+3️⃣ Upload your files one by one as *documents*
+4️⃣ Choose *CHECK*, *RECHECK*${RESALE_ENABLED ? ` or *${RESALE_LABEL_TITLE}*` : ""} where eligible
+5️⃣ Pay *once* for the whole batch
 
-Recheck is available only when the same file was checked and paid within the last 24 hours.
+💰 Pricing
+• Check: ${check} KES
+• Recheck: ${recheck} KES${SIMILARITY_ONLY_ENABLED ? `\n• Similarity Report Only: ${SIMILARITY_ONLY_PRICE_KES} KES` : ""}${RESALE_ENABLED ? `\n• ${RESALE_LABEL_TITLE}: ${resalePublicPriceText()}` : ""}
 
-${RESALE_ENABLED && !isDiscountPublicActive() ? `ðŸ·ï¸ *${RESALE_LABEL_TITLE}*\n${RESALE_LABEL_TITLE} currently requires a code.${discountTimeLineForMessage()}` : ""}
-${RESALE_ENABLED && isDiscountPublicActive() ? `ðŸ·ï¸ *${RESALE_LABEL_TITLE}*\n${RESALE_LABEL_TITLE} is currently available without a code.${discountTimeLineForMessage()}` : ""}
+🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.
+${RESALE_ENABLED && !isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}
+${RESALE_ENABLED && isDiscountPublicActive() ? `\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}
 `,
   inactive: () => `
-â³ Turnitin checks are paused right now.
-Weâ€™ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
+⏳ Turnitin checks are paused right now.
+We’ll resume at *${INACTIVE_END_EAT_DISPLAY} EAT*.
 
-âš ï¸ Payment prompts will only be sent after ${INACTIVE_END_EAT_DISPLAY}.
+⚠️ Payment prompts will only be sent after ${INACTIVE_END_EAT_DISPLAY}.
 
 If urgent, WhatsApp call *0701730921*.
 `,
-  sendDocHelp: UPLOAD_PROCEDURE_MESSAGE,
+  sendDocHelp:
+    `📄 Tap *Send Document* first, choose *1-${MAX_BATCH_FILES}* files, then upload your files one by one as *documents* (DOC/PDF).\n\n${CLEAN_COPY_WARNING}\n\nPlease don’t send as a photo.`,
   paymentHelp:
-    `ðŸ§¾ Payment help:
+    `🧾 Payment help:
 
 Default method: *STK Push*.
 
-If STK delays or fails, pay manually via:
-*Buy Goods Till:* ${TILL_NUMBER}
+If STK delays or fails, pay via:
+${tillLine()}
 
-If payment is not confirmed within *1 minute*, send the M-Pesa confirmation message or payment screenshot here.
+Then send the M-Pesa message or payment screenshot here.
 
-ðŸ” Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED && !isDiscountPublicActive() ? `\n\nðŸ·ï¸ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}${RESALE_ENABLED && isDiscountPublicActive() ? `\n\nðŸ·ï¸ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}`,
+🔁 Recheck is only available when the same file was checked and paid within the last 24 hours.${RESALE_ENABLED && !isDiscountPublicActive() ? `\n\n🏷️ ${RESALE_LABEL_TITLE} requires a code.${discountTimeLineForMessage()}` : ""}${RESALE_ENABLED && isDiscountPublicActive() ? `\n\n🏷️ ${RESALE_LABEL_TITLE} is active.${discountTimeLineForMessage()}` : ""}`,
   askPhoneBatch: (summary, amount) =>
-    `ðŸ“¦ Batch summary\n\n${summary}\n\nðŸ’° Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
+    `📦 Batch summary\n\n${summary}\n\n💰 Total: *${amount} KES*\n\nSend phone number (07XXXXXXXX / 01XXXXXXXX).`,
   stkSentWithTill: () =>
-    `âœ… STK Push sent. Check your phone and enter PIN.
+    `✅ STK Push sent. Check your phone and enter PIN.
 
-If STK delays or fails, pay manually via:
-*Buy Goods Till:* ${TILL_NUMBER}
+If STK delays or fails, pay via:
+${tillLine()}
 
-If payment is not confirmed within *1 minute*, send the M-Pesa confirmation message or payment screenshot here.`,
+Then send the M-Pesa message or payment screenshot here.`,
   paidMsgBatch: (amount, summary, currency = "KES") =>
-    `âœ… Payment confirmed (${amount} ${currency}).\n\n${summary}\n\nâ± ${reportProcessingTimeText()}`
+    `✅ Payment confirmed (${amount} ${currency}).\n\n${summary}\n\n⏱ ${reportProcessingTimeText()}`
 };
 
 // =====================
@@ -484,8 +437,6 @@ const pendingFileTargets = {};
 const activePollers = {};
 const supportRequests = {};
 const pendingAdminReplies = {};
-const pendingBroadcasts = {};
-let broadcastInProgress = false;
 
 const processedUpdateCache = new Map();
 const PROCESSED_UPDATE_TTL_MS = 30 * 60 * 1000;
@@ -496,8 +447,6 @@ let usedProofCodes = {};
 let paidJobs = {};
 let dailySalesSummary = {};
 let dailySalesLedger = {};
-let botUsers = {};
-let broadcastMeta = {};
 let lastAppliedBotNameMode = null;
 
 const DATA_DIR = String(process.env.DATA_DIR || __dirname).trim();
@@ -514,415 +463,6 @@ const USED_PROOF_CODES_FILE = path.join(DATA_DIR, "usedProofCodes.store.json");
 const PAID_JOBS_FILE = path.join(DATA_DIR, "paidJobs.store.json");
 const DAILY_SALES_SUMMARY_FILE = path.join(DATA_DIR, "dailySalesSummary.store.json");
 const DAILY_SALES_LEDGER_FILE = path.join(DATA_DIR, "dailySalesLedger.store.json");
-const BOT_USERS_FILE = path.join(DATA_DIR, "botUsers.store.json");
-
-const BROADCAST_INTERVAL_MS = Math.max(50, readIntEnv("BROADCAST_INTERVAL_MS", 60));
-const BROADCAST_PREVIEW_TTL_MS = 15 * 60 * 1000;
-const DISCOUNT_BROADCAST_CHECK_MS = Math.max(
-  15000,
-  readIntEnv("DISCOUNT_BROADCAST_CHECK_SECONDS", 30) * 1000
-);
-
-// =====================
-// BOT USER REGISTRY + BROADCAST HELPERS
-// =====================
-function loadBotUsers() {
-  try {
-    if (!fs.existsSync(BOT_USERS_FILE)) return;
-
-    const raw = fs.readFileSync(BOT_USERS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
-
-    if (parsed.users && typeof parsed.users === "object" && !Array.isArray(parsed.users)) {
-      botUsers = parsed.users;
-      broadcastMeta = parsed.meta && typeof parsed.meta === "object" ? parsed.meta : {};
-      return;
-    }
-
-    // Backward-compatible with a plain { userId: record } registry.
-    botUsers = parsed;
-  } catch (e) {
-    console.error("Failed to load bot users:", e?.message || e);
-  }
-}
-
-function saveBotUsers() {
-  try {
-    fs.writeFileSync(
-      BOT_USERS_FILE,
-      JSON.stringify({ version: 1, users: botUsers, meta: broadcastMeta }, null, 2),
-      "utf8"
-    );
-  } catch (e) {
-    console.error("Failed to save bot users:", e?.message || e);
-  }
-}
-
-function cleanBroadcastUsername(value) {
-  return String(value || "").trim().replace(/^@+/, "").slice(0, 64);
-}
-
-function rememberBotUser(user, source = "interaction") {
-  const userId = Number(user?.id || 0);
-  if (!Number.isSafeInteger(userId) || userId <= 0 || userId === ADMIN_ID) return false;
-
-  const key = String(userId);
-  const existing = botUsers[key] || null;
-  const now = Date.now();
-
-  const firstName = String(user?.first_name || "").trim().slice(0, 128);
-  const lastName = String(user?.last_name || "").trim().slice(0, 128);
-  const username = cleanBroadcastUsername(user?.username);
-  const displayName = `${firstName} ${lastName}`.replace(/\s+/g, " ").trim();
-
-  const changedIdentity =
-    !existing ||
-    existing.firstName !== firstName ||
-    existing.lastName !== lastName ||
-    existing.username !== username ||
-    existing.displayName !== displayName;
-
-  const reactivated = Boolean(existing && existing.active === false);
-  const shouldPersistLastSeen = !existing || now - Number(existing.lastPersistedAt || 0) >= 5 * 60 * 1000;
-
-  botUsers[key] = {
-    ...(existing || {}),
-    userId,
-    firstName,
-    lastName,
-    displayName,
-    username,
-    firstSeenAt: Number(existing?.firstSeenAt || now),
-    lastSeenAt: now,
-    active: true,
-    inactiveAt: null,
-    inactiveReason: null,
-    source: source || existing?.source || "interaction",
-    lastInteractionSource: source || "interaction",
-    lastPersistedAt: existing?.lastPersistedAt || 0
-  };
-
-  if (changedIdentity || reactivated || shouldPersistLastSeen) {
-    botUsers[key].lastPersistedAt = now;
-    saveBotUsers();
-  }
-
-  return !existing;
-}
-
-function rememberHistoricalBotUser(userIdRaw, details = {}) {
-  const userId = Number(userIdRaw || 0);
-  if (!Number.isSafeInteger(userId) || userId <= 0 || userId === ADMIN_ID) return false;
-
-  const key = String(userId);
-  if (botUsers[key]) return false;
-
-  const now = Date.now();
-  const seenAt = Number(
-    details.lastSeenAt || details.lastPaidCheckAt || details.completedAt || details.paidAt || details.updatedAt || details.createdAt || now
-  );
-
-  botUsers[key] = {
-    userId,
-    firstName: "",
-    lastName: "",
-    displayName: String(details.name || details.displayName || "").trim().slice(0, 256),
-    username: cleanBroadcastUsername(details.username),
-    firstSeenAt: seenAt,
-    lastSeenAt: seenAt,
-    active: true,
-    inactiveAt: null,
-    inactiveReason: null,
-    source: "historical-backfill",
-    lastInteractionSource: "historical-backfill",
-    lastPersistedAt: now
-  };
-
-  return true;
-}
-
-function backfillBotUsersFromExistingData() {
-  let added = 0;
-
-  for (const ref of Object.values(paymentRefs || {})) {
-    if (rememberHistoricalBotUser(ref?.userId, ref || {})) added += 1;
-  }
-
-  for (const record of checkHistory || []) {
-    if (rememberHistoricalBotUser(record?.userId, record || {})) added += 1;
-  }
-
-  for (const job of Object.values(paidJobs || {})) {
-    if (rememberHistoricalBotUser(job?.userId, job || {})) added += 1;
-  }
-
-  for (const record of Object.values(dailySalesLedger?.payments || {})) {
-    if (rememberHistoricalBotUser(record?.userId, record || {})) added += 1;
-  }
-
-  if (added > 0) saveBotUsers();
-  return added;
-}
-
-function getBotUserStats() {
-  const records = Object.values(botUsers || {}).filter((record) => {
-    const userId = Number(record?.userId || 0);
-    return Number.isSafeInteger(userId) && userId > 0 && userId !== ADMIN_ID;
-  });
-
-  const active = records.filter((record) => record.active !== false).length;
-
-  return {
-    registered: records.length,
-    active,
-    inactive: records.length - active
-  };
-}
-
-function getActiveBotUserIds() {
-  return Object.values(botUsers || {})
-    .filter((record) => record?.active !== false)
-    .map((record) => Number(record?.userId || 0))
-    .filter((userId) => Number.isSafeInteger(userId) && userId > 0 && userId !== ADMIN_ID);
-}
-
-function cleanupPendingBroadcasts() {
-  const now = Date.now();
-
-  for (const [token, pending] of Object.entries(pendingBroadcasts)) {
-    if (!pending?.createdAt || now - Number(pending.createdAt) > BROADCAST_PREVIEW_TTL_MS) {
-      delete pendingBroadcasts[token];
-    }
-  }
-}
-
-function makeBroadcastToken() {
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function broadcastPreviewKeyboard(token) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("âœ… SEND TO ALL", `BROADCAST_SEND_${token}`)],
-    [Markup.button.callback("âŒ CANCEL", `BROADCAST_CANCEL_${token}`)]
-  ]);
-}
-
-function broadcastSleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getBroadcastTelegramError(err) {
-  const errorCode = Number(err?.response?.error_code || err?.code || 0) || 0;
-  const description = String(
-    err?.response?.description || err?.description || err?.message || err || "Unknown Telegram error"
-  );
-  const retryAfter = Number(
-    err?.response?.parameters?.retry_after || err?.parameters?.retry_after || 0
-  ) || 0;
-
-  const permanent =
-    errorCode === 403 ||
-    /blocked by (the )?user|bot was blocked|chat not found|user is deactivated|can't initiate conversation|peer_id_invalid/i.test(description);
-
-  return { errorCode, description, retryAfter, permanent };
-}
-
-async function sendBroadcastMessageToUser(userId, message) {
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      await bot.telegram.sendMessage(userId, message);
-      return { ok: true };
-    } catch (err) {
-      const info = getBroadcastTelegramError(err);
-
-      if (info.retryAfter > 0 && attempt === 1) {
-        await broadcastSleep((info.retryAfter + 1) * 1000);
-        continue;
-      }
-
-      return { ok: false, ...info };
-    }
-  }
-
-  return { ok: false, description: "Broadcast retry exhausted", permanent: false };
-}
-
-async function runBroadcast(message, recipientIds) {
-  const uniqueIds = [...new Set((recipientIds || []).map(Number))]
-    .filter((userId) => Number.isSafeInteger(userId) && userId > 0 && userId !== ADMIN_ID);
-
-  const startedAt = Date.now();
-  let attempted = 0;
-  let delivered = 0;
-  let failed = 0;
-  let skipped = 0;
-  let newlyInactive = 0;
-
-  for (let index = 0; index < uniqueIds.length; index += 1) {
-    const userId = uniqueIds[index];
-    const key = String(userId);
-    const record = botUsers[key];
-
-    if (!record || record.active === false) {
-      skipped += 1;
-      continue;
-    }
-
-    attempted += 1;
-    const result = await sendBroadcastMessageToUser(userId, message);
-    const now = Date.now();
-
-    record.lastBroadcastAt = now;
-
-    if (result.ok) {
-      delivered += 1;
-      record.lastBroadcastStatus = "DELIVERED";
-      record.lastBroadcastError = null;
-    } else {
-      failed += 1;
-      record.lastBroadcastStatus = "FAILED";
-      record.lastBroadcastError = String(result.description || "Unknown failure").slice(0, 500);
-
-      if (result.permanent) {
-        if (record.active !== false) newlyInactive += 1;
-        record.active = false;
-        record.inactiveAt = now;
-        record.inactiveReason = record.lastBroadcastError;
-      }
-    }
-
-    if (attempted % 20 === 0) saveBotUsers();
-
-    if (index < uniqueIds.length - 1) {
-      await broadcastSleep(BROADCAST_INTERVAL_MS);
-    }
-  }
-
-  broadcastMeta = {
-    ...(broadcastMeta || {}),
-    lastBroadcastStartedAt: startedAt,
-    lastBroadcastAt: Date.now(),
-    lastBroadcastRecipients: uniqueIds.length,
-    lastBroadcastAttempted: attempted,
-    lastBroadcastDelivered: delivered,
-    lastBroadcastFailed: failed,
-    lastBroadcastSkipped: skipped,
-    lastBroadcastNewlyInactive: newlyInactive
-  };
-
-  saveBotUsers();
-
-  return {
-    recipients: uniqueIds.length,
-    attempted,
-    delivered,
-    failed,
-    skipped,
-    newlyInactive
-  };
-}
-
-function getActiveDiscountBroadcastWindow() {
-  if (!RESALE_ENABLED || !DISCOUNT_START_EAT || !DISCOUNT_END_EAT) return null;
-  if (DISCOUNT_START_EAT === DISCOUNT_END_EAT || !isDiscountPublicActive()) return null;
-
-  const nowEat = moment().utcOffset(180);
-  const [sh, sm] = DISCOUNT_START_EAT.split(":").map(Number);
-  const [eh, em] = DISCOUNT_END_EAT.split(":").map(Number);
-
-  let start = nowEat.clone().startOf("day").hour(sh).minute(sm).second(0).millisecond(0);
-  let end = nowEat.clone().startOf("day").hour(eh).minute(em).second(0).millisecond(0);
-
-  if (DISCOUNT_START_EAT > DISCOUNT_END_EAT) {
-    if (nowEat.format("HH:mm") < DISCOUNT_END_EAT) start.subtract(1, "day");
-    else end.add(1, "day");
-  }
-
-  return {
-    key: `${start.format("YYYY-MM-DDTHH:mm")}|${end.format("YYYY-MM-DDTHH:mm")}`,
-    fromText: formatHHMMTo12HourStrict(DISCOUNT_START_EAT) || DISCOUNT_START_EAT,
-    toText: formatHHMMTo12HourStrict(DISCOUNT_END_EAT) || DISCOUNT_END_EAT,
-    price: RESALE_PRICE_KES
-  };
-}
-
-function discountBroadcastMessage(windowInfo) {
-  return [
-    "ðŸ·ï¸ DISCOUNT IS NOW OPEN!",
-    "",
-    `Get your full Turnitin report for only ${windowInfo.price} KES during the current discount period.`,
-    "",
-    "â° Discount Period",
-    `From: ${windowInfo.fromText} EAT`,
-    `To: ${windowInfo.toText} EAT`,
-    "",
-    "ðŸ“Ž Upload your document now to take advantage of the discounted rate before the offer closes."
-  ].join("\n");
-}
-
-async function createDiscountBroadcastPreview(force = false) {
-  cleanupPendingBroadcasts();
-
-  const windowInfo = getActiveDiscountBroadcastWindow();
-  if (!windowInfo) return { ok: false, reason: "inactive" };
-
-  if (!force && broadcastMeta.lastDiscountPreviewWindowKey === windowInfo.key) {
-    return { ok: false, reason: "already-previewed" };
-  }
-
-  const recipientIds = getActiveBotUserIds();
-  if (!recipientIds.length) return { ok: false, reason: "no-recipients" };
-
-  const message = discountBroadcastMessage(windowInfo);
-  const token = makeBroadcastToken();
-
-  pendingBroadcasts[token] = {
-    message,
-    recipientIds,
-    createdAt: Date.now(),
-    kind: "discount",
-    discountWindow: windowInfo
-  };
-
-  try {
-    await bot.telegram.sendMessage(
-      ADMIN_ID,
-      "ðŸ“¢ DISCOUNT BROADCAST PREVIEW\n\n" +
-        message +
-        "\n\n" +
-        `Recipients: ${recipientIds.length} active user(s)\n` +
-        "This preview expires in 15 minutes.\n\n" +
-        "Nothing will be sent unless you choose SEND TO ALL.",
-      { reply_markup: broadcastPreviewKeyboard(token).reply_markup }
-    );
-  } catch (err) {
-    delete pendingBroadcasts[token];
-    throw err;
-  }
-
-  broadcastMeta.lastDiscountPreviewWindowKey = windowInfo.key;
-  broadcastMeta.lastDiscountPreviewAt = Date.now();
-  saveBotUsers();
-
-  return { ok: true, windowInfo, recipients: recipientIds.length };
-}
-
-async function checkAutomaticDiscountBroadcastPreview() {
-  try {
-    await createDiscountBroadcastPreview(false);
-  } catch (err) {
-    console.error("Automatic discount broadcast preview failed:", err?.message || err);
-  }
-}
-
-function startDiscountBroadcastPreviewScheduler() {
-  setTimeout(checkAutomaticDiscountBroadcastPreview, 3000);
-  setInterval(checkAutomaticDiscountBroadcastPreview, DISCOUNT_BROADCAST_CHECK_MS);
-}
-
-loadBotUsers();
 
 // =====================
 // DUPLICATE UPDATE GUARD
@@ -958,18 +498,6 @@ bot.use(async (ctx, next) => {
     processedUpdateCache.delete(key);
     throw err;
   }
-});
-
-// Persist every private non-admin user interaction for future broadcasts.
-bot.use(async (ctx, next) => {
-  const user = ctx.from;
-  const chatType = ctx.chat?.type;
-
-  if (user && user.id !== ADMIN_ID && (!chatType || chatType === "private")) {
-    rememberBotUser(user, "private-interaction");
-  }
-
-  return next();
 });
 
 // =====================
@@ -1261,15 +789,11 @@ async function sendDailySalesSummaryForPreviousEatDay() {
 
   const summary = buildDailySalesSummary(dateKey);
 
-  const displayedTotal = Number(
-    (summary.total * DAILY_SUMMARY_TOTAL_FACTOR).toFixed(2)
-  );
-
   const text =
-    `ðŸ“Š Daily Payment Summary\n\n` +
+    `📊 Daily Payment Summary\n\n` +
     `Date: ${dateKey}\n` +
     `Successful payments: ${summary.payments}\n` +
-    `Total collected: ${displayedTotal.toLocaleString("en-KE", { maximumFractionDigits: 2 })} KES\n\n` +
+    `Total collected: ${summary.total.toLocaleString("en-KE")} KES\n\n` +
     `CHECK: ${summary.checks}\n` +
     `RECHECK: ${summary.rechecks}\n` +
     `SIMILARITY ONLY: ${summary.similarities}\n` +
@@ -1405,7 +929,7 @@ function markLatestPaidJobDelivered(userId) {
 function paidJobCancelWaitText(job) {
   const ms = Number(job.cancelAllowedAt || 0) - Date.now();
   const min = Math.max(1, Math.ceil(ms / 60000));
-  return `âœ… Payment confirmed. Report is processing.\n\nCancellation opens in about ${min} minute(s).`;
+  return `✅ Payment confirmed. Report is processing.\n\nCancellation opens in about ${min} minute(s).`;
 }
 
 loadPaidJobs();
@@ -1531,21 +1055,10 @@ function cleanupCheckHistory() {
 }
 
 function normalizeFileNameForRecheck(name) {
-  const clean = String(name || "")
+  return String(name || "")
     .trim()
-    .replace(/\s+/g, " ");
-
-  const extensionMatch = clean.match(/(\.[^.]+)$/);
-  const extension = extensionMatch ? extensionMatch[1] : "";
-  let baseName = extension ? clean.slice(0, -extension.length) : clean;
-
-  // Ignore only duplicate-download suffixes (1) through (10)
-  // immediately before the file extension.
-  baseName = baseName
-    .replace(/\s+\((?:[1-9]|10)\)$/, "")
-    .trim();
-
-  return (baseName + extension).toLowerCase();
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }
 
 function sameFileIdentity(record, userId, fileName, fileUniqueId) {
@@ -1937,7 +1450,7 @@ function clearBatchItemProgress(target, key) {
 }
 
 function batchOpenedMessage(userId) {
-  return `âœ… Batch delivery opened for user ${userId}.
+  return `✅ Batch delivery opened for user ${userId}.
 
 send /donebatch
 send /cancelbatch`;
@@ -2005,206 +1518,6 @@ function mainKeyboard() {
   };
 }
 
-function adminDashboardKeyboard() {
-  return Markup.inlineKeyboard([
-    [
-      Markup.button.callback("ðŸ“¢ Broadcast", "ADMIN_DASH_BROADCAST"),
-      Markup.button.callback("ðŸ·ï¸ Discount", "ADMIN_DASH_DISCOUNT")
-    ],
-    [
-      Markup.button.callback("ðŸ“Š Broadcast Stats", "ADMIN_DASH_STATS"),
-      Markup.button.callback("âš™ï¸ Bot Status", "ADMIN_DASH_MODE")
-    ],
-    [
-      Markup.button.callback("ðŸ’¬ User Support", "ADMIN_DASH_SUPPORT"),
-      Markup.button.callback("ðŸ“¦ File Delivery", "ADMIN_DASH_DELIVERY")
-    ],
-    [
-      Markup.button.callback("ðŸ’³ Payments", "ADMIN_DASH_PAYMENTS"),
-      Markup.button.callback("ðŸ“‹ All Commands", "ADMIN_DASH_COMMANDS")
-    ],
-    [Markup.button.callback("ðŸ”„ Sync Bot Name", "ADMIN_DASH_SYNCNAME")]
-  ]);
-}
-
-function adminBackKeyboard(extraRows = []) {
-  return Markup.inlineKeyboard([
-    ...(extraRows || []),
-    [Markup.button.callback("ðŸ  Admin Dashboard", "ADMIN_DASH_HOME")]
-  ]);
-}
-
-function adminDiscountKeyboard() {
-  const rows = [];
-
-  if (DISCOUNT_START_EAT && DISCOUNT_END_EAT && isDiscountPublicActive()) {
-    rows.push([
-      Markup.button.callback("ðŸ·ï¸ Create Discount Preview", "ADMIN_DASH_DISCOUNT_PREVIEW")
-    ]);
-  }
-
-  return adminBackKeyboard(rows);
-}
-
-function adminDashboardText() {
-  const stats = getBotUserStats();
-  const inactive = isBotInactivePeriod();
-  const discountActive = isDiscountPublicActive();
-
-  return [
-    "ðŸ› ï¸ JK TURNITIN ADMIN DASHBOARD",
-    "",
-    "ðŸ¤– Bot mode: " + (inactive ? "OFFLINE WINDOW" : "ONLINE"),
-    "ðŸ·ï¸ Discount: " + (discountActive ? "OPEN â€¢ " + RESALE_PRICE_KES + " KES" : "CLOSED"),
-    "ðŸ‘¥ Broadcast users: " + stats.active + " active",
-    "",
-    "Choose an admin tool below."
-  ].join("\n");
-}
-
-function adminBroadcastStatsText() {
-  const stats = getBotUserStats();
-  const lastAt = Number(broadcastMeta?.lastBroadcastAt || 0);
-  const lastText = lastAt
-    ? moment(lastAt).utcOffset(180).format("YYYY-MM-DD HH:mm:ss [EAT]")
-    : "Never";
-
-  return [
-    "ðŸ“Š BROADCAST STATS",
-    "",
-    "Registered: " + stats.registered,
-    "Active: " + stats.active,
-    "Inactive/blocked: " + stats.inactive,
-    "Broadcast running: " + (broadcastInProgress ? "YES" : "NO"),
-    "Last broadcast: " + lastText,
-    "Last delivered: " + Number(broadcastMeta?.lastBroadcastDelivered || 0),
-    "Last failed: " + Number(broadcastMeta?.lastBroadcastFailed || 0)
-  ].join("\n");
-}
-
-function adminModeText() {
-  const nowUtc = moment.utc().format("YYYY-MM-DD HH:mm");
-  const nowEat = moment().utcOffset(180).format("YYYY-MM-DD HH:mm");
-  const inactive = isBotInactivePeriod();
-  const desiredName = inactive ? BOT_OFFLINE_NAME : BOT_ONLINE_NAME;
-
-  return [
-    "âš™ï¸ BOT STATUS",
-    "",
-    "Now UTC: " + nowUtc,
-    "Now EAT: " + nowEat,
-    "Inactive UTC: " + INACTIVE_START_UTC + " to " + INACTIVE_END_UTC,
-    "Inactive ends EAT: " + INACTIVE_END_EAT_DISPLAY,
-    "Current mode: " + (inactive ? "OFFLINE" : "ONLINE"),
-    "Target name: " + desiredName,
-    "Last applied: " + (lastAppliedBotNameMode || "N/A")
-  ].join("\n");
-}
-
-function adminDiscountPanelText() {
-  const active = isDiscountPublicActive();
-  const hasTimedWindow = Boolean(DISCOUNT_START_EAT && DISCOUNT_END_EAT);
-  const periodText = hasTimedWindow
-    ? formatHHMMTo12HourStrict(DISCOUNT_START_EAT) + " to " + formatHHMMTo12HourStrict(DISCOUNT_END_EAT) + " EAT"
-    : "Manual environment mode";
-
-  return [
-    "ðŸ·ï¸ DISCOUNT CONTROL",
-    "",
-    "Status: " + (active ? "OPEN" : "CLOSED"),
-    "Price: " + RESALE_PRICE_KES + " KES",
-    "Period: " + periodText,
-    "Mode: " + (hasTimedWindow ? "AUTOMATIC TIME WINDOW" : "MANUAL"),
-    "",
-    active && hasTimedWindow
-      ? "Tap Create Discount Preview to prepare the current offer for SEND / CANCEL approval."
-      : hasTimedWindow
-        ? "The preview button will appear automatically when the discount period opens."
-        : "Use /discountmode to review the manual discount setting."
-  ].join("\n");
-}
-
-function adminAllCommandsText() {
-  return [
-    "ðŸ“‹ ADMIN COMMANDS",
-    "",
-    "Dashboard",
-    "/adminhelp - Open this button dashboard",
-    "/admin - Dashboard alias",
-    "",
-    "Broadcasting",
-    "/broadcast <message> - Create custom broadcast preview",
-    "/broadcaststats - Broadcast user and delivery stats",
-    "/discountbroadcast - Create current discount preview",
-    "",
-    "Discount + bot",
-    "/discountmode - Check discount mode",
-    "/mode - Check bot operating status",
-    "/syncname - Force bot display-name sync",
-    "",
-    "Support",
-    "/reply <userId> <message> - Reply to a user",
-    "/cancelreply - Cancel reply session",
-    "",
-    "File delivery",
-    "/filebatch <userId> [caption] - Open delivery batch",
-    "/donebatch - Finish delivery batch",
-    "/cancelbatch - Cancel delivery batch",
-    "",
-    "Payments",
-    "/paiduser <userId> - Confirm latest user payment",
-    "/paidref <apiRef> - Confirm payment reference"
-  ].join("\n");
-}
-
-async function showAdminScreen(ctx, textValue, keyboard, edit = false) {
-  const extra = { reply_markup: keyboard.reply_markup };
-
-  if (edit && ctx.callbackQuery?.message) {
-    try {
-      await ctx.editMessageText(textValue, extra);
-      return;
-    } catch (err) {
-      const msg = String(err?.description || err?.message || err || "");
-      if (/message is not modified/i.test(msg)) return;
-    }
-  }
-
-  await ctx.reply(textValue, extra);
-}
-
-async function showAdminDashboard(ctx, edit = false) {
-  return showAdminScreen(ctx, adminDashboardText(), adminDashboardKeyboard(), edit);
-}
-
-async function syncAdminCommandMenu() {
-  const commands = [
-    { command: "adminhelp", description: "Open admin button dashboard" },
-    { command: "broadcast", description: "Create custom broadcast preview" },
-    { command: "broadcaststats", description: "View broadcast statistics" },
-    { command: "discountbroadcast", description: "Create discount broadcast preview" },
-    { command: "discountmode", description: "Check discount mode" },
-    { command: "mode", description: "Check bot status" },
-    { command: "syncname", description: "Sync bot display name" },
-    { command: "reply", description: "Reply to a user" },
-    { command: "filebatch", description: "Open report delivery batch" },
-    { command: "donebatch", description: "Finish report delivery batch" },
-    { command: "cancelbatch", description: "Cancel report delivery batch" },
-    { command: "paiduser", description: "Confirm latest user payment" },
-    { command: "paidref", description: "Confirm payment reference" }
-  ];
-
-  try {
-    await bot.telegram.callApi("setMyCommands", {
-      commands,
-      scope: { type: "chat", chat_id: ADMIN_ID }
-    });
-    console.log("Admin Telegram command menu synced");
-  } catch (err) {
-    console.error("Failed to sync admin command menu:", err?.description || err?.message || err);
-  }
-}
-
 function startInlineKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback(KEY_SEND_DOC, "START_SEND_DOC")],
@@ -2217,75 +1530,39 @@ function batchSizeKeyboard() {
     [
       Markup.button.callback("1", "BATCH_COUNT_1"),
       Markup.button.callback("2", "BATCH_COUNT_2"),
-      Markup.button.callback("3", "BATCH_COUNT_3"),
+      Markup.button.callback("3", "BATCH_COUNT_3")
+    ],
+    [
       Markup.button.callback("4", "BATCH_COUNT_4"),
       Markup.button.callback("5", "BATCH_COUNT_5")
     ],
-    [
-      Markup.button.callback("6", "BATCH_COUNT_6"),
-      Markup.button.callback("7", "BATCH_COUNT_7"),
-      Markup.button.callback("8", "BATCH_COUNT_8"),
-      Markup.button.callback("9", "BATCH_COUNT_9"),
-      Markup.button.callback("10", "BATCH_COUNT_10")
-    ],
-    [Markup.button.callback("\u274C Cancel document", "TYPE_CANCEL")]
+    [Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]
   ]);
 }
 
 function typeInlineKeyboard(allowRecheck, allowResale, resaleVerified) {
   const rows = [];
-  const publicDiscountExclusive = isPublicDiscountExclusiveMode();
 
-  if (!publicDiscountExclusive) {
-    if (allowRecheck) {
-      rows.push([
-        Markup.button.callback(
-          `\u{1F501} CLICK TO RECHECK (${RECHECK_PRICE_KES} KES)`,
-          "TYPE_RECHECK"
-        )
-      ]);
-    } else {
-      rows.push([
-        Markup.button.callback(
-          `\u2705 CLICK TO CHECK (${CHECK_PRICE_KES} KES)`,
-          "TYPE_CHECK"
-        )
-      ]);
-    }
+  if (allowRecheck) {
+    rows.push([Markup.button.callback(`\u{1F501} CLICK TO RECHECK (${RECHECK_PRICE_KES} KES)`, "TYPE_RECHECK")]);
+  } else {
+    rows.push([Markup.button.callback(`\u2705 CLICK TO CHECK (${CHECK_PRICE_KES} KES)`, "TYPE_CHECK")]);
   }
 
   if (SIMILARITY_ONLY_ENABLED) {
-    rows.push([
-      Markup.button.callback(
-        `\u{1F4CA} SIMILARITY REPORT ONLY (${SIMILARITY_ONLY_PRICE_KES} KES)`,
-        "TYPE_SIMILARITY"
-      )
-    ]);
+    rows.push([Markup.button.callback(`\u{1F4CA} SIMILARITY REPORT ONLY (${SIMILARITY_ONLY_PRICE_KES} KES)`, "TYPE_SIMILARITY")]);
   }
 
-  if (allowResale) {
-    rows.push([
-      Markup.button.callback(
-        resaleButtonLabel(resaleVerified),
-        "TYPE_RESALE"
-      )
-    ]);
-  }
+  if (allowResale) rows.push([Markup.button.callback(resaleButtonLabel(resaleVerified), "TYPE_RESALE")]);
 
-  rows.push([
-    Markup.button.callback(
-      "\u274C Cancel document",
-      "TYPE_CANCEL"
-    )
-  ]);
-
+  rows.push([Markup.button.callback("\u274C Cancel document", "TYPE_CANCEL")]);
   return Markup.inlineKeyboard(rows);
 }
 
 function uploadContinueKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("âœ… Done Uploading", "DONE_UPLOADING")],
-    [Markup.button.callback("âŒ Cancel document", "TYPE_CANCEL")]
+    [Markup.button.callback("✅ Done Uploading", "DONE_UPLOADING")],
+    [Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]
   ]);
 }
 
@@ -2361,48 +1638,27 @@ function adminActionKeyboard(userId, variant) {
   const rows = [];
 
   if (variant === "paymentProof") {
-    rows.push([
-      Markup.button.callback("ðŸ’¬ Reply", `ADMIN_REPLY_${userId}`),
-      Markup.button.callback("âœ… Confirm", `ADMIN_PAID_${userId}`)
-    ]);
-
-    rows.push([Markup.button.callback("ðŸ›‘ Cancel Pay", `ADMIN_CANCEL_PAYMENT_${userId}`)]);
-
-    rows.push([Markup.button.callback("ðŸ“¦ Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
   } else if (variant === "document") {
-    rows.push([
-      Markup.button.callback("ðŸ“¦ Filebatch", `ADMIN_FILEBATCH_${userId}`),
-      Markup.button.callback("ðŸ’¬ Reply", `ADMIN_REPLY_${userId}`),
-      Markup.button.callback("âœ… Confirm", `ADMIN_PAID_${userId}`)
-    ]);
-
-    rows.push([Markup.button.callback("ðŸ›‘ Cancel Pay", `ADMIN_CANCEL_PAYMENT_${userId}`)]);
-
-    rows.push([
-      Markup.button.callback("â„¹ï¸ AI Unavail", `ADMIN_AI_NOTE_${userId}`),
-      Markup.button.callback("ðŸ§¾ Till", `ADMIN_TILL_NOTICE_${userId}`),
-      Markup.button.callback("â­ AI Star", `ADMIN_AI_STAR_NOTE_${userId}`)
-    ]);
-
-    rows.push([
-      Markup.button.callback(
-        "ðŸš« REMOVE LOGO/NAME",
-        `ADMIN_CLEAN_COPY_NOTE_${userId}`
-      )
-    ]);
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
+    rows.push([Markup.button.callback("ℹ️ AI Unavailable Note", `ADMIN_AI_NOTE_${userId}`)]);
   } else if (variant === "delivery") {
-    rows.push([Markup.button.callback("ðŸ“¦ Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
-    rows.push([Markup.button.callback("ðŸ’¬ Reply", `ADMIN_REPLY_${userId}`)]);
-    rows.push([Markup.button.callback("âœ… Confirm", `ADMIN_PAID_${userId}`)]);
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
   } else if (variant === "paid") {
-    rows.push([Markup.button.callback("ðŸ“¦ Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
-    rows.push([Markup.button.callback("ðŸ’¬ Reply", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
   } else if (variant === "replyOnly") {
-    rows.push([Markup.button.callback("ðŸ’¬ Reply", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
   } else {
-    rows.push([Markup.button.callback("ðŸ“¦ Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
-    rows.push([Markup.button.callback("ðŸ’¬ Reply", `ADMIN_REPLY_${userId}`)]);
-    rows.push([Markup.button.callback("âœ… Confirm", `ADMIN_PAID_${userId}`)]);
+    rows.push([Markup.button.callback("📦 Start filebatch", `ADMIN_FILEBATCH_${userId}`)]);
+    rows.push([Markup.button.callback("💬 Reply to user", `ADMIN_REPLY_${userId}`)]);
+    rows.push([Markup.button.callback("✅ Confirm payment", `ADMIN_PAID_${userId}`)]);
   }
 
   return Markup.inlineKeyboard(rows);
@@ -2501,10 +1757,6 @@ function isDiscountPublicActive() {
   return isTimeInWindowUTC(currentEat, DISCOUNT_START_EAT, DISCOUNT_END_EAT);
 }
 
-function isPublicDiscountExclusiveMode() {
-  return RESALE_ENABLED && isDiscountPublicActive();
-}
-
 function discountPublicModeText() {
   const currentEat = moment().utcOffset(180).format("HH:mm");
   const hasWindow = Boolean(DISCOUNT_START_EAT && DISCOUNT_END_EAT);
@@ -2586,14 +1838,14 @@ function calculateSubmissionAmount(sub) {
 
 function formatBatchSummary(sub) {
   const counts = getSubmissionCounts(sub);
-  const lines = [`â€¢ Check: ${counts.checks}`, `â€¢ Recheck: ${counts.rechecks}`];
+  const lines = [`• Check: ${counts.checks}`, `• Recheck: ${counts.rechecks}`];
 
   if (SIMILARITY_ONLY_ENABLED || counts.similarities > 0) {
-    lines.push(`â€¢ Similarity Only: ${counts.similarities}`);
+    lines.push(`• Similarity Only: ${counts.similarities}`);
   }
 
-  if (RESALE_ENABLED || counts.resales > 0) lines.push(`â€¢ ${RESALE_LABEL_TITLE}: ${counts.resales}`);
-  lines.push(`â€¢ Files: ${counts.total}`);
+  if (RESALE_ENABLED || counts.resales > 0) lines.push(`• ${RESALE_LABEL_TITLE}: ${counts.resales}`);
+  lines.push(`• Files: ${counts.total}`);
 
   return lines.join("\n");
 }
@@ -2627,7 +1879,7 @@ async function notifyUserCancelledToAdmin(user, label) {
   if (user.id === ADMIN_ID) return;
 
   await sendAdminMessage(
-    `âŒ ${label || "User cancelled submission"}\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+    `❌ ${label || "User cancelled submission"}\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
       user.username || "N/A"
     )}${adminQuickCommands(user.id)}`,
     { adminButtons: "replyOnly" }
@@ -2651,7 +1903,7 @@ async function handleCancelRequest(ctx, sourceLabel) {
     await notifyUserCancelledToAdmin(user, label);
     resetSubmission(user.id);
 
-    await ctx.reply("âŒ Cancelled. You can start again.", {
+    await ctx.reply("❌ Cancelled. You can start again.", {
       reply_markup: mainKeyboard()
     });
     return;
@@ -2683,7 +1935,7 @@ async function handleCancelRequest(ctx, sourceLabel) {
   const updatedJob = markPaidJobCancellationRequested(job.jobId);
 
   await sendAdminMessage(
-    `âš ï¸ Paid cancellation request\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+    `⚠️ Paid cancellation request\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
       user.username || "N/A"
     )}\nAmount: ${safeText(updatedJob?.amount || "N/A")} KES\nBatch: ${safeText(
       updatedJob?.batchId || "N/A"
@@ -2691,7 +1943,7 @@ async function handleCancelRequest(ctx, sourceLabel) {
     { adminButtons: "delivery" }
   );
 
-  await ctx.reply("âœ… Cancellation request sent to admin.", {
+  await ctx.reply("✅ Cancellation request sent to admin.", {
     reply_markup: mainKeyboard()
   });
 }
@@ -2759,13 +2011,15 @@ function buildAdminDocumentCaption({ userId, name, usernameText, file, fileNumbe
   const total = Number(expectedFiles || 0) || "?";
   const fileName = safeText(file?.file_name || file?.fileName || "N/A");
   const service = adminReportTypeLabel(file?.type);
+  const instruction = adminReportInstruction(file?.type);
   const price = file?.price ? String(file.price) + " KES" : "Not selected yet";
 
   const lines = [
-    "ðŸ“¨ Document received",
+    "📨 Document received",
     "",
     "File: " + fileNo + "/" + total,
     "Service: " + service,
+    instruction,
     "Price: " + price,
     "Filename: " + fileName
   ];
@@ -2815,7 +2069,7 @@ async function sendSelectedDocumentToAdmin(user, sub, file, fileNumber) {
     file.adminMessageId = copied?.message_id || null;
   } catch (err) {
     await sendAdminMessage(
-      "âš ï¸ Document selected but copy failed. Details below.\n\n" + caption,
+      "⚠️ Document selected but copy failed. Details below.\n\n" + caption,
       { adminButtons: "document" }
     );
 
@@ -2829,18 +2083,32 @@ async function sendSelectedDocumentToAdmin(user, sub, file, fileNumber) {
   }
 }
 
-async function showUploadProcedure(ctx) {
-  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) {
-    return notifyInactivePeriod(ctx);
+async function beginSubmissionFlow(ctx) {
+  if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+
+  if (ctx.from.id === ADMIN_ID) {
+    return replyMarkdownSafe(ctx, MESSAGES.sendDocHelp, { reply_markup: mainKeyboard() });
   }
 
-  return ctx.reply(UPLOAD_PROCEDURE_MESSAGE, {
-    reply_markup: mainKeyboard()
-  });
+  const userId = ctx.from.id;
+  const existing = submissions[userId];
+
+  if (existing && existing.stage === STAGE_WAIT_BATCH_SIZE) {
+    await ctx.reply(
+      `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.\n\n${CLEAN_COPY_WARNING}`,
+      { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
+    );
+    return;
+  }
+
+  submissions[userId] = createEmptySubmission();
+
+  await ctx.reply(
+    `📦 How many files do you want to upload?\nChoose from *1* to *${MAX_BATCH_FILES}*.\n\n${CLEAN_COPY_WARNING}`,
+    { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
+  );
 }
-async function beginSubmissionFlow(ctx) {
-  return showUploadProcedure(ctx);
-}
+
 async function showPaymentHelp(ctx) {
   if (ctx.from.id !== ADMIN_ID && isBotInactivePeriod()) return notifyInactivePeriod(ctx);
 
@@ -2857,29 +2125,18 @@ async function askForFileType(ctx, sub) {
     ? `\n\n\u{1F4CA} You can also choose *SIMILARITY REPORT ONLY* if you do not need AI report.`
     : "";
 
-  const recheckNote = isPublicDiscountExclusiveMode()
-    ? [
-        SIMILARITY_ONLY_ENABLED
-          ? `ðŸ“Š Choose *SIMILARITY REPORT ONLY* if you only need the similarity report.`
-          : "",
-        RESALE_ENABLED
-          ? `ðŸ·ï¸ Public *${RESALE_LABEL_TITLE}* is available now. Choose it for the discounted full report.`
-          : ""
-      ]
-        .filter(Boolean)
-        .join("\n\n")
-    : file.recheckEligible
-      ? `âœ… This file qualifies for *RECHECK*.\n\nTap *CLICK TO RECHECK* to continue.${similarityHint}`
-      : `â„¹ï¸ Recheck not available for this file.\n\nTap *CLICK TO CHECK* to continue.${similarityHint}`;
+  const recheckNote = file.recheckEligible
+    ? `✅ This file qualifies for *RECHECK*.\n\nTap *CLICK TO RECHECK* to continue.${similarityHint}`
+    : `ℹ️ Recheck not available for this file.\n\nTap *CLICK TO CHECK* to continue.${similarityHint}`;
 
-  const resaleNote = isPublicDiscountExclusiveMode()
-    ? discountTimeLineForMessage()
+  const resaleNote = RESALE_ENABLED && isDiscountPublicActive()
+    ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* is active.${discountTimeLineForMessage()}`
     : RESALE_ENABLED
-      ? `\n\nðŸ·ï¸ *${RESALE_LABEL_TITLE}* Requires a Code. Wait For Public Access.${discountTimeLineForMessage()}`
+      ? `\n\n🏷️ *${RESALE_LABEL_TITLE}* Requires a Code. Wait For Public Access.${discountTimeLineForMessage()}`
       : "";
 
   await ctx.reply(
-    `ðŸ“„ File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\n\n${recheckNote}${resaleNote}`,
+    `📄 File Received: *${safeText(file.file_name)}*\n\nFile *${fileNumber}* of *${sub.expectedFiles}*.\n\n${recheckNote}${resaleNote}`,
     {
       parse_mode: "Markdown",
       reply_markup: typeInlineKeyboard(
@@ -2973,7 +2230,7 @@ async function finalizeFileTypeSelection(ctx, sub, kind) {
 
   sub.stage = STAGE_WAIT_UPLOADS;
   await ctx.reply(
-    `âœ… ${typeDisplayName(kind)} saved for file ${justCompletedNumber}.\n\nSend file ${sub.files.length + 1} of ${sub.expectedFiles}.`,
+    `✅ ${typeDisplayName(kind)} saved for file ${justCompletedNumber}.\n\nSend file ${sub.files.length + 1} of ${sub.expectedFiles}.`,
     {
       parse_mode: "Markdown",
       reply_markup: uploadContinueKeyboard().reply_markup
@@ -2997,17 +2254,17 @@ async function handleFileTypeSelected(ctx, kind) {
   if (kind === "RECHECK" && !file.recheckEligible) {
     kind = "CHECK";
     await ctx.answerCbQuery("Treated as CHECK.");
-    await ctx.reply("âš ï¸ Recheck not available. Treated as *CHECK*.", { parse_mode: "Markdown" });
+    await ctx.reply("⚠️ Recheck not available. Treated as *CHECK*.", { parse_mode: "Markdown" });
   } else if (kind === "RESALE") {
     if (!RESALE_ENABLED) {
       await ctx.answerCbQuery(`${RESALE_LABEL_TITLE} is not enabled.`);
-      return ctx.reply(`âš ï¸ ${RESALE_LABEL_TITLE} is not enabled right now.`);
+      return ctx.reply(`⚠️ ${RESALE_LABEL_TITLE} is not enabled right now.`);
     }
 
     if (isDiscountPublicActive()) {
       sub.resellerVerified = true;
       await ctx.answerCbQuery(`${RESALE_LABEL_TITLE} Applied`);
-      await ctx.reply(`âœ… ${RESALE_LABEL_TITLE} Applied`);
+      await ctx.reply(`✅ ${RESALE_LABEL_TITLE} Applied`);
       await finalizeFileTypeSelection(ctx, sub, "RESALE");
       return;
     }
@@ -3015,7 +2272,7 @@ async function handleFileTypeSelected(ctx, kind) {
     if (!sub.resellerVerified) {
       sub.stage = STAGE_WAIT_RESELLER_CODE;
       await ctx.answerCbQuery("Code required");
-      return ctx.reply(`ðŸ” Send ${RESALE_LABEL_TITLE} Code.`, {
+      return ctx.reply(`🔐 Send ${RESALE_LABEL_TITLE} Code.`, {
         parse_mode: "Markdown",
         reply_markup: mainKeyboard()
       });
@@ -3308,12 +2565,6 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   if (!ref) return false;
   if (ref.status === "COMPLETE") return false;
 
-  const currentStatus = String(ref.status || "").toUpperCase();
-  if (["ADMIN_CANCELLED", "CANCELLED", "FAILED", "EXPIRED"].includes(currentStatus)) {
-    stopStatusPolling(apiRef);
-    return false;
-  }
-
   if (ref.pendingProof?.code && !isProofCodeUsed(ref.pendingProof.code)) {
     rememberUsedProofCode(ref.pendingProof.code, {
       userId: ref.userId,
@@ -3380,11 +2631,11 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
       { parse_mode: "Markdown" }
     );
   } catch (e) {
-    await sendAdminMessage(`âŒ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`);
+    await sendAdminMessage(`❌ Could not message user ${userId}. Error: ${safeText(e?.message || e)}`);
   }
 
   await sendAdminMessage(
-    `âœ… PAID\nUser: ${userId}\nName: ${safeText(completedRef.name || "N/A")}\nUsername: @${safeText(
+    `✅ PAID\nUser: ${userId}\nName: ${safeText(completedRef.name || "N/A")}\nUsername: @${safeText(
       completedRef.username || "N/A"
     )}\nPhone: ${formatPhone254ForAdmin(completedRef.phone || sub?.phone)}\nAmount: ${safeText(
       completedRef.amount
@@ -3425,13 +2676,13 @@ async function handlePaymentAttemptFailed({ apiRef, invoiceId, state, source, re
   try {
     await bot.telegram.sendMessage(
       userId,
-      `âŒ Payment was not completed.\n\nReason: ${safeText(reason || state || "Payment failed")}\n\nYou can try again or pay via:\n${tillLine()}`,
+      `❌ Payment was not completed.\n\nReason: ${safeText(reason || state || "Payment failed")}\n\nYou can try again or pay via:\n${tillLine()}`,
       { parse_mode: "Markdown", reply_markup: paymentWaitKeyboard().reply_markup }
     );
   } catch {}
 
   await sendAdminMessage(
-    `âš ï¸ PAYMENT ATTEMPT FAILED\nUser ID: ${safeText(userId)}\nName: ${safeText(
+    `⚠️ PAYMENT ATTEMPT FAILED\nUser ID: ${safeText(userId)}\nName: ${safeText(
       ref.name || "N/A"
     )}\nUsername: @${safeText(ref.username || "N/A")}\nPhone: ${formatPhone254ForAdmin(
       ref.phone
@@ -3529,7 +2780,7 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
     if (attempts > STATUS_POLL_MAX_ATTEMPTS) {
       stopStatusPolling(apiRef);
       await sendAdminMessage(
-        `âš ï¸ Payment watcher stopped.\nUser ID: ${userId}\napiref: ${safeText(apiRef)}\ninvoiceid: ${safeText(invoiceId || "N/A")}`
+        `⚠️ Payment watcher stopped.\nUser ID: ${userId}\napiref: ${safeText(apiRef)}\ninvoiceid: ${safeText(invoiceId || "N/A")}`
       );
       return;
     }
@@ -3586,7 +2837,7 @@ function startStatusPolling({ userId, apiRef, invoiceId }) {
 
       if (attempts === 1 || attempts % 6 === 0) {
         await sendAdminMessage(
-          `âš ï¸ IntaSend status poll failed\nUser ID: ${userId}\napiref: ${safeText(
+          `⚠️ IntaSend status poll failed\nUser ID: ${userId}\napiref: ${safeText(
             apiRef
           )}\nAttempt: ${attempts}\nError: ${safeText(err?.message || err)}`
         );
@@ -3609,7 +2860,7 @@ function schedulePaymentTimeoutReminder(userId, apiRef) {
     try {
       await bot.telegram.sendMessage(
         userId,
-        `â³ Payment not confirmed yet.\n\nIf you already paid and confirmation takes more than *1 minute*, send the M-Pesa confirmation message or payment screenshot here.\n\nManual payment:\n*Buy Goods Till:* ${TILL_NUMBER}`,
+        `⏳ Payment not confirmed yet.\n\nYou may pay via:\n${tillLine()}\n\nThen send the M-Pesa message or screenshot here.`,
         { parse_mode: "Markdown", reply_markup: paymentWaitKeyboard().reply_markup }
       );
     } catch {}
@@ -3641,10 +2892,10 @@ async function handleMpesaProofText(ctx, sub, text) {
     });
   }
 
-  const warningsText = parsed.warnings.length ? parsed.warnings.map((w) => `â€¢ ${w}`).join("\n") : "None";
+  const warningsText = parsed.warnings.length ? parsed.warnings.map((w) => `• ${w}`).join("\n") : "None";
 
   await sendAdminMessage(
-    `ðŸ§¾ M-Pesa message received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+    `🧾 M-Pesa message received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
       user.username || "N/A"
     )}\n\nExpected amount: ${expectedAmount} KES\n\nDetected:\nAmount: ${proofValue(
       parsed.amount ? `${parsed.amount} KES` : ""
@@ -3659,7 +2910,7 @@ async function handleMpesaProofText(ctx, sub, text) {
   );
 
   try {
-    await ctx.reply("âœ… Payment proof received. Admin will verify.", {
+    await ctx.reply("✅ Payment proof received. Admin will verify.", {
       reply_markup: paymentWaitKeyboard().reply_markup
     });
   } catch {}
@@ -3672,7 +2923,7 @@ async function handlePaymentScreenshotProof(ctx, sub) {
   const largest = photos[photos.length - 1];
 
   if (!largest) {
-    await ctx.reply("âŒ No screenshot found.");
+    await ctx.reply("❌ No screenshot found.");
     return;
   }
 
@@ -3717,10 +2968,10 @@ async function handlePaymentScreenshotProof(ctx, sub) {
       });
     }
 
-    const warningsText = parsed.warnings.length ? parsed.warnings.map((w) => `â€¢ ${w}`).join("\n") : "None";
+    const warningsText = parsed.warnings.length ? parsed.warnings.map((w) => `• ${w}`).join("\n") : "None";
 
     await sendAdminMessage(
-      `ðŸ–¼ï¸ Payment screenshot received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+      `🖼️ Payment screenshot received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
         user.username || "N/A"
       )}\n\nExpected amount: ${expectedAmount} KES\nOCR status: ${ocrStatus}${ocrError ? `\nOCR note: ${safeText(ocrError)}` : ""}\n\nDetected:\nAmount: ${proofValue(
         parsed.amount ? `${parsed.amount} KES` : ""
@@ -3738,12 +2989,12 @@ async function handlePaymentScreenshotProof(ctx, sub) {
       await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
     } catch {}
 
-    await ctx.reply("âœ… Payment proof received. Admin will verify.", {
+    await ctx.reply("✅ Payment proof received. Admin will verify.", {
       reply_markup: paymentWaitKeyboard().reply_markup
     });
   } catch (err) {
     await sendAdminMessage(
-      `ðŸ–¼ï¸ Payment screenshot received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+      `🖼️ Payment screenshot received\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
         user.username || "N/A"
       )}\n\nExpected amount: ${expectedAmount} KES\nOCR failed: ${safeText(err?.message || err)}`,
       { adminButtons: "paymentProof" }
@@ -3753,7 +3004,7 @@ async function handlePaymentScreenshotProof(ctx, sub) {
       await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id);
     } catch {}
 
-    await ctx.reply("âœ… Payment proof received. Admin will verify.", {
+    await ctx.reply("✅ Payment proof received. Admin will verify.", {
       reply_markup: paymentWaitKeyboard().reply_markup
     });
   } finally {
@@ -3995,7 +3246,7 @@ function buildTzOtherPaymentMessage({ amount, currency, apiRef }) {
     "Name: *" + safeText(TZ_OTHER_RECIPIENT_NAME) + "*",
     "",
     "Wait up to *" + TZ_OTHER_PROOF_WAIT_MINUTES + " minutes* for admin confirmation.",
-    "If confirmation takes more than 1 minute, send the payment message or screenshot here.",
+    "If not confirmed, send the payment message or screenshot here.",
     "",
     "Other countries: send to the Safaricom M-Pesa number using Remitly, WorldRemit, Wise, Taptap Send, or similar."
   ];
@@ -4175,7 +3426,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
 
   if (!sub?.phone || !sub?.amount || !sub?.batchId) {
     sub.stage = STAGE_WAIT_PHONE;
-    await ctx.reply("âš ï¸ Missing payment details. Send phone number again.", {
+    await ctx.reply("⚠️ Missing payment details. Send phone number again.", {
       reply_markup: mainKeyboard()
     });
     return;
@@ -4190,7 +3441,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
   if (mode === "resend") {
     sub.resendCount = (sub.resendCount || 0) + 1;
     if (sub.resendCount > STK_MAX_RESENDS) {
-      await ctx.reply(`âš ï¸ Resend limit reached.\n\nPay via:\n${tillLine()}`, {
+      await ctx.reply(`⚠️ Resend limit reached.\n\nPay via:\n${tillLine()}`, {
         parse_mode: "Markdown"
       });
       return;
@@ -4272,13 +3523,13 @@ async function attemptStkPush(ctx, sub, { mode }) {
       failurePayload: err?.payload || null
     });
 
-    await ctx.reply(`âŒ STK Push failed.\n\nTry again or pay via:\n${tillLine()}`, {
+    await ctx.reply(`❌ STK Push failed.\n\nTry again or pay via:\n${tillLine()}`, {
       parse_mode: "Markdown",
       reply_markup: paymentWaitKeyboard().reply_markup
     });
 
     await sendAdminMessage(
-      `âŒ STK Push error\nUser ID: ${userId}\nName: ${getUserFullName(ctx.from)}\nUsername: @${safeText(
+      `❌ STK Push error\nUser ID: ${userId}\nName: ${getUserFullName(ctx.from)}\nUsername: @${safeText(
         ctx.from.username || "N/A"
       )}\nPhone: ${formatPhone254ForAdmin(sub.phone)}\nError: ${safeText(err?.message || err)}`,
       { adminButtons: "replyOnly" }
@@ -4293,15 +3544,12 @@ bot.start(async (ctx) => {
   const user = ctx.from;
 
   if (user.id === ADMIN_ID) {
-    await ctx.reply("ðŸ‘‹ Admin mode is ready. Use the dashboard below or /adminhelp anytime.", {
-      reply_markup: { remove_keyboard: true }
-    });
-    await showAdminDashboard(ctx);
+    await replyMarkdownSafe(ctx, "👋 Admin mode is ready.", { reply_markup: mainKeyboard() });
     return;
   }
 
   await sendAdminMessage(
-    `ðŸ”¥ New user started bot\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+    `🔥 New user started bot\nName: ${getUserFullName(user)}\nUsername: @${safeText(
       user.username || "N/A"
     )}\nUser ID: ${user.id}${adminQuickCommands(user.id)}`,
     { adminButtons: "replyOnly" }
@@ -4311,7 +3559,7 @@ bot.start(async (ctx) => {
 
   await replyMarkdownSafe(
     ctx,
-    MESSAGES.welcome(CHECK_PRICE_KES, RECHECK_PRICE_KES, RESALE_PRICE_KES),
+    `${MESSAGES.welcome(CHECK_PRICE_KES, RECHECK_PRICE_KES, RESALE_PRICE_KES)}\nTap the button below to begin.`,
     { reply_markup: startInlineKeyboard().reply_markup }
   );
 });
@@ -4319,16 +3567,6 @@ bot.start(async (ctx) => {
 // =====================
 // ADMIN COMMANDS
 // =====================
-bot.command("adminhelp", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return;
-  await showAdminDashboard(ctx);
-});
-
-bot.command("admin", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return;
-  await showAdminDashboard(ctx);
-});
-
 bot.command("discountmode", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -4382,19 +3620,19 @@ bot.command("reply", async (ctx) => {
   try {
     await bot.telegram.sendMessage(
       userId,
-      `â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-ðŸ’¬ *JK Turnitin Support*
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+      `━━━━━━━━━━━━━━━
+💬 *JK Turnitin Support*
+━━━━━━━━━━━━━━━
 
 ${replyText}
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`,
+━━━━━━━━━━━━━━━`,
       { parse_mode: "Markdown" }
     );
 
-    await ctx.reply(`âœ… Sent to ${userId}`);
+    await ctx.reply(`✅ Sent to ${userId}`);
   } catch (err) {
-    await ctx.reply("âŒ Failed: " + (err?.message || err));
+    await ctx.reply("❌ Failed: " + (err?.message || err));
   }
 });
 
@@ -4437,7 +3675,7 @@ bot.command("donebatch", async (ctx) => {
     } catch {}
   }
 
-  await ctx.reply(`âœ… Batch closed. Sent ${sentCount} item(s) to ${userId}.`);
+  await ctx.reply(`✅ Batch closed. Sent ${sentCount} item(s) to ${userId}.`);
 });
 
 bot.command("cancelbatch", async (ctx) => {
@@ -4447,7 +3685,7 @@ bot.command("cancelbatch", async (ctx) => {
   if (!target) return ctx.reply("No active batch session.");
 
   delete pendingFileTargets[ADMIN_ID];
-  await ctx.reply(`âœ… Batch session cancelled for user ${target.userId}.`);
+  await ctx.reply(`✅ Batch session cancelled for user ${target.userId}.`);
 });
 
 bot.command("cancelreply", async (ctx) => {
@@ -4457,12 +3695,12 @@ bot.command("cancelreply", async (ctx) => {
   if (!replyTarget) return ctx.reply("No active reply session.");
 
   delete pendingAdminReplies[ADMIN_ID];
-  await ctx.reply(`âœ… Reply session cancelled for user ${replyTarget.userId}.`);
+  await ctx.reply(`✅ Reply session cancelled for user ${replyTarget.userId}.`);
 });
 
 function findLatestPendingPaymentRefByUser(userId) {
   const entries = Object.entries(paymentRefs)
-    .filter(([apiRef, value]) => String(value?.userId) === String(userId) && !isPaymentRefClosedForAdmin(value))
+    .filter(([apiRef, value]) => String(value?.userId) === String(userId) && value?.status !== "COMPLETE")
     .sort((a, b) => Number(b[1]?.createdAt || 0) - Number(a[1]?.createdAt || 0));
 
   return entries[0] || null;
@@ -4470,7 +3708,7 @@ function findLatestPendingPaymentRefByUser(userId) {
 
 async function manuallyConfirmLatestPaymentForUser(userId, source) {
   const found = findLatestPendingPaymentRefByUser(userId);
-  if (!found) return { ok: false, message: `âŒ No pending payment found for user ${userId}` };
+  if (!found) return { ok: false, message: `❌ No pending payment found for user ${userId}` };
 
   const [apiRef, ref] = found;
 
@@ -4484,82 +3722,7 @@ async function manuallyConfirmLatestPaymentForUser(userId, source) {
   return {
     ok: true,
     apiRef,
-    message: `âœ… Manually marked latest payment complete for user ${userId}`
-  };
-}
-
-function isPaymentRefClosedForAdmin(ref) {
-  const status = String(ref?.status || "").toUpperCase();
-  return ["COMPLETE", "ADMIN_CANCELLED", "CANCELLED", "FAILED", "EXPIRED"].includes(status);
-}
-
-function findOpenPaymentRefsByUser(userId) {
-  return Object.entries(paymentRefs)
-    .filter(([apiRef, value]) => String(value?.userId) === String(userId) && !isPaymentRefClosedForAdmin(value))
-    .sort((a, b) => Number(b[1]?.createdAt || 0) - Number(a[1]?.createdAt || 0));
-}
-
-async function cancelPaymentProcessForUser(userId, source) {
-  const sub = submissions[userId];
-
-  if (sub?.paid || sub?.stage === STAGE_PAID) {
-    return {
-      ok: false,
-      message: `âš ï¸ User ${userId} is already marked paid. Do not cancel payment from here.`
-    };
-  }
-
-  const refsByApi = new Map(findOpenPaymentRefsByUser(userId));
-
-  if (Array.isArray(sub?.paymentAttempts)) {
-    for (const apiRef of sub.paymentAttempts) {
-      const ref = getPaymentRef(apiRef);
-      if (ref && String(ref.userId) === String(userId) && !isPaymentRefClosedForAdmin(ref)) {
-        refsByApi.set(apiRef, ref);
-      }
-      stopStatusPolling(apiRef);
-    }
-  }
-
-  if (sub?.api_ref) stopStatusPolling(sub.api_ref);
-
-  let cancelledRefs = 0;
-
-  for (const [apiRef] of refsByApi.entries()) {
-    stopStatusPolling(apiRef);
-    updatePaymentRef(apiRef, {
-      status: "ADMIN_CANCELLED",
-      cancelledAt: Date.now(),
-      lastState: "ADMIN_CANCELLED",
-      cancelSource: source || "admin-button"
-    });
-    cancelledRefs += 1;
-  }
-
-  if (!sub && cancelledRefs === 0) {
-    return {
-      ok: false,
-      message: `âŒ No active unpaid payment process found for user ${userId}.`
-    };
-  }
-
-  resetSubmission(userId);
-
-  try {
-    await bot.telegram.sendMessage(
-      userId,
-      "âŒ Your payment attempt for the uploaded document has been cancelled by admin.\n\nYou can start again by sending your first document directly.",
-      { parse_mode: "Markdown", reply_markup: mainKeyboard() }
-    );
-  } catch (err) {
-    await sendAdminMessage(
-      `âš ï¸ Payment process cancelled for user ${userId}, but user message failed: ${safeText(err?.message || err)}`
-    );
-  }
-
-  return {
-    ok: true,
-    message: `âœ… Payment process cancelled for user ${userId}.\nStopped ${cancelledRefs} pending payment reference(s).`
+    message: `✅ Manually marked latest payment complete for user ${userId}`
   };
 }
 
@@ -4572,7 +3735,7 @@ bot.command("paidref", async (ctx) => {
   if (!apiRef) return ctx.reply("Usage: /paidref <apiref>");
 
   const ref = getPaymentRef(apiRef);
-  if (!ref) return ctx.reply(`âŒ No payment found for apiref: ${apiRef}`);
+  if (!ref) return ctx.reply(`❌ No payment found for apiref: ${apiRef}`);
 
   await markPaymentComplete({
     apiRef,
@@ -4581,7 +3744,7 @@ bot.command("paidref", async (ctx) => {
     source: "admin-manual"
   });
 
-  await ctx.reply(`âœ… Manually marked payment complete for ${apiRef}`);
+  await ctx.reply(`✅ Manually marked payment complete for ${apiRef}`);
 });
 
 bot.command("paiduser", async (ctx) => {
@@ -4596,361 +3759,9 @@ bot.command("paiduser", async (ctx) => {
   await ctx.reply(result.message);
 });
 
-bot.command("broadcaststats", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return;
-
-  const stats = getBotUserStats();
-  const lastAt = Number(broadcastMeta?.lastBroadcastAt || 0);
-  const lastText = lastAt
-    ? moment(lastAt).utcOffset(180).format("YYYY-MM-DD HH:mm:ss [EAT]")
-    : "Never";
-
-  await ctx.reply(
-    "ðŸ“Š Broadcast users\n\n" +
-      `Registered: ${stats.registered}\n` +
-      `Active: ${stats.active}\n` +
-      `Inactive/blocked: ${stats.inactive}\n` +
-      `Broadcast running: ${broadcastInProgress ? "YES" : "NO"}\n` +
-      `Last broadcast: ${lastText}\n` +
-      `Last delivered: ${Number(broadcastMeta?.lastBroadcastDelivered || 0)}\n` +
-      `Last failed: ${Number(broadcastMeta?.lastBroadcastFailed || 0)}`
-  );
-});
-
-bot.command("broadcast", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return;
-
-  if (broadcastInProgress) {
-    return ctx.reply("âš ï¸ A broadcast is already running. Use /broadcaststats to check it.");
-  }
-
-  cleanupPendingBroadcasts();
-
-  const raw = String(ctx.message?.text || "");
-  const message = raw
-    .replace(/^\/broadcast(?:@[A-Za-z0-9_]+)?(?:\s+|$)/i, "")
-    .trim();
-
-  if (!message) {
-    return ctx.reply("Usage: /broadcast <message>");
-  }
-
-  if (message.length > 3200) {
-    return ctx.reply("âŒ Broadcast message is too long. Keep it at 3,200 characters or fewer.");
-  }
-
-  const recipientIds = getActiveBotUserIds();
-  if (recipientIds.length === 0) {
-    return ctx.reply("âŒ No active registered bot users are available for broadcast yet.");
-  }
-
-  const token = makeBroadcastToken();
-  pendingBroadcasts[token] = {
-    message,
-    recipientIds,
-    createdAt: Date.now()
-  };
-
-  await ctx.reply(
-    "ðŸ“¢ BROADCAST PREVIEW\n\n" +
-      message +
-      "\n\n" +
-      `Recipients: ${recipientIds.length} active user(s)\n` +
-      "This preview expires in 15 minutes.",
-    { reply_markup: broadcastPreviewKeyboard(token).reply_markup }
-  );
-});
-
-bot.command("discountbroadcast", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return;
-
-  if (!DISCOUNT_START_EAT || !DISCOUNT_END_EAT) {
-    return ctx.reply("âŒ No timed public discount window is configured.");
-  }
-
-  if (!isDiscountPublicActive()) {
-    return ctx.reply(
-      "â„¹ï¸ Public discount is currently closed.\n\n" +
-        `Period: ${formatHHMMTo12HourStrict(DISCOUNT_START_EAT)} - ${formatHHMMTo12HourStrict(DISCOUNT_END_EAT)} EAT\n` +
-        `Price: ${RESALE_PRICE_KES} KES`
-    );
-  }
-
-  try {
-    const result = await createDiscountBroadcastPreview(true);
-    if (result.ok) {
-      return ctx.reply("âœ… Fresh discount broadcast preview created.");
-    }
-    if (result.reason === "no-recipients") {
-      return ctx.reply("âŒ No active registered users are available for broadcast.");
-    }
-    return ctx.reply("âŒ Discount broadcast preview could not be created.");
-  } catch (err) {
-    return ctx.reply("âŒ Failed to create preview: " + String(err?.message || err));
-  }
-});
-
 // =====================
 // ADMIN QUICK ACTION BUTTONS
 // =====================
-bot.action("ADMIN_DASH_HOME", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery();
-  await showAdminDashboard(ctx, true);
-});
-
-bot.action("ADMIN_DASH_BROADCAST", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery();
-
-  const stats = getBotUserStats();
-  await showAdminScreen(
-    ctx,
-    [
-      "ðŸ“¢ CUSTOM BROADCAST",
-      "",
-      "Create a custom message with:",
-      "/broadcast <message>",
-      "",
-      "Active recipients: " + stats.active,
-      "",
-      "The bot will show a preview with SEND TO ALL and CANCEL before anything is delivered."
-    ].join("\n"),
-    adminBackKeyboard([
-      [Markup.button.callback("ðŸ“Š View Broadcast Stats", "ADMIN_DASH_STATS")]
-    ]),
-    true
-  );
-});
-
-bot.action("ADMIN_DASH_STATS", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery();
-  await showAdminScreen(ctx, adminBroadcastStatsText(), adminBackKeyboard(), true);
-});
-
-bot.action("ADMIN_DASH_DISCOUNT", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery();
-  await showAdminScreen(ctx, adminDiscountPanelText(), adminDiscountKeyboard(), true);
-});
-
-bot.action("ADMIN_DASH_DISCOUNT_PREVIEW", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-
-  if (!DISCOUNT_START_EAT || !DISCOUNT_END_EAT) {
-    return ctx.answerCbQuery("No timed discount window configured.", { show_alert: true });
-  }
-
-  if (!isDiscountPublicActive()) {
-    return ctx.answerCbQuery("Discount is currently closed.", { show_alert: true });
-  }
-
-  await ctx.answerCbQuery("Creating preview...");
-
-  try {
-    const result = await createDiscountBroadcastPreview(true);
-    if (result.ok) {
-      await ctx.reply("âœ… Fresh discount broadcast preview created. Choose SEND TO ALL or CANCEL on the preview.");
-      return;
-    }
-    if (result.reason === "no-recipients") {
-      await ctx.reply("âŒ No active registered users are available for broadcast.");
-      return;
-    }
-    await ctx.reply("âŒ Discount broadcast preview could not be created.");
-  } catch (err) {
-    await ctx.reply("âŒ Failed to create preview: " + String(err?.message || err));
-  }
-});
-
-bot.action("ADMIN_DASH_MODE", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery();
-  await showAdminScreen(ctx, adminModeText(), adminBackKeyboard(), true);
-});
-
-bot.action("ADMIN_DASH_SYNCNAME", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery("Syncing bot name...");
-  await syncBotDisplayName(true);
-
-  const inactive = isBotInactivePeriod();
-  await showAdminScreen(
-    ctx,
-    "âœ… Bot display name sync completed.\n\nCurrent mode: " + (inactive ? "OFFLINE" : "ONLINE"),
-    adminBackKeyboard(),
-    true
-  );
-});
-
-bot.action("ADMIN_DASH_SUPPORT", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery();
-  await showAdminScreen(
-    ctx,
-    [
-      "ðŸ’¬ USER SUPPORT",
-      "",
-      "/reply <userId> <message>",
-      "Send a direct support reply.",
-      "",
-      "/cancelreply",
-      "Cancel an active reply session.",
-      "",
-      "Tip: User notifications also include a Reply button when available."
-    ].join("\n"),
-    adminBackKeyboard(),
-    true
-  );
-});
-
-bot.action("ADMIN_DASH_DELIVERY", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery();
-  await showAdminScreen(
-    ctx,
-    [
-      "ðŸ“¦ FILE DELIVERY",
-      "",
-      "/filebatch <userId> [caption]",
-      "Open a delivery batch for a user.",
-      "",
-      "/donebatch",
-      "Finish the active batch and close delivery.",
-      "",
-      "/cancelbatch",
-      "Cancel the active delivery batch."
-    ].join("\n"),
-    adminBackKeyboard(),
-    true
-  );
-});
-
-bot.action("ADMIN_DASH_PAYMENTS", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery();
-  await showAdminScreen(
-    ctx,
-    [
-      "ðŸ’³ PAYMENT ADMIN",
-      "",
-      "/paiduser <userId>",
-      "Manually confirm the latest pending payment for a user.",
-      "",
-      "/paidref <apiRef>",
-      "Manually confirm a specific payment reference.",
-      "",
-      "Use manual confirmation only after you have verified the payment."
-    ].join("\n"),
-    adminBackKeyboard(),
-    true
-  );
-});
-
-bot.action("ADMIN_DASH_COMMANDS", async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  await ctx.answerCbQuery();
-  await showAdminScreen(ctx, adminAllCommandsText(), adminBackKeyboard(), true);
-});
-
-bot.action(/^BROADCAST_CANCEL_([A-Za-z0-9]+)$/, async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-
-  cleanupPendingBroadcasts();
-  const token = ctx.match[1];
-
-  if (!pendingBroadcasts[token]) {
-    await ctx.answerCbQuery("Broadcast preview expired");
-    return ctx.reply("âš ï¸ Broadcast preview is no longer available.");
-  }
-
-  delete pendingBroadcasts[token];
-  await ctx.answerCbQuery("Broadcast cancelled");
-
-  try {
-    await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
-  } catch {}
-
-  await ctx.reply("âœ… Broadcast cancelled. No messages were sent.");
-});
-
-bot.action(/^BROADCAST_SEND_([A-Za-z0-9]+)$/, async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-
-  cleanupPendingBroadcasts();
-  const token = ctx.match[1];
-  const pending = pendingBroadcasts[token];
-
-  if (!pending) {
-    await ctx.answerCbQuery("Broadcast preview expired");
-    return ctx.reply("âš ï¸ Broadcast preview is no longer available.");
-  }
-
-  if (pending.kind === "discount") {
-    const currentWindow = getActiveDiscountBroadcastWindow();
-
-    if (!currentWindow || currentWindow.key !== pending.discountWindow?.key) {
-      delete pendingBroadcasts[token];
-      await ctx.answerCbQuery("Discount period closed", { show_alert: true });
-
-      try {
-        await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
-      } catch {}
-
-      return ctx.reply("âŒ Discount broadcast not sent because that discount period is no longer active.");
-    }
-
-    if (Number(currentWindow.price) !== Number(pending.discountWindow?.price)) {
-      delete pendingBroadcasts[token];
-      await ctx.answerCbQuery("Discount price changed", { show_alert: true });
-
-      try {
-        await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
-      } catch {}
-
-      return ctx.reply("âš ï¸ Discount price changed. Use /discountbroadcast to create a fresh preview.");
-    }
-  }
-
-  if (broadcastInProgress) {
-    return ctx.answerCbQuery("A broadcast is already running.", { show_alert: true });
-  }
-
-  delete pendingBroadcasts[token];
-  broadcastInProgress = true;
-
-  await ctx.answerCbQuery("Broadcast started");
-
-  try {
-    await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
-  } catch {}
-
-  await ctx.reply(`ðŸ“¢ Broadcast started for ${pending.recipientIds.length} active user(s).`);
-
-  try {
-    const result = await runBroadcast(pending.message, pending.recipientIds);
-    const stats = getBotUserStats();
-
-    await ctx.reply(
-      "âœ… BROADCAST COMPLETE\n\n" +
-        `Recipients selected: ${result.recipients}\n` +
-        `Attempted: ${result.attempted}\n` +
-        `Delivered: ${result.delivered}\n` +
-        `Failed: ${result.failed}\n` +
-        `Skipped: ${result.skipped}\n` +
-        `Newly inactive: ${result.newlyInactive}\n\n` +
-        `Active users now: ${stats.active}\n` +
-        `Inactive/blocked now: ${stats.inactive}`
-    );
-  } catch (err) {
-    console.error("Broadcast failed:", err?.message || err);
-    await ctx.reply("âŒ Broadcast stopped unexpectedly: " + String(err?.message || err));
-  } finally {
-    broadcastInProgress = false;
-  }
-});
-
 bot.action(/^ADMIN_FILEBATCH_(\d+)$/, async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
 
@@ -4975,7 +3786,7 @@ bot.action(/^ADMIN_REPLY_(\d+)$/, async (ctx) => {
   pendingAdminReplies[ADMIN_ID] = { userId };
 
   await ctx.answerCbQuery("Reply mode opened");
-  await ctx.reply(`ðŸ’¬ Reply mode opened for user ${userId}.\nSend message or /cancelreply`);
+  await ctx.reply(`💬 Reply mode opened for user ${userId}.\nSend message or /cancelreply`);
 });
 
 bot.action(/^ADMIN_PAID_(\d+)$/, async (ctx) => {
@@ -4988,16 +3799,6 @@ bot.action(/^ADMIN_PAID_(\d+)$/, async (ctx) => {
   await ctx.reply(result.message);
 });
 
-bot.action(/^ADMIN_CANCEL_PAYMENT_(\d+)$/, async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-
-  const userId = ctx.match[1];
-
-  await ctx.answerCbQuery("Cancelling payment...");
-  const result = await cancelPaymentProcessForUser(userId, "admin-cancel-button");
-  await ctx.reply(result.message);
-});
-
 bot.action(/^ADMIN_AI_NOTE_(\d+)$/, async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
 
@@ -5006,100 +3807,18 @@ bot.action(/^ADMIN_AI_NOTE_(\d+)$/, async (ctx) => {
   try {
     await bot.telegram.sendMessage(userId, AI_UNAVAILABLE_NOTE, { parse_mode: "Markdown" });
     await ctx.answerCbQuery("AI note sent");
-    await ctx.reply(`âœ… AI unavailable note sent to ${userId}`);
+    await ctx.reply(`✅ AI unavailable note sent to ${userId}`);
   } catch (err) {
     await ctx.answerCbQuery("Failed");
-    await ctx.reply("âŒ Failed: " + (err?.message || err));
+    await ctx.reply("❌ Failed: " + (err?.message || err));
   }
 });
-
-
-
-bot.action(/^ADMIN_CLEAN_COPY_NOTE_(\d+)$/, async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-
-  const userId = ctx.match[1];
-
-  try {
-    await bot.telegram.sendMessage(
-      userId,
-      CLEAN_COPY_NEXT_SUBMISSION_NOTE,
-      { parse_mode: "Markdown" }
-    );
-
-    await ctx.answerCbQuery("Clean-copy note sent");
-    await ctx.reply("âœ… Remove logo/name reminder sent to " + userId);
-  } catch (err) {
-    await ctx.answerCbQuery("Failed");
-    await ctx.reply("âŒ Failed: " + (err?.message || err));
-  }
-});
-
-
-bot.action(/^ADMIN_AI_STAR_NOTE_(\d+)$/, async (ctx) => {
-
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-
-
-
-  const userId = ctx.match[1];
-
-
-
-  try {
-
-    await bot.telegram.sendMessage(userId, AI_STAR_NOTE, { parse_mode: "Markdown" });
-
-    await ctx.answerCbQuery("AI star note sent");
-
-    await ctx.reply("âœ… AI star note sent to " + userId);
-
-  } catch (err) {
-
-    await ctx.answerCbQuery("Failed");
-
-    await ctx.reply("âŒ Failed: " + (err?.message || err));
-
-  }
-
-});
-
-
-
-bot.action(/^ADMIN_TILL_NOTICE_(\d+)$/, async (ctx) => {
-
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-
-
-
-  const userId = ctx.match[1];
-
-
-
-  try {
-
-    await bot.telegram.sendMessage(userId, mpesaTillNoticeMessage(), { parse_mode: "Markdown" });
-
-    await ctx.answerCbQuery("Till notice sent");
-
-    await ctx.reply("âœ… Till payment notice sent to " + userId);
-
-  } catch (err) {
-
-    await ctx.answerCbQuery("Failed");
-
-    await ctx.reply("âŒ Failed: " + (err?.message || err));
-
-  }
-
-});
-
 
 // =====================
 // START INLINE BUTTONS
 // =====================
 bot.action("START_SEND_DOC", async (ctx) => {
-  await ctx.answerCbQuery("Upload instructions");
+  await ctx.answerCbQuery("Starting");
   await beginSubmissionFlow(ctx);
 });
 
@@ -5115,18 +3834,13 @@ bot.hears(KEY_SEND_DOC, async (ctx) => {
   await beginSubmissionFlow(ctx);
 });
 
-bot.hears("ðŸ“„ Send Document", async (ctx) => {
-  await beginSubmissionFlow(ctx);
-});
-
-// Old Telegram keyboards may remain cached briefly; treat the old button as help only.
 bot.hears(KEY_SEND_MPESA, async (ctx) => {
   await showPaymentHelp(ctx);
 });
 
 bot.hears(KEY_CONTACT_SUPPORT, async (ctx) => {
   supportRequests[ctx.from.id] = true;
-  await ctx.reply("ðŸ’¬ Type your message for support.", { reply_markup: mainKeyboard() });
+  await ctx.reply("💬 Type your message for support.", { reply_markup: mainKeyboard() });
 });
 
 bot.hears(KEY_CANCEL, async (ctx) => {
@@ -5136,7 +3850,7 @@ bot.hears(KEY_CANCEL, async (ctx) => {
 // =====================
 // BATCH SIZE SELECTION
 // =====================
-bot.action(/^BATCH_COUNT_(\d{1,2})$/, async (ctx) => {
+bot.action(/^BATCH_COUNT_(\d)$/, async (ctx) => {
   const count = Number(ctx.match[1]);
   const userId = ctx.from.id;
 
@@ -5169,7 +3883,7 @@ bot.action(/^BATCH_COUNT_(\d{1,2})$/, async (ctx) => {
     sub.stage = STAGE_WAIT_FILE_TYPE;
     sub.pendingInitialDocument = null;
 
-    await ctx.reply(`âœ… Selected *${count}* file(s).\n\nFirst document saved as *file 1*.`, {
+    await ctx.reply(`✅ Selected *${count}* file(s).\n\nFirst document saved as *file 1*.`, {
       parse_mode: "Markdown",
       reply_markup: mainKeyboard()
     });
@@ -5178,7 +3892,7 @@ bot.action(/^BATCH_COUNT_(\d{1,2})$/, async (ctx) => {
     return;
   }
 
-  await ctx.reply(`âœ… Selected *${count}* file(s).\n\n${CLEAN_COPY_WARNING}\n\nSend file *1* of *${count}* as a document.`, {
+  await ctx.reply(`✅ Selected *${count}* file(s).\n\n${CLEAN_COPY_WARNING}\n\nSend file *1* of *${count}* as a document.`, {
     parse_mode: "Markdown",
     reply_markup: mainKeyboard()
   });
@@ -5201,7 +3915,7 @@ bot.on("document", async (ctx) => {
     const deliveryKey = makeDocumentDeliveryKey(doc);
 
     if (!startBatchItemOnce(target, deliveryKey)) {
-      return ctx.reply(`âš ï¸ Duplicate document ignored for ${target.userId}`);
+      return ctx.reply(`⚠️ Duplicate document ignored for ${target.userId}`);
     }
 
     try {
@@ -5211,10 +3925,10 @@ bot.on("document", async (ctx) => {
 
       target.sentCount += 1;
       markBatchItemSent(target, deliveryKey);
-      await ctx.reply(`âœ… File sent to ${target.userId}`);
+      await ctx.reply(`✅ File sent to ${target.userId}`);
     } catch (err) {
       clearBatchItemProgress(target, deliveryKey);
-      await ctx.reply("âŒ Failed: " + (err?.message || err));
+      await ctx.reply("❌ Failed: " + (err?.message || err));
     }
 
     return;
@@ -5246,7 +3960,7 @@ bot.on("document", async (ctx) => {
     };
 
     await ctx.reply(
-  `ðŸ“¦ First document received.\n\n${CLEAN_COPY_WARNING}\n\nChoose number of files. This is file 1.`,
+  `📦 First document received.\n\n${CLEAN_COPY_WARNING}\n\nChoose number of files. This is file 1.`,
   { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
 );
     return;
@@ -5254,7 +3968,7 @@ bot.on("document", async (ctx) => {
 
   if (sub.stage === STAGE_WAIT_BATCH_SIZE) {
     if (sub.pendingInitialDocument) {
-      await ctx.reply("ðŸ“¦ Choose number of files first.", {
+      await ctx.reply("📦 Choose number of files first.", {
         reply_markup: batchSizeKeyboard().reply_markup
       });
       return;
@@ -5275,14 +3989,14 @@ bot.on("document", async (ctx) => {
     };
 
     await ctx.reply(
-      `ðŸ“¦ First document received.\n\n${CLEAN_COPY_WARNING}\n\nChoose number of files. This is file 1.`,
+      `📦 First document received.\n\n${CLEAN_COPY_WARNING}\n\nChoose number of files. This is file 1.`,
       { parse_mode: "Markdown", reply_markup: batchSizeKeyboard().reply_markup }
     );
     return;
   }
 
   if (sub.stage === STAGE_WAIT_FILE_TYPE || sub.stage === STAGE_WAIT_RESELLER_CODE) {
-    return ctx.reply("âš ï¸ Choose type for the previous file first.", {
+    return ctx.reply("⚠️ Choose type for the previous file first.", {
       parse_mode: "Markdown",
       reply_markup: typeInlineKeyboard(
         Boolean(getCurrentPendingFile(sub)?.recheckEligible),
@@ -5297,7 +4011,7 @@ bot.on("document", async (ctx) => {
     sub.stage === STAGE_WAIT_PHONE ||
     sub.stage === STAGE_WAIT_PAYMENT
   ) {
-    return ctx.reply("âš ï¸ Finish payment or cancel this payment attempt first.", {
+    return ctx.reply("⚠️ Finish payment or cancel this payment attempt first.", {
       parse_mode: "Markdown",
       reply_markup:
         sub.stage === STAGE_WAIT_PAYMENT_METHOD
@@ -5307,7 +4021,7 @@ bot.on("document", async (ctx) => {
   }
 
   if (!canAcceptMoreFiles(sub)) {
-    return ctx.reply("âœ… Selected file count already uploaded.", { reply_markup: mainKeyboard() });
+    return ctx.reply("✅ Selected file count already uploaded.", { reply_markup: mainKeyboard() });
   }
 
   const doc = ctx.message.document;
@@ -5341,12 +4055,12 @@ bot.on("photo", async (ctx) => {
     const photos = ctx.message.photo || [];
     const largest = photos[photos.length - 1];
 
-    if (!largest) return ctx.reply("âŒ No photo found.");
+    if (!largest) return ctx.reply("❌ No photo found.");
 
     const deliveryKey = makePhotoDeliveryKey(largest);
 
     if (!startBatchItemOnce(target, deliveryKey)) {
-      return ctx.reply(`âš ï¸ Duplicate photo ignored for ${target.userId}`);
+      return ctx.reply(`⚠️ Duplicate photo ignored for ${target.userId}`);
     }
 
     try {
@@ -5356,10 +4070,10 @@ bot.on("photo", async (ctx) => {
 
       target.sentCount += 1;
       markBatchItemSent(target, deliveryKey);
-      await ctx.reply(`âœ… Photo sent to ${target.userId}`);
+      await ctx.reply(`✅ Photo sent to ${target.userId}`);
     } catch (err) {
       clearBatchItemProgress(target, deliveryKey);
-      await ctx.reply("âŒ Failed: " + (err?.message || err));
+      await ctx.reply("❌ Failed: " + (err?.message || err));
     }
     return;
   }
@@ -5380,13 +4094,13 @@ bot.on("photo", async (ctx) => {
   }
 
   if (sub && [STAGE_WAIT_BATCH_SIZE, STAGE_WAIT_UPLOADS, STAGE_WAIT_FILE_TYPE, STAGE_WAIT_RESELLER_CODE].includes(sub.stage)) {
-    return ctx.reply("âš ï¸ Send file as a document, not photo.", {
+    return ctx.reply("⚠️ Send file as a document, not photo.", {
       parse_mode: "Markdown",
       reply_markup: mainKeyboard()
     });
   }
 
-  await ctx.reply("âš ï¸ Use Telegram's ðŸ“Ž attachment button and send the file as a *document*.", {
+  await ctx.reply("⚠️ Tap *Send Document* and upload as document.", {
     parse_mode: "Markdown",
     reply_markup: startInlineKeyboard().reply_markup
   });
@@ -5397,55 +4111,11 @@ bot.on("photo", async (ctx) => {
 // =====================
 bot.action("TYPE_CHECK", async (ctx) => {
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
-
-  if (isPublicDiscountExclusiveMode()) {
-    const sub = submissions[ctx.from.id];
-
-    await ctx.answerCbQuery("CHECK is hidden during the public discount.");
-
-    return ctx.reply(
-      `ðŸ·ï¸ Public ${RESALE_LABEL_TITLE} is active. Choose ${
-        SIMILARITY_ONLY_ENABLED
-          ? `SIMILARITY REPORT ONLY or ${RESALE_LABEL_TITLE}.`
-          : `${RESALE_LABEL_TITLE}.`
-      }`,
-      {
-        reply_markup: typeInlineKeyboard(
-          Boolean(getCurrentPendingFile(sub)?.recheckEligible),
-          RESALE_ENABLED,
-          Boolean(sub?.resellerVerified)
-        ).reply_markup
-      }
-    );
-  }
-
   await handleFileTypeSelected(ctx, "CHECK");
 });
 
 bot.action("TYPE_RECHECK", async (ctx) => {
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
-
-  if (isPublicDiscountExclusiveMode()) {
-    const sub = submissions[ctx.from.id];
-
-    await ctx.answerCbQuery("RECHECK is hidden during the public discount.");
-
-    return ctx.reply(
-      `ðŸ·ï¸ Public ${RESALE_LABEL_TITLE} is active. Choose ${
-        SIMILARITY_ONLY_ENABLED
-          ? `SIMILARITY REPORT ONLY or ${RESALE_LABEL_TITLE}.`
-          : `${RESALE_LABEL_TITLE}.`
-      }`,
-      {
-        reply_markup: typeInlineKeyboard(
-          Boolean(getCurrentPendingFile(sub)?.recheckEligible),
-          RESALE_ENABLED,
-          Boolean(sub?.resellerVerified)
-        ).reply_markup
-      }
-    );
-  }
-
   await handleFileTypeSelected(ctx, "RECHECK");
 });
 
@@ -5531,7 +4201,7 @@ bot.action("STK_CHANGE_PHONE", async (ctx) => {
   sub.phone = null;
 
   await ctx.answerCbQuery("Send new phone");
-  await ctx.reply("ðŸ“ž Send phone number again.", { reply_markup: mainKeyboard() });
+  await ctx.reply("📞 Send phone number again.", { reply_markup: mainKeyboard() });
 });
 
 bot.action("STK_RESEND", async (ctx) => {
@@ -5543,7 +4213,7 @@ bot.action("STK_RESEND", async (ctx) => {
 
   if (!sub.phone) {
     sub.stage = STAGE_WAIT_PHONE;
-    await ctx.reply("ðŸ“ž Send phone number again.", { reply_markup: mainKeyboard() });
+    await ctx.reply("📞 Send phone number again.", { reply_markup: mainKeyboard() });
     return;
   }
 
@@ -5567,20 +4237,20 @@ bot.on("text", async (ctx) => {
     try {
       await bot.telegram.sendMessage(
         replyTarget.userId,
-        `â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-ðŸ’¬ *JK Turnitin Support*
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+        `━━━━━━━━━━━━━━━
+💬 *JK Turnitin Support*
+━━━━━━━━━━━━━━━
 
 ${text}
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`,
+━━━━━━━━━━━━━━━`,
         { parse_mode: "Markdown" }
       );
 
-      await ctx.reply(`âœ… Reply sent to ${replyTarget.userId}`);
+      await ctx.reply(`✅ Reply sent to ${replyTarget.userId}`);
       delete pendingAdminReplies[ADMIN_ID];
     } catch (err) {
-      await ctx.reply("âŒ Failed: " + (err?.message || err));
+      await ctx.reply("❌ Failed: " + (err?.message || err));
     }
 
     return;
@@ -5591,14 +4261,14 @@ ${text}
 
     try {
       await sendAdminMessage(
-        `ðŸ’¬ Support message from user\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+        `💬 Support message from user\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
           user.username || "N/A"
         )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`,
         { adminButtons: "replyOnly" }
       );
-      await ctx.reply("âœ… Sent to support.", { reply_markup: mainKeyboard() });
+      await ctx.reply("✅ Sent to support.", { reply_markup: mainKeyboard() });
     } catch {
-      await ctx.reply("âŒ Failed. Try again.", { reply_markup: mainKeyboard() });
+      await ctx.reply("❌ Failed. Try again.", { reply_markup: mainKeyboard() });
     }
     return;
   }
@@ -5610,7 +4280,7 @@ ${text}
   if (sub && sub.stage === STAGE_WAIT_RESELLER_CODE) {
     if (!RESALE_ENABLED) {
       sub.stage = STAGE_WAIT_FILE_TYPE;
-      return ctx.reply(`âš ï¸ ${RESALE_LABEL_TITLE} is not enabled.`, {
+      return ctx.reply(`⚠️ ${RESALE_LABEL_TITLE} is not enabled.`, {
         reply_markup: typeInlineKeyboard(
           Boolean(getCurrentPendingFile(sub)?.recheckEligible),
           RESALE_ENABLED,
@@ -5621,7 +4291,7 @@ ${text}
 
     if (!resellerCodeMatches(text)) {
       sub.stage = STAGE_WAIT_FILE_TYPE;
-      return ctx.reply(`âŒ Wrong Code. Choose another type.`, {
+      return ctx.reply(`❌ Wrong Code. Choose another type.`, {
         reply_markup: typeInlineKeyboard(
           Boolean(getCurrentPendingFile(sub)?.recheckEligible),
           RESALE_ENABLED,
@@ -5631,7 +4301,7 @@ ${text}
     }
 
     sub.resellerVerified = true;
-    await ctx.reply(`âœ… ${RESALE_LABEL_TITLE} Applied`);
+    await ctx.reply(`✅ ${RESALE_LABEL_TITLE} Applied`);
     await finalizeFileTypeSelection(ctx, sub, "RESALE");
     return;
   }
@@ -5644,7 +4314,7 @@ ${text}
 
   if (sub && sub.stage === STAGE_WAIT_PHONE) {
     const phone254 = normalizePhoneTo254(text);
-    if (!phone254) return ctx.reply("âŒ Invalid phone. Use 07XXXXXXXX or 01XXXXXXXX.");
+    if (!phone254) return ctx.reply("❌ Invalid phone. Use 07XXXXXXXX or 01XXXXXXXX.");
 
     sub.phone = phone254;
     await attemptStkPush(ctx, sub, { mode: "initial" });
@@ -5664,7 +4334,7 @@ ${text}
 
   if (hasActiveSubmissionForUploads(sub)) {
     await sendAdminMessage(
-      `ðŸ’¬ Message from user\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
+      `💬 Message from user\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
         user.username || "N/A"
       )}\n\n${safeText(text)}${adminQuickCommands(user.id)}`,
       { adminButtons: "replyOnly" }
@@ -5672,14 +4342,14 @@ ${text}
   }
 
   if (sub && sub.stage === STAGE_WAIT_UPLOADS) {
-    return ctx.reply(`ðŸ“„ Send file ${sub.files.length + 1} of ${sub.expectedFiles} as document.`, {
+    return ctx.reply(`📄 Send file ${sub.files.length + 1} of ${sub.expectedFiles} as document.`, {
       parse_mode: "Markdown",
       reply_markup: uploadContinueKeyboard().reply_markup
     });
   }
 
   if (sub && sub.stage === STAGE_WAIT_FILE_TYPE) {
-    return ctx.reply("âš ï¸ Choose type for the last file first.", {
+    return ctx.reply("⚠️ Choose type for the last file first.", {
       parse_mode: "Markdown",
       reply_markup: typeInlineKeyboard(
         Boolean(getCurrentPendingFile(sub)?.recheckEligible),
@@ -5690,7 +4360,7 @@ ${text}
   }
 
   if (!sub) {
-    return ctx.reply("ðŸ“Ž Send your first file directly using Telegram's attachment button and choose *File/Document*. No start button is required.", {
+    return ctx.reply("Tap *Send Document* to start.", {
       parse_mode: "Markdown",
       reply_markup: startInlineKeyboard().reply_markup
     });
@@ -5753,11 +4423,6 @@ app.get("/health", (req, res) => {
     usedProofCodes: Object.keys(usedProofCodes).length,
     dailySalesSummaryLastSentDateKey: dailySalesSummary.lastSentDateKey || null,
     dailySalesLedgerPayments: Object.keys(dailySalesLedger.payments || {}).length,
-    botUsersRegistered: getBotUserStats().registered,
-    botUsersActive: getBotUserStats().active,
-    botUsersInactive: getBotUserStats().inactive,
-    broadcastInProgress,
-    lastBroadcastAt: broadcastMeta.lastBroadcastAt || null,
     botDisplayNameMode: lastAppliedBotNameMode,
     botOnlineName: BOT_ONLINE_NAME,
     botOfflineName: BOT_OFFLINE_NAME,
@@ -5783,7 +4448,6 @@ app.get("/health", (req, res) => {
     resalePriceKes: RESALE_PRICE_KES,
     resaleLabel: RESALE_LABEL,
     discountPublicEnabled: isDiscountPublicActive(),
-    publicDiscountExclusiveButtons: isPublicDiscountExclusiveMode(),
     discountPublicConfigured: DISCOUNT_PUBLIC_ENABLED,
     discountPublicAutoWindowSet: Boolean(DISCOUNT_START_EAT && DISCOUNT_END_EAT),
     discountStartEat: DISCOUNT_START_EAT,
@@ -5852,7 +4516,7 @@ app.post("/intasend/webhook", (req, res) => {
         INTASEND_WEBHOOK_CHALLENGE &&
         String(payload.challenge).trim() !== INTASEND_WEBHOOK_CHALLENGE
       ) {
-        await sendAdminMessage("âš ï¸ IntaSend webhook: invalid challenge.");
+        await sendAdminMessage("⚠️ IntaSend webhook: invalid challenge.");
         return;
       }
 
@@ -5873,7 +4537,7 @@ app.post("/intasend/webhook", (req, res) => {
 
       if (!apiRef) {
         await sendAdminMessage(
-          `âš ï¸ IntaSend webhook not matched.\ninvoiceid: ${safeText(invoiceId || "N/A")}\nstate: ${safeText(state)}`
+          `⚠️ IntaSend webhook not matched.\ninvoiceid: ${safeText(invoiceId || "N/A")}\nstate: ${safeText(state)}`
         );
         return;
       }
@@ -5881,7 +4545,7 @@ app.post("/intasend/webhook", (req, res) => {
       const ref = getPaymentRef(apiRef);
       if (!ref) {
         await sendAdminMessage(
-          `âš ï¸ IntaSend webhook: unknown apiref ${safeText(apiRef)}\ninvoiceid: ${safeText(
+          `⚠️ IntaSend webhook: unknown apiref ${safeText(apiRef)}\ninvoiceid: ${safeText(
             invoiceId || "N/A"
           )}\nstate: ${safeText(state)}`
         );
@@ -5929,11 +4593,7 @@ bot.catch((err) => {
 const port = Number(process.env.PORT || 3000);
 
 app.listen(port, async () => {
-  const backfilledBotUsers = backfillBotUsersFromExistingData();
-  const botUserStats = getBotUserStats();
-
   console.log(`Webhook server listening on port ${port}`);
-  console.log(`Bot users: ${botUserStats.registered} registered, ${botUserStats.active} active, ${botUserStats.inactive} inactive, ${backfilledBotUsers} newly backfilled`);
   console.log(`PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}`);
   console.log(`Data dir: ${DATA_DIR}`);
   console.log(`IntaSend Mode: ${INTASEND_TEST ? "TEST" : "LIVE"}`);
@@ -5948,9 +4608,7 @@ app.listen(port, async () => {
   console.log(`Paid cancellation opens after max processing: ${REPORT_PROCESSING_MAX_MINUTES} minutes`);
   console.log(`Prices: CHECK=${CHECK_PRICE_KES}, RECHECK=${RECHECK_PRICE_KES}, SIMILARITY=${SIMILARITY_ONLY_PRICE_KES}, ${RESALE_LABEL}=${RESALE_PRICE_KES}`);
   console.log(`Discount public active now: ${isDiscountPublicActive() ? "YES" : "NO"}`);
-  console.log(`Public discount exclusive buttons: ${isPublicDiscountExclusiveMode() ? "YES" : "NO"}`);
   console.log(`Discount public mode: ${DISCOUNT_START_EAT && DISCOUNT_END_EAT ? "AUTO TIME WINDOW" : "MANUAL ENV"}`);
-  console.log(`Discount broadcast preview check: every ${DISCOUNT_BROADCAST_CHECK_MS / 1000}s`);
   console.log(`Kenyan bank payment enabled: ${INTERNATIONAL_PAYMENT_ENABLED ? "YES" : "NO"}`);
   console.log(`International check/recheck price: ${INTERNATIONAL_CHECK_PRICE_USD} ${INTERNATIONAL_CURRENCY}`);
   console.log(`International similarity only price: ${INTERNATIONAL_SIMILARITY_ONLY_PRICE} ${INTERNATIONAL_CURRENCY}`);
@@ -5971,11 +4629,8 @@ app.listen(port, async () => {
     console.error("Failed to set Telegram webhook:", e?.description || e?.message || e);
   }
 
-  await syncAdminCommandMenu();
-
   startBotDisplayNameScheduler();
   startDailySalesSummaryScheduler();
-  startDiscountBroadcastPreviewScheduler();
 });
 
 process.on("uncaughtException", (err) => {
