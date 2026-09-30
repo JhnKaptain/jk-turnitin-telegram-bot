@@ -331,14 +331,21 @@ Please make sure this is done before your next submission. Thank you.`;
 const PRELIM_PAGES_REMOVED_NOTE =
   `🧹 *Preliminary Pages Removed*
 
-To protect the Turnitin account from possible restrictions or bans caused by institution details and other identifying information, preliminary/front matter pages have been removed from your checking copy.
+To protect the Turnitin account from possible restrictions or bans linked to institution details and other identifying information, preliminary/front matter pages have been removed from your checking copy.
 
-The Turnitin check will begin from:
+*Removed sections may include:*
+• Acknowledgements
+• Dedication
+• Declaration
+• Table of Contents
+• List of Figures/Tables
+• Other front matter
 
+*The Turnitin check begins from:*
 ✅ Abstract
 ✅ Main body/content
 ✅ References
-✅ Appendixes
+✅ Appendices
 
 Your academic content remains unchanged.`;
 
