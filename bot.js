@@ -328,6 +328,20 @@ Only upload a clean copy with no school, college, university, or other instituti
 
 Please make sure this is done before your next submission. Thank you.`;
 
+const PRELIM_PAGES_REMOVED_NOTE =
+  `🧹 *Preliminary Pages Removed*
+
+To protect the Turnitin account from possible restrictions or bans caused by institution details and other identifying information, preliminary/front matter pages have been removed from your checking copy.
+
+The Turnitin check will begin from:
+
+✅ Abstract
+✅ Main body/content
+✅ References
+✅ Appendixes
+
+Your academic content remains unchanged.`;
+
 const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
@@ -2381,6 +2395,13 @@ function adminActionKeyboard(userId, variant) {
         `ADMIN_CLEAN_COPY_NOTE_${userId}`
       )
     ]);
+
+    rows.push([
+      Markup.button.callback(
+        "🧹 PRELIM PAGES REMOVED",
+        `ADMIN_PRELIM_REMOVED_${userId}`
+      )
+    ]);
   } else if (variant === "delivery") {
     rows.push([Markup.button.callback("📦 Filebatch", `ADMIN_FILEBATCH_${userId}`)]);
     rows.push([Markup.button.callback("💬 Reply", `ADMIN_REPLY_${userId}`)]);
@@ -3019,6 +3040,24 @@ async function handleFileTypeSelected(ctx, kind) {
 
   await finalizeFileTypeSelection(ctx, sub, kind);
 }
+
+bot.action(/^ADMIN_PRELIM_REMOVED_(\d+)$/, async (ctx) => {
+  const userId = Number(ctx.match[1]);
+
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.answerCbQuery("Not allowed.");
+  }
+
+  await ctx.answerCbQuery("Notice sent.");
+
+  await bot.telegram.sendMessage(
+    userId,
+    PRELIM_PAGES_REMOVED_NOTE,
+    {
+      parse_mode: "Markdown"
+    }
+  );
+});
 
 // =====================
 // INTASEND REST HELPERS
