@@ -300,6 +300,7 @@ const STAGE_WAIT_SIM_FILTER = "WAIT_SIM_FILTER";
 const STAGE_WAIT_RESELLER_CODE = "WAIT_RESELLER_CODE";
 
 // JK_COPYLEAKS_CONTROL_PATCH_V2
+// JK_COPYLEAKS_EXPORT_PATCH_V1
 const STAGE_WAIT_PAYMENT_METHOD = "WAIT_PAYMENT_METHOD";
 const STAGE_WAIT_PHONE = "WAIT_PHONE";
 const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
@@ -623,6 +624,11 @@ const COPYLEAKS_INDEX_TO_DB = readBoolEnv(
 
 const COPYLEAKS_SCAN_SHARED_DB = readBoolEnv(
   "COPYLEAKS_SCAN_SHARED_DB",
+  true
+);
+
+const COPYLEAKS_EXPORT_ENABLED = readBoolEnv(
+  "COPYLEAKS_EXPORT_ENABLED",
   true
 );
 
@@ -3460,7 +3466,7 @@ async function sendSelectedDocumentToAdmin(user, sub, file, fileNumber) {
   const name = getUserFullName(user);
   const usernameText = safeText(user.username || "N/A");
 
-  const caption = buildAdminDocumentCaption({
+  let caption = buildAdminDocumentCaption({
     userId,
     name,
     usernameText,
@@ -3468,6 +3474,20 @@ async function sendSelectedDocumentToAdmin(user, sub, file, fileNumber) {
     fileNumber,
     expectedFiles: sub?.expectedFiles
   });
+
+  // JK_MANUAL_FILTER_ADMIN_PATCH_V1
+  // In Manual mode the administrator must still know whether
+  // the client requested a filtered or unfiltered similarity report.
+  if (
+    reportSettings.reportMode ===
+    REPORT_MODE_MANUAL
+  ) {
+    caption +=
+      "\nSimilarity filter: " +
+      similarityFilterLabel(
+        effectiveSimilarityFilter(file)
+      );
+  }
 
   try {
     if (!file.sourceChatId || !file.sourceMessageId) {
@@ -3672,26 +3692,10 @@ async function finalizeTypeWithFilterSelection(
 
   ensureFileReportIdentity(file);
 
-  /*
-    MANUAL MODE:
-    preserve the current customer workflow.
-    Do not ask the client a filtering question.
-  */
-  if (
-    reportSettings.reportMode ===
-    REPORT_MODE_MANUAL
-  ) {
-    file.similarityFilter =
-      FILTER_MODE_FILTERED;
-
-    await finalizeFileTypeSelection(
-      ctx,
-      sub,
-      kind
-    );
-
-    return;
-  }
+  // JK_MANUAL_FILTER_PATCH_V1
+  // Similarity filtering applies in Manual, Admin Approval,
+  // and Automatic API modes. Delivery mode does not change
+  // the client's filtering preference.
 
   if (
     reportSettings.filterMode ===
@@ -8068,6 +8072,735 @@ function findJobFileByCopyleaksScanId(
   return null;
 }
 
+
+// ============================================================
+// COPYLEAKS DETAILED EXPORT
+// ============================================================
+
+function safeCopyleaksPathPart(
+  value
+) {
+  return (
+    String(
+      value || "unknown"
+    )
+      .replace(
+        /[^A-Za-z0-9._-]/g,
+        "_"
+      )
+      .slice(
+        0,
+        120
+      ) ||
+    "unknown"
+  );
+}
+
+function ensureCopyleaksScanDir(
+  scanId
+) {
+  const dir = path.join(
+    COPYLEAKS_DATA_DIR,
+    safeCopyleaksPathPart(
+      scanId
+    )
+  );
+
+  if (
+    !fs.existsSync(dir)
+  ) {
+    fs.mkdirSync(
+      dir,
+      {
+        recursive: true
+      }
+    );
+  }
+
+  return dir;
+}
+
+function readCopyleaksJsonFile(
+  filePath
+) {
+  try {
+    if (
+      !filePath ||
+      !fs.existsSync(
+        filePath
+      )
+    ) {
+      return null;
+    }
+
+    return JSON.parse(
+      fs.readFileSync(
+        filePath,
+        "utf8"
+      )
+    );
+  } catch {
+    return null;
+  }
+}
+
+function addCopyleaksResultDescriptor(
+  map,
+  id,
+  sourceType,
+  data = {}
+) {
+  if (
+    id === null ||
+    id === undefined ||
+    String(id).trim() === ""
+  ) {
+    return;
+  }
+
+  const key =
+    String(id).trim();
+
+  if (map.has(key)) {
+    return;
+  }
+
+  map.set(
+    key,
+    {
+      id: key,
+
+      sourceType,
+
+      title:
+        data?.title ||
+        null,
+
+      introduction:
+        data?.introduction ||
+        null,
+
+      matchedWords:
+        Number(
+          data?.matchedWords ||
+            0
+        ),
+
+      url:
+        data?.url ||
+        data?.metadata
+          ?.finalUrl ||
+        data?.metadata
+          ?.canonicalUrl ||
+        null,
+
+      metadata:
+        data?.metadata ||
+        null,
+
+      scanId:
+        data?.scanId ||
+        null,
+
+      repositoryId:
+        data?.repositoryId ||
+        null,
+
+      tags:
+        Array.isArray(
+          data?.tags
+        )
+          ? data.tags
+          : []
+    }
+  );
+}
+
+function collectAlertResultIds(
+  value,
+  map,
+  sourceType = "aiDetection"
+) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return;
+  }
+
+  if (
+    Array.isArray(value)
+  ) {
+    for (
+      const item of value
+    ) {
+      collectAlertResultIds(
+        item,
+        map,
+        sourceType
+      );
+    }
+
+    return;
+  }
+
+  if (
+    typeof value !==
+    "object"
+  ) {
+    return;
+  }
+
+  for (
+    const [
+      key,
+      child
+    ] of Object.entries(
+      value
+    )
+  ) {
+    const normalizedKey =
+      String(key)
+        .replace(
+          /[_-]/g,
+          ""
+        )
+        .toLowerCase();
+
+    if (
+      normalizedKey ===
+      "resultid"
+    ) {
+      addCopyleaksResultDescriptor(
+        map,
+        child,
+        sourceType
+      );
+    }
+
+    if (
+      normalizedKey ===
+        "resultids" &&
+      Array.isArray(child)
+    ) {
+      for (
+        const resultId of child
+      ) {
+        addCopyleaksResultDescriptor(
+          map,
+          resultId,
+          sourceType
+        );
+      }
+    }
+
+    collectAlertResultIds(
+      child,
+      map,
+      sourceType
+    );
+  }
+}
+
+function collectCopyleaksResultDescriptors(
+  payload
+) {
+  const resultMap =
+    new Map();
+
+  const root =
+    payload?.results ||
+    {};
+
+  const groups = [
+    [
+      "internet",
+      root.internet
+    ],
+
+    [
+      "database",
+      root.database
+    ],
+
+    [
+      "batch",
+      root.batch
+    ],
+
+    [
+      "repositories",
+      root.repositories
+    ],
+
+    [
+      "internalAIData",
+      root.internalAIData
+    ]
+  ];
+
+  for (
+    const [
+      sourceType,
+      rows
+    ] of groups
+  ) {
+    for (
+      const row of
+        Array.isArray(rows)
+          ? rows
+          : []
+    ) {
+      addCopyleaksResultDescriptor(
+        resultMap,
+        row?.id,
+        sourceType,
+        row
+      );
+    }
+  }
+
+  /*
+    AI Detection may expose its detailed export result ID
+    through the AI alert's additionalData.
+
+    Preserve standard plagiarism result IDs above, then inspect
+    AI alert metadata for resultId/resultIds without guessing
+    unrelated numeric IDs.
+  */
+  for (
+    const alert of
+      payload
+        ?.notifications
+        ?.alerts ||
+      []
+  ) {
+    let additionalData =
+      alert?.additionalData;
+
+    if (
+      typeof additionalData ===
+      "string"
+    ) {
+      try {
+        additionalData =
+          JSON.parse(
+            additionalData
+          );
+      } catch {
+        additionalData =
+          null;
+      }
+    }
+
+    if (
+      additionalData
+    ) {
+      collectAlertResultIds(
+        additionalData,
+        resultMap,
+        String(
+          alert?.code ||
+            ""
+        ) ===
+          "suspected-ai-text"
+          ? "aiDetection"
+          : "alertResult"
+      );
+    }
+  }
+
+  return Array.from(
+    resultMap.values()
+  );
+}
+
+function makeCopyleaksExportId(
+  scanId
+) {
+  return (
+    "jkexp-" +
+
+    safeCopyleaksPathPart(
+      scanId
+    ).slice(
+      0,
+      18
+    ) +
+
+    "-" +
+
+    Date.now()
+      .toString(36) +
+
+    "-" +
+
+    Math.random()
+      .toString(36)
+      .slice(
+        2,
+        8
+      )
+  ).slice(
+    0,
+    50
+  );
+}
+
+function validCopyleaksExportSecret(
+  req
+) {
+  const supplied =
+    String(
+      req.get(
+        "x-jk-copyleaks-secret"
+      ) || ""
+    );
+
+  return (
+    Boolean(
+      COPYLEAKS_WEBHOOK_SECRET
+    ) &&
+    supplied ===
+      COPYLEAKS_WEBHOOK_SECRET
+  );
+}
+
+async function startCopyleaksDetailedExport(
+  job,
+  file,
+  completedPayload
+) {
+  if (
+    !COPYLEAKS_EXPORT_ENABLED
+  ) {
+    return null;
+  }
+
+  if (
+    !file?.copyleaksScanId
+  ) {
+    return null;
+  }
+
+  if (
+    file.copyleaksExportId &&
+    [
+      "REQUESTED",
+      "RECEIVING",
+      "COMPLETE"
+    ].includes(
+      String(
+        file.copyleaksExportStatus ||
+          ""
+      )
+    )
+  ) {
+    return file.copyleaksExportId;
+  }
+
+  const token =
+    await getCopyleaksToken();
+
+  const scanId =
+    String(
+      file.copyleaksScanId
+    );
+
+  const exportId =
+    makeCopyleaksExportId(
+      scanId
+    );
+
+  const descriptors =
+    collectCopyleaksResultDescriptors(
+      completedPayload
+    );
+
+  const publicBase =
+    String(
+      PUBLIC_BASE_URL ||
+        ""
+    ).replace(
+      /\/+$/,
+      ""
+    );
+
+  const exportBase =
+    publicBase +
+    "/copyleaks-export/" +
+    encodeURIComponent(
+      scanId
+    ) +
+    "/" +
+    encodeURIComponent(
+      exportId
+    );
+
+  const secureHeaders = [
+    [
+      "x-jk-copyleaks-secret",
+      COPYLEAKS_WEBHOOK_SECRET
+    ]
+  ];
+
+  const body = {
+    completionWebhook:
+      exportBase +
+      "/completed?secret=" +
+      encodeURIComponent(
+        COPYLEAKS_WEBHOOK_SECRET
+      ),
+
+    maxRetries: 3,
+
+    developerPayload:
+      JSON.stringify({
+        jobId:
+          job?.jobId ||
+          null,
+
+        userId:
+          job?.userId ||
+          null,
+
+        scanId
+      }),
+
+    crawledVersion: {
+      endpoint:
+        exportBase +
+        "/crawled",
+
+      verb:
+        "PUT",
+
+      headers:
+        secureHeaders
+    },
+
+    results:
+      descriptors.map(
+        (descriptor) => ({
+          id:
+            descriptor.id,
+
+          endpoint:
+            exportBase +
+            "/result/" +
+            encodeURIComponent(
+              descriptor.id
+            ),
+
+          verb:
+            "PUT",
+
+          headers:
+            secureHeaders
+        })
+      )
+  };
+
+  await copyleaksJson(
+    COPYLEAKS_API_BASE +
+      "/v3/downloads/" +
+      encodeURIComponent(
+        scanId
+      ) +
+      "/export/" +
+      encodeURIComponent(
+        exportId
+      ),
+
+    {
+      method:
+        "POST",
+
+      headers: {
+        Authorization:
+          "Bearer " +
+          token,
+
+        "Content-Type":
+          "application/json",
+
+        Accept:
+          "application/json"
+      },
+
+      body:
+        JSON.stringify(
+          body
+        )
+    }
+  );
+
+  file.copyleaksExportId =
+    exportId;
+
+  file.copyleaksExportStatus =
+    "REQUESTED";
+
+  file.copyleaksExportRequestedAt =
+    Date.now();
+
+  file.copyleaksResultDescriptors =
+    descriptors;
+
+  file.copyleaksDetailedResultFiles =
+    {};
+
+  savePaidJobs();
+
+  return exportId;
+}
+
+function writeCopyleaksBundle(
+  scanId
+) {
+  const found =
+    findJobFileByCopyleaksScanId(
+      scanId
+    );
+
+  if (!found) {
+    return null;
+  }
+
+  const {
+    job,
+    file
+  } = found;
+
+  const scanDir =
+    ensureCopyleaksScanDir(
+      scanId
+    );
+
+  const completion =
+    readCopyleaksJsonFile(
+      file.copyleaksCompletedFile
+    );
+
+  const crawled =
+    readCopyleaksJsonFile(
+      file.copyleaksCrawledFile
+    );
+
+  const resultDetails =
+    (
+      file
+        .copyleaksResultDescriptors ||
+      []
+    ).map(
+      (descriptor) => {
+        const resultPath =
+          file
+            .copyleaksDetailedResultFiles
+            ?.[descriptor.id] ||
+          null;
+
+        return {
+          descriptor,
+
+          result:
+            readCopyleaksJsonFile(
+              resultPath
+            )
+        };
+      }
+    );
+
+  const bundle = {
+    generatedAt:
+      new Date()
+        .toISOString(),
+
+    scanId,
+
+    exportId:
+      file.copyleaksExportId ||
+      null,
+
+    job: {
+      jobId:
+        job.jobId ||
+        null,
+
+      userId:
+        job.userId ||
+        null,
+
+      paidAt:
+        job.paidAt ||
+        null,
+
+      route:
+        job.route ||
+        null
+    },
+
+    reportIdentity: {
+      jkSubmissionId:
+        file.jkSubmissionId ||
+        null,
+
+      reportName:
+        file.reportName ||
+        null,
+
+      institution:
+        file.reportInstitution ||
+        reportSettings
+          .institution,
+
+      filename:
+        file.file_name ||
+        null,
+
+      similarityFilter:
+        effectiveSimilarityFilter(
+          file
+        )
+    },
+
+    completion,
+
+    crawled,
+
+    results:
+      resultDetails
+  };
+
+  const bundlePath =
+    path.join(
+      scanDir,
+      "bundle.json"
+    );
+
+  fs.writeFileSync(
+    bundlePath,
+
+    JSON.stringify(
+      bundle,
+      null,
+      2
+    ),
+
+    "utf8"
+  );
+
+  file.copyleaksBundleFile =
+    bundlePath;
+
+  file.copyleaksBundleUpdatedAt =
+    Date.now();
+
+  savePaidJobs();
+
+  return bundlePath;
+}
+
 async function handleCopyleaksStatusWebhook(
   status,
   scanId,
@@ -8239,7 +8972,45 @@ async function handleCopyleaksStatusWebhook(
 
     savePaidJobs();
 
-    await sendAdminMessage(
+        // JK_COPYLEAKS_START_EXPORT_ON_COMPLETE
+    if (
+      COPYLEAKS_EXPORT_ENABLED
+    ) {
+      try {
+        await startCopyleaksDetailedExport(
+          job,
+          file,
+          payload
+        );
+      } catch (err) {
+        file.copyleaksExportStatus =
+          "FAILED";
+
+        file.copyleaksExportError =
+          String(
+            err?.message ||
+              err
+          );
+
+        savePaidJobs();
+
+        await sendAdminMessage(
+          "Copyleaks detailed export could not start.\n" +
+          "File: " +
+          safeText(
+            file.file_name ||
+              "N/A"
+          ) +
+          "\nError: " +
+          safeText(
+            err?.message ||
+              err
+          )
+        );
+      }
+    }
+
+await sendAdminMessage(
       "✅ COPYLEAKS SCAN COMPLETE\n" +
       "User: " +
       job.userId +
@@ -8407,6 +9178,381 @@ app.post(
         } catch (err) {
           console.error(
             "Copyleaks webhook processing failed:",
+            err?.message ||
+              err
+          );
+        }
+      }
+    );
+  }
+);
+
+
+app.put(
+  "/copyleaks-export/:scanId/:exportId/crawled",
+  (req, res) => {
+    if (
+      !validCopyleaksExportSecret(
+        req
+      )
+    ) {
+      return res
+        .status(401)
+        .json({
+          ok: false
+        });
+    }
+
+    const scanId =
+      String(
+        req.params.scanId ||
+          ""
+      );
+
+    const exportId =
+      String(
+        req.params.exportId ||
+          ""
+      );
+
+    const found =
+      findJobFileByCopyleaksScanId(
+        scanId
+      );
+
+    if (!found) {
+      return res
+        .status(404)
+        .json({
+          ok: false,
+          error:
+            "Unknown scan"
+        });
+    }
+
+    try {
+      const scanDir =
+        ensureCopyleaksScanDir(
+          scanId
+        );
+
+      const crawledPath =
+        path.join(
+          scanDir,
+          "crawled.json"
+        );
+
+      fs.writeFileSync(
+        crawledPath,
+
+        JSON.stringify(
+          req.body || {},
+          null,
+          2
+        ),
+
+        "utf8"
+      );
+
+      found.file
+        .copyleaksCrawledFile =
+        crawledPath;
+
+      found.file
+        .copyleaksExportId =
+        exportId;
+
+      found.file
+        .copyleaksExportStatus =
+        "RECEIVING";
+
+      savePaidJobs();
+
+      writeCopyleaksBundle(
+        scanId
+      );
+
+      return res
+        .status(200)
+        .json({
+          ok: true
+        });
+    } catch (err) {
+      console.error(
+        "Copyleaks crawled export save failed:",
+        err?.message ||
+          err
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false
+        });
+    }
+  }
+);
+
+app.put(
+  "/copyleaks-export/:scanId/:exportId/result/:resultId",
+  (req, res) => {
+    if (
+      !validCopyleaksExportSecret(
+        req
+      )
+    ) {
+      return res
+        .status(401)
+        .json({
+          ok: false
+        });
+    }
+
+    const scanId =
+      String(
+        req.params.scanId ||
+          ""
+      );
+
+    const exportId =
+      String(
+        req.params.exportId ||
+          ""
+      );
+
+    const resultId =
+      String(
+        req.params.resultId ||
+          ""
+      );
+
+    const found =
+      findJobFileByCopyleaksScanId(
+        scanId
+      );
+
+    if (!found) {
+      return res
+        .status(404)
+        .json({
+          ok: false,
+          error:
+            "Unknown scan"
+        });
+    }
+
+    try {
+      const scanDir =
+        ensureCopyleaksScanDir(
+          scanId
+        );
+
+      const resultPath =
+        path.join(
+          scanDir,
+
+          "result-" +
+            safeCopyleaksPathPart(
+              resultId
+            ) +
+            ".json"
+        );
+
+      fs.writeFileSync(
+        resultPath,
+
+        JSON.stringify(
+          req.body || {},
+          null,
+          2
+        ),
+
+        "utf8"
+      );
+
+      found.file
+        .copyleaksExportId =
+        exportId;
+
+      found.file
+        .copyleaksExportStatus =
+        "RECEIVING";
+
+      found.file
+        .copyleaksDetailedResultFiles =
+        found.file
+          .copyleaksDetailedResultFiles ||
+        {};
+
+      found.file
+        .copyleaksDetailedResultFiles[
+          resultId
+        ] =
+        resultPath;
+
+      savePaidJobs();
+
+      writeCopyleaksBundle(
+        scanId
+      );
+
+      return res
+        .status(200)
+        .json({
+          ok: true
+        });
+    } catch (err) {
+      console.error(
+        "Copyleaks result export save failed:",
+        err?.message ||
+          err
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false
+        });
+    }
+  }
+);
+
+app.post(
+  "/copyleaks-export/:scanId/:exportId/completed",
+  (req, res) => {
+    const suppliedSecret =
+      String(
+        req.query.secret ||
+          ""
+      );
+
+    if (
+      !COPYLEAKS_WEBHOOK_SECRET ||
+      suppliedSecret !==
+        COPYLEAKS_WEBHOOK_SECRET
+    ) {
+      return res
+        .status(401)
+        .json({
+          ok: false
+        });
+    }
+
+    const scanId =
+      String(
+        req.params.scanId ||
+          ""
+      );
+
+    const exportId =
+      String(
+        req.params.exportId ||
+          ""
+      );
+
+    const found =
+      findJobFileByCopyleaksScanId(
+        scanId
+      );
+
+    /*
+      Respond immediately so Copyleaks does not wait while
+      we create/update the local bundle.
+    */
+    res
+      .status(200)
+      .json({
+        ok: true
+      });
+
+    setImmediate(
+      async () => {
+        if (!found) {
+          return;
+        }
+
+        try {
+          const payload =
+            req.body ||
+            {};
+
+          const tasks =
+            Array.isArray(
+              payload?.tasks
+            )
+              ? payload.tasks
+              : [];
+
+          const tasksHealthy =
+            tasks.every(
+              (task) => {
+                const statusCode =
+                  Number(
+                    task
+                      ?.httpStatusCode
+                  );
+
+                return (
+                  task?.isHealthy ===
+                    true &&
+                  statusCode >= 200 &&
+                  statusCode < 300
+                );
+              }
+            );
+
+          const exportHealthy =
+            payload?.completed ===
+              true &&
+            tasksHealthy;
+
+          found.file
+            .copyleaksExportId =
+            exportId;
+
+          found.file
+            .copyleaksExportCompletedAt =
+            Date.now();
+
+          found.file
+            .copyleaksExportStatus =
+            exportHealthy
+              ? "COMPLETE"
+              : "FAILED";
+
+          found.file
+            .copyleaksExportCompletion =
+            payload;
+
+          const bundlePath =
+            writeCopyleaksBundle(
+              scanId
+            );
+
+          savePaidJobs();
+
+          await sendAdminMessage(
+            (
+              exportHealthy
+                ? "COPYLEAKS DETAILED DATA COMPLETE"
+                : "COPYLEAKS DETAILED DATA FAILED"
+            ) +
+              "\nFile: " +
+              safeText(
+                found.file
+                  .file_name ||
+                  "N/A"
+              ) +
+              "\nBundle ready: " +
+              (
+                bundlePath
+                  ? "YES"
+                  : "NO"
+              )
+          );
+        } catch (err) {
+          console.error(
+            "Copyleaks export completion processing failed:",
             err?.message ||
               err
           );
