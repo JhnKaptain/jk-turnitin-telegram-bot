@@ -8,6 +8,20 @@ const express = require("express");
 const moment = require("moment");
 const qs = require("querystring");
 
+// TRN_LIVE_API_DELIVERY_V2
+let renderJkReports = null;
+
+try {
+  ({
+    renderJkReports
+  } = require("./jk-report-renderer-max.js"));
+} catch (err) {
+  console.error(
+    "Report renderer could not be loaded:",
+    err?.message || err
+  );
+}
+
 let IntaSend = null;
 try {
   IntaSend = require("intasend-node");
@@ -789,7 +803,6 @@ function filterModeLabel(
 
   return "CLIENT CHOICE";
 }
-
 function generateJkSubmissionId() {
   let digits = "";
 
@@ -806,7 +819,7 @@ function generateJkSubmissionId() {
       ) + digits.slice(1);
   }
 
-  return "jk:oid:::1:" + digits;
+  return "trn:oid:::1:" + digits;
 }
 
 function chooseReportName() {
@@ -829,7 +842,6 @@ function ensureFileReportIdentity(file) {
     file.reportName =
       chooseReportName();
   }
-
   if (!file.reportInstitution) {
     file.reportInstitution =
       reportSettings.institution;
@@ -2914,7 +2926,7 @@ function adminQuickCommands(userId) {
 }
 
 function extractAdminActionUserId(text) {
-  const s = String(text || "");
+  const s = String(text || "").replace(/<[^>]*>/g, "");
   const patterns = [
     /User ID:\s*(\d{3,30})/i,
     /User:\s*(\d{3,30})/i,
@@ -3360,6 +3372,7 @@ function createStoredFileFromDocument(userId, doc) {
     file_id: doc.file_id,
     file_unique_id: fileUniqueId,
     file_name: fileName,
+    file_size: Number(doc.file_size || 0) || null,
     type: null,
     price: null,
     uploadedAt: Date.now(),
@@ -3399,121 +3412,188 @@ function adminReportInstruction(kind) {
   return "Generate: Wait until client chooses service.";
 }
 
-function buildAdminDocumentCaption({ userId, name, usernameText, file, fileNumber, expectedFiles }) {
-  const fileNo = Number(fileNumber || 0) || "?";
-  const total = Number(expectedFiles || 0) || "?";
-  const fileName = safeText(file?.file_name || file?.fileName || "N/A");
-  const service = adminReportTypeLabel(file?.type);
-  const price = file?.price ? String(file.price) + " KES" : "Not selected yet";
-
-  const lines = [
-    "📨 Document received",
-    "",
-    "File: " + fileNo + "/" + total,
-    "Service: " + service,
-    "Price: " + price,
-    "Filename: " + fileName
-  ];
-
-  /*
-    Do not alter the existing manual admin message
-    while MANUAL mode is active.
-  */
-  if (
-    reportSettings.reportMode !==
-    REPORT_MODE_MANUAL
-  ) {
-    lines.push(
-      "Similarity filter: " +
-        similarityFilterLabel(
-          effectiveSimilarityFilter(file)
-        ),
-      "JK Submission ID: " +
-        safeText(
-          file?.jkSubmissionId || "N/A"
-        ),
-      "Report name: " +
-        safeText(
-          file?.reportName || "N/A"
-        ),
-      "Institution: " +
-        safeText(
-          file?.reportInstitution ||
-            reportSettings.institution
-        )
-    );
-  }
-
-  if (file?.recheckEligible) {
-    lines.push("Recheck eligibility: YES (" + safeText(file.recheckHoursLeft || "?") + "h left)");
-  }
-
-  lines.push(
-    "",
-    "User ID: " + userId,
-    "Name: " + safeText(name),
-    "Username: @" + safeText(usernameText || "N/A")
-  );
-
-  return lines.join("\n");
+function escapeAdminHtml(value) {
+  return safeText(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
-async function sendSelectedDocumentToAdmin(user, sub, file, fileNumber) {
+function buildAdminDocumentCaption({
+  userId,
+  name,
+  usernameText,
+  file,
+  fileNumber,
+  expectedFiles
+}) {
+  const fileNo =
+    Number(fileNumber || 0) || "?";
+
+  const total =
+    Number(expectedFiles || 0) || "?";
+
+  const fileName =
+    escapeAdminHtml(
+      file?.file_name ||
+      file?.fileName ||
+      "N/A"
+    );
+
+  const service =
+    escapeAdminHtml(
+      adminReportTypeLabel(
+        file?.type
+      )
+    );
+
+  const price =
+    file?.price
+      ? escapeAdminHtml(
+          String(file.price) +
+          " KES"
+        )
+      : "Not selected yet";
+
+  const exclusion =
+    escapeAdminHtml(
+      similarityFilterLabel(
+        effectiveSimilarityFilter(
+          file
+        )
+      )
+    );
+
+  const cleanName =
+    escapeAdminHtml(
+      name || "N/A"
+    );
+
+  const cleanUsername =
+    escapeAdminHtml(
+      usernameText ||
+      "N/A"
+    );
+
+  return [
+    "📨 <b>Document received</b>",
+    "",
+    "<b>File:</b> " +
+      fileNo +
+      "/" +
+      total,
+    "<b>Service:</b> " +
+      service,
+    "<b>Price:</b> " +
+      price,
+    "<b>File Name:</b> " +
+      fileName,
+    "<b>Exclusion:</b> " +
+      exclusion,
+    "",
+    "<b>User ID:</b> " +
+      userId,
+    "<b>Name:</b> " +
+      cleanName,
+    "<b>Username:</b> @" +
+      cleanUsername
+  ].join("\n");
+}
+
+async function sendSelectedDocumentToAdmin(
+  user,
+  sub,
+  file,
+  fileNumber
+) {
   if (!file) return;
   if (file.adminSentAt) return;
 
-  const userId = user.id;
-  const name = getUserFullName(user);
-  const usernameText = safeText(user.username || "N/A");
+  const userId =
+    user.id;
 
-  let caption = buildAdminDocumentCaption({
-    userId,
-    name,
-    usernameText,
-    file,
-    fileNumber,
-    expectedFiles: sub?.expectedFiles
-  });
+  const name =
+    getUserFullName(
+      user
+    );
 
-  // JK_MANUAL_FILTER_ADMIN_PATCH_V1
-  // In Manual mode the administrator must still know whether
-  // the client requested a filtered or unfiltered similarity report.
-  if (
-    reportSettings.reportMode ===
-    REPORT_MODE_MANUAL
-  ) {
-    caption +=
-      "\nSimilarity filter: " +
-      similarityFilterLabel(
-        effectiveSimilarityFilter(file)
-      );
-  }
+  const usernameText =
+    safeText(
+      user.username ||
+      "N/A"
+    );
 
-  try {
-    if (!file.sourceChatId || !file.sourceMessageId) {
-      throw new Error("Missing original document message details.");
-    }
-
-    const copied = await bot.telegram.copyMessage(ADMIN_ID, file.sourceChatId, file.sourceMessageId, {
-      caption,
-      reply_markup: adminActionKeyboard(userId, "document").reply_markup
+  const caption =
+    buildAdminDocumentCaption({
+      userId,
+      name,
+      usernameText,
+      file,
+      fileNumber,
+      expectedFiles:
+        sub?.expectedFiles
     });
 
-    file.adminSentAt = Date.now();
-    file.adminMessageId = copied?.message_id || null;
+  try {
+    if (
+      !file.sourceChatId ||
+      !file.sourceMessageId
+    ) {
+      throw new Error(
+        "Missing original document message details."
+      );
+    }
+
+    const copied =
+      await bot.telegram.copyMessage(
+        ADMIN_ID,
+        file.sourceChatId,
+        file.sourceMessageId,
+        {
+          caption,
+          parse_mode:
+            "HTML",
+          reply_markup:
+            adminActionKeyboard(
+              userId,
+              "document"
+            ).reply_markup
+        }
+      );
+
+    file.adminSentAt =
+      Date.now();
+
+    file.adminMessageId =
+      copied?.message_id ||
+      null;
   } catch (err) {
     await sendAdminMessage(
-      "⚠️ Document selected but copy failed. Details below.\n\n" + caption,
-      { adminButtons: "document" }
+      "⚠️ Document selected but copy failed. Details below.\n\n" +
+        caption,
+      {
+        adminButtons:
+          "document",
+        parse_mode:
+          "HTML"
+      }
     );
 
     try {
-      if (file.sourceChatId && file.sourceMessageId) {
-        await bot.telegram.forwardMessage(ADMIN_ID, file.sourceChatId, file.sourceMessageId);
+      if (
+        file.sourceChatId &&
+        file.sourceMessageId
+      ) {
+        await bot.telegram.forwardMessage(
+          ADMIN_ID,
+          file.sourceChatId,
+          file.sourceMessageId
+        );
       }
     } catch {}
 
-    file.adminSentAt = Date.now();
+    file.adminSentAt =
+      Date.now();
   }
 }
 
@@ -4640,6 +4720,7 @@ async function startInternationalPayment(ctx, sub) {
       file_id: file.file_id || null,
       file_unique_id: file.file_unique_id || null,
       file_name: file.file_name || null,
+      file_size: Number(file.file_size || file.fileSize || 0) || null,
       type: file.type || null,
       price: file.price || null,
       recheckEligible: Boolean(file.recheckEligible),
@@ -4865,6 +4946,7 @@ async function startTzOtherPayment(ctx, sub) {
       file_id: file.file_id || null,
       file_unique_id: file.file_unique_id || null,
       file_name: file.file_name || null,
+      file_size: Number(file.file_size || file.fileSize || 0) || null,
       type: file.type || null,
       price: file.type === "SIMILARITY" ? INTERNATIONAL_SIMILARITY_ONLY_PRICE : INTERNATIONAL_CHECK_PRICE_USD,
       recheckEligible: Boolean(file.recheckEligible),
@@ -5042,6 +5124,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
       file_id: file.file_id || null,
       file_unique_id: file.file_unique_id || null,
       file_name: file.file_name || null,
+      file_size: Number(file.file_size || file.fileSize || 0) || null,
       type: file.type || null,
       price: file.price || null,
       recheckEligible: Boolean(file.recheckEligible),
@@ -7862,6 +7945,12 @@ async function submitPaidJobToCopyleaks(
           file.file_id
         );
 
+      // JK_FILE_SIZE_FROM_BUFFER_V1
+      if (!Number(file.file_size || file.fileSize || 0)) {
+        file.file_size = buffer.length;
+        savePaidJobs();
+      }
+
       const scanId =
         makeCopyleaksScanId(
           job,
@@ -8770,6 +8859,223 @@ async function startCopyleaksDetailedExport(
   return exportId;
 }
 
+async function renderAndDeliverCopyleaksReports(
+  job,
+  file,
+  bundlePath
+) {
+  if (
+    !job ||
+    !file ||
+    !bundlePath
+  ) {
+    throw new Error(
+      "Missing job, file or bundle path."
+    );
+  }
+
+  if (
+    typeof renderJkReports !==
+    "function"
+  ) {
+    throw new Error(
+      "Report renderer is unavailable."
+    );
+  }
+
+  if (
+    file.apiReportsDeliveredAt
+  ) {
+    return;
+  }
+
+  const now =
+    Date.now();
+
+  if (
+    file.apiReportDeliveryStatus ===
+      "IN_PROGRESS" &&
+    now -
+      Number(
+        file.apiReportDeliveryStartedAt ||
+        0
+      ) <
+      15 * 60 * 1000
+  ) {
+    return;
+  }
+
+  file.apiReportDeliveryStatus =
+    "IN_PROGRESS";
+
+  file.apiReportDeliveryStartedAt =
+    now;
+
+  file.apiReportDeliveryError =
+    null;
+
+  savePaidJobs();
+
+  try {
+    const outputDir =
+      path.join(
+        path.dirname(
+          bundlePath
+        ),
+        "reports"
+      );
+
+    const rendered =
+      await renderJkReports({
+        bundlePath,
+        outputDir
+      });
+
+    if (
+      rendered.similarityPath &&
+      !file.apiSimilarityDeliveredAt
+    ) {
+      await bot.telegram.sendDocument(
+        job.userId,
+        {
+          source:
+            fs.createReadStream(
+              rendered.similarityPath
+            ),
+          filename:
+            rendered.similarityFileName
+        },
+        {
+          caption:
+            "✅ Similarity report ready."
+        }
+      );
+
+      file.apiSimilarityDeliveredAt =
+        Date.now();
+
+      savePaidJobs();
+    }
+
+    if (
+      rendered.aiPath &&
+      !file.apiAiDeliveredAt
+    ) {
+      await bot.telegram.sendDocument(
+        job.userId,
+        {
+          source:
+            fs.createReadStream(
+              rendered.aiPath
+            ),
+          filename:
+            rendered.aiFileName
+        },
+        {
+          caption:
+            "✅ AI writing report ready."
+        }
+      );
+
+      file.apiAiDeliveredAt =
+        Date.now();
+
+      savePaidJobs();
+    }
+
+    file.apiReportsDeliveredAt =
+      Date.now();
+
+    file.apiReportDeliveryStatus =
+      "DELIVERED";
+
+    file.apiRenderedSimilarityPath =
+      rendered.similarityPath ||
+      null;
+
+    file.apiRenderedAiPath =
+      rendered.aiPath ||
+      null;
+
+    const allDelivered =
+      (
+        job.files ||
+        []
+      ).every(
+        (f) =>
+          Boolean(
+            f.apiReportsDeliveredAt
+          )
+      );
+
+    if (allDelivered) {
+      job.status =
+        "DELIVERED";
+
+      job.deliveredAt =
+        Date.now();
+    }
+
+    savePaidJobs();
+
+    await sendAdminMessage(
+      "✅ API REPORTS DELIVERED\n" +
+        "User: " +
+        job.userId +
+        "\nFile: " +
+        safeText(
+          file.file_name ||
+          "N/A"
+        ) +
+        "\nSimilarity PDF: " +
+        (
+          rendered.similarityPath
+            ? "YES"
+            : "NO"
+        ) +
+        "\nAI PDF: " +
+        (
+          rendered.aiPath
+            ? "YES"
+            : "NO"
+        )
+    );
+  } catch (err) {
+    file.apiReportDeliveryStatus =
+      "FAILED";
+
+    file.apiReportDeliveryFailedAt =
+      Date.now();
+
+    file.apiReportDeliveryError =
+      String(
+        err?.stack ||
+        err?.message ||
+        err
+      );
+
+    savePaidJobs();
+
+    await sendAdminMessage(
+      "❌ API REPORT RENDER/DELIVERY FAILED\n" +
+        "User: " +
+        job.userId +
+        "\nFile: " +
+        safeText(
+          file.file_name ||
+          "N/A"
+        ) +
+        "\nError: " +
+        safeText(
+          err?.message ||
+          err
+        )
+    );
+
+    throw err;
+  }
+}
+
 function writeCopyleaksBundle(
   scanId
 ) {
@@ -8873,10 +9179,18 @@ function writeCopyleaksBundle(
         file.file_name ||
         null,
 
+      fileSize:
+        Number(file.file_size || file.fileSize || 0) ||
+        null,
+
       similarityFilter:
         effectiveSimilarityFilter(
           file
-        )
+        ),
+
+      serviceType:
+        file.type ||
+        null
     },
 
     completion,
@@ -9665,6 +9979,18 @@ app.post(
                   : "NO"
               )
           );
+
+          if (
+            exportHealthy &&
+            bundlePath
+          ) {
+            await renderAndDeliverCopyleaksReports(
+              found.job,
+              found.file,
+              bundlePath
+            );
+          }
+
         } catch (err) {
           console.error(
             "Copyleaks export completion processing failed:",
