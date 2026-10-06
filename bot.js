@@ -7827,6 +7827,11 @@ async function submitPaidJobToCopyleaks(
 
   savePaidJobs();
 
+  // JK_COPYLEAKS_FAILURE_STATUS_V1
+  let submittedCount = 0;
+  let failedCount = 0;
+  const submissionErrors = [];
+
   for (
     let i = 0;
     i < job.files.length;
@@ -8017,6 +8022,8 @@ async function submitPaidJobToCopyleaks(
       file.appliedFilter =
         filter;
 
+      submittedCount += 1;
+
       savePaidJobs();
     } catch (err) {
       file.copyleaksStatus =
@@ -8029,6 +8036,19 @@ async function submitPaidJobToCopyleaks(
 
       file.copyleaksFailedAt =
         Date.now();
+
+      failedCount += 1;
+
+      submissionErrors.push(
+        safeText(
+          file.file_name ||
+            ("File " + (i + 1))
+        ) +
+          ": " +
+          String(
+            err?.message || err
+          )
+      );
 
       savePaidJobs();
 
@@ -8050,6 +8070,21 @@ async function submitPaidJobToCopyleaks(
         )
       );
     }
+  }
+
+  if (failedCount > 0) {
+    job.status =
+      submittedCount > 0
+        ? "API_PARTIAL_FAILURE"
+        : "API_FAILED";
+
+    savePaidJobs();
+
+    throw new Error(
+      failedCount +
+        " Copyleaks submission(s) failed: " +
+        submissionErrors.join(" | ")
+    );
   }
 
   return job;
