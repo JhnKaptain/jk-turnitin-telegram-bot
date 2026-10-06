@@ -7542,12 +7542,16 @@ function assertCopyleaksConfigured() {
   }
 }
 
+// JK_COPYLEAKS_HTTP_ERROR_PATCH_V1
 async function copyleaksJson(
   url,
   options = {}
 ) {
   const res =
-    await fetch(url, options);
+    await fetch(
+      url,
+      options
+    );
 
   const text =
     await res.text();
@@ -7566,56 +7570,90 @@ async function copyleaksJson(
   }
 
   if (!res.ok) {
-    // JK_COPYLEAKS_ERROR_DIAGNOSTICS_V1
     const nestedError =
       body &&
-      typeof body.error === "object"
+      typeof body.error === "object" &&
+      body.error !== null
         ? body.error
         : null;
 
-    const details =
-      nestedError?.details
-        ? JSON.stringify(
+    let fullBody = "";
+
+    try {
+      fullBody =
+        JSON.stringify(body);
+    } catch {
+      fullBody =
+        String(text || "");
+    }
+
+    let details = "";
+
+    if (
+      nestedError?.details !==
+      undefined
+    ) {
+      try {
+        details =
+          JSON.stringify(
             nestedError.details
-          )
-        : "";
-
-    const bodyText =
-      (() => {
-        try {
-          return JSON.stringify(
-            body
           );
-        } catch {
-          return String(
-            text || ""
+      } catch {
+        details =
+          String(
+            nestedError.details
           );
-        }
-      })();
+      }
+    }
 
-    const msg =
+    const message =
       nestedError?.message ||
       body?.message ||
       (
-        typeof body?.error === "string"
+        typeof body?.error ===
+        "string"
           ? body.error
           : ""
       ) ||
       body?.raw ||
-      bodyText ||
+      fullBody ||
       "No response body";
+
+    const idText =
+      nestedError?.id
+        ? " | id=" +
+          nestedError.id
+        : "";
+
+    const codeText =
+      nestedError?.code !==
+        undefined
+        ? " | code=" +
+          nestedError.code
+        : "";
+
+    const detailsText =
+      details
+        ? " | details=" +
+          details
+        : "";
+
+    const fullBodyText =
+      fullBody &&
+      fullBody !== message
+        ? " | response=" +
+          fullBody
+        : "";
 
     throw new Error(
       "Copyleaks HTTP " +
         res.status +
         ": " +
-        msg +
-        (
-          details
-            ? " | details=" +
-              details
-            : ""
-        )
+        message +
+        idText +
+        codeText +
+        detailsText +
+        fullBodyText
     );
   }
 
