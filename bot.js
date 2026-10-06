@@ -7566,17 +7566,56 @@ async function copyleaksJson(
   }
 
   if (!res.ok) {
+    // JK_COPYLEAKS_ERROR_DIAGNOSTICS_V1
+    const nestedError =
+      body &&
+      typeof body.error === "object"
+        ? body.error
+        : null;
+
+    const details =
+      nestedError?.details
+        ? JSON.stringify(
+            nestedError.details
+          )
+        : "";
+
+    const bodyText =
+      (() => {
+        try {
+          return JSON.stringify(
+            body
+          );
+        } catch {
+          return String(
+            text || ""
+          );
+        }
+      })();
+
     const msg =
+      nestedError?.message ||
       body?.message ||
-      body?.error ||
-      body?.raw ||
       (
-        "HTTP " +
-        res.status
-      );
+        typeof body?.error === "string"
+          ? body.error
+          : ""
+      ) ||
+      body?.raw ||
+      bodyText ||
+      "No response body";
 
     throw new Error(
-      "Copyleaks: " + msg
+      "Copyleaks HTTP " +
+        res.status +
+        ": " +
+        msg +
+        (
+          details
+            ? " | details=" +
+              details
+            : ""
+        )
     );
   }
 
