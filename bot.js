@@ -8527,36 +8527,39 @@ function collectCopyleaksResultDescriptors(
   );
 }
 
+// JK_COPYLEAKS_EXPORT_ID_FIX_V1
 function makeCopyleaksExportId(
   scanId
 ) {
-  return (
-    "jkexp-" +
-
+  /*
+    Copyleaks requires Export ID length <= 36 characters.
+    Keep it unique but deliberately short.
+  */
+  const scanPart =
     safeCopyleaksPathPart(
       scanId
-    ).slice(
-      0,
-      18
-    ) +
+    )
+      .toLowerCase()
+      .slice(0, 12);
 
-    "-" +
-
+  const timePart =
     Date.now()
-      .toString(36) +
+      .toString(36)
+      .slice(-8);
 
-    "-" +
-
+  const randomPart =
     Math.random()
       .toString(36)
-      .slice(
-        2,
-        8
-      )
-  ).slice(
-    0,
-    50
-  );
+      .slice(2, 8);
+
+  return (
+    "jk-" +
+    scanPart +
+    "-" +
+    timePart +
+    "-" +
+    randomPart
+  ).slice(0, 36);
 }
 
 function validCopyleaksExportSecret(
