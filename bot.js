@@ -315,7 +315,6 @@ const STAGE_WAIT_RESELLER_CODE = "WAIT_RESELLER_CODE";
 
 // JK_COPYLEAKS_CONTROL_PATCH_V2
 // JK_COPYLEAKS_EXPORT_PATCH_V1
-// JK_SPLIT_AI_SIMILARITY_EXCLUSIONS_V2
 const STAGE_WAIT_PAYMENT_METHOD = "WAIT_PAYMENT_METHOD";
 const STAGE_WAIT_PHONE = "WAIT_PHONE";
 const STAGE_WAIT_PAYMENT = "WAIT_PAYMENT";
@@ -7877,102 +7876,6 @@ function shouldRunAiForFile(file) {
     "SIMILARITY";
 }
 
-async function submitCopyleaksAiPass({token,job,file,fileIndex,buffer}) {
-  if(!shouldRunAiForFile(file)){
-    file.copyleaksAiStatus="NOT_REQUIRED";
-    return null;
-  }
-
-  const aiScanId=
-    makeCopyleaksScanId(job,fileIndex)
-      .replace(/^jk-/,"jkai-")
-      .slice(0,36);
-
-  const payload={
-    base64:buffer.toString("base64"),
-
-    filename:
-      file.file_name||
-      ("submission-"+(fileIndex+1)+".docx"),
-
-    properties:{
-      webhooks:{
-        status:
-          PUBLIC_BASE_URL+
-          "/copyleaks-ai/{STATUS}/"+
-          encodeURIComponent(aiScanId),
-
-        statusHeaders:[
-          [
-            "x-jk-copyleaks-secret",
-            COPYLEAKS_WEBHOOK_SECRET
-          ]
-        ]
-      },
-
-      developerPayload:JSON.stringify({
-        jobId:job.jobId,
-        fileIndex,
-        userId:job.userId,
-        role:"AI_ONLY"
-      }),
-
-      sandbox:COPYLEAKS_SANDBOX,
-      includeHtml:true,
-      scanTimeZone:"Africa/Nairobi",
-
-      scanning:{
-        internet:false,
-
-        copyleaksDb:{
-          includeMySubmissions:false,
-          includeOthersSubmissions:false
-        }
-      },
-
-      indexing:{
-        copyleaksDb:false
-      },
-
-      exclude:{
-        quotes:false,
-        references:true,
-        citations:false
-      },
-
-      aiGeneratedText:{
-        detect:true,
-        sensitivity:COPYLEAKS_AI_SENSITIVITY
-      }
-    }
-  };
-
-  await copyleaksJson(
-    COPYLEAKS_API_BASE+
-      "/v3/scans/submit/file/"+
-      encodeURIComponent(aiScanId),
-    {
-      method:"PUT",
-
-      headers:{
-        Authorization:"Bearer "+token,
-        "Content-Type":"application/json",
-        Accept:"application/json"
-      },
-
-      body:JSON.stringify(payload)
-    }
-  );
-
-  file.copyleaksAiScanId=aiScanId;
-  file.copyleaksAiStatus="SUBMITTED";
-  file.copyleaksAiSubmittedAt=Date.now();
-
-  savePaidJobs();
-
-  return aiScanId;
-}
-
 async function submitPaidJobToCopyleaks(
   jobId
 ) {
@@ -8191,10 +8094,14 @@ async function submitPaidJobToCopyleaks(
               false
           },
 
-          /* AI runs separately so quote filtering never affects AI. */
           aiGeneratedText: {
-            detect: false,
-            sensitivity: COPYLEAKS_AI_SENSITIVITY
+            detect:
+              shouldRunAiForFile(
+                file
+              ),
+
+            sensitivity:
+              COPYLEAKS_AI_SENSITIVITY
           }
         }
       };
@@ -8238,37 +8145,6 @@ async function submitPaidJobToCopyleaks(
 
       file.appliedFilter =
         filter;
-
-      if (shouldRunAiForFile(file)) {
-        try {
-          await submitCopyleaksAiPass({
-            token,
-            job,
-            file,
-            fileIndex:i,
-            buffer
-          });
-        } catch (aiErr) {
-          file.copyleaksAiStatus="FAILED";
-          file.copyleaksAiFailedAt=Date.now();
-          file.copyleaksAiError=
-            String(aiErr?.message||aiErr);
-
-          await sendAdminMessage(
-            "❌ Copyleaks AI-only submission failed\n"+
-            "User: "+job.userId+
-            "\nFile: "+
-            safeText(
-              file.file_name||
-              ("File "+(i+1))
-            )+
-            "\nError: "+
-            safeText(aiErr?.message||aiErr)
-          );
-        }
-      } else {
-        file.copyleaksAiStatus="NOT_REQUIRED";
-      }
 
       submittedCount += 1;
 
@@ -8432,21 +8308,6 @@ function findJobFileByCopyleaksScanId(
   return null;
 }
 
-
-function findJobFileByCopyleaksAiScanId(scanId){
-  for(const job of Object.values(paidJobs||{})){
-    for(const file of job.files||[]){
-      if(
-        String(file.copyleaksAiScanId||"")===
-        String(scanId||"")
-      ){
-        return {job,file};
-      }
-    }
-  }
-
-  return null;
-}
 
 // ============================================================
 // COPYLEAKS DETAILED EXPORT
@@ -9250,64 +9111,6 @@ async function renderAndDeliverCopyleaksReports(
   }
 }
 
-function mergeCopyleaksCompletionForBundle(
-  primary,
-  ai,
-  file
-){
-  const merged=
-    primary&&typeof primary==="object"
-      ? JSON.parse(JSON.stringify(primary))
-      : {};
-
-  const pn=primary?.notifications||{};
-
-  const pa=
-    Array.isArray(pn?.alerts)
-      ? pn.alerts
-      : [];
-
-  const aa=
-    Array.isArray(ai?.notifications?.alerts)
-      ? ai.notifications.alerts
-      : [];
-
-  const alerts=[
-    ...pa.filter(
-      x=>
-        String(x?.code||"")!==
-        "suspected-ai-text"
-    ),
-    ...aa
-  ];
-
-  if(
-    shouldRunAiForFile(file)&&
-    String(file?.copyleaksAiStatus||"")==="FAILED"&&
-    !alerts.some(
-      x=>[
-        "ai-detection-failed",
-        "file-type-not-supported",
-        "ai-detection-lang-not-supported",
-        "ai-detection-text-too-short"
-      ].includes(
-        String(x?.code||"")
-      )
-    )
-  ){
-    alerts.push({
-      code:"ai-detection-failed"
-    });
-  }
-
-  merged.notifications={
-    ...pn,
-    alerts
-  };
-
-  return merged;
-}
-
 function writeCopyleaksBundle(
   scanId
 ) {
@@ -9333,18 +9136,6 @@ function writeCopyleaksBundle(
   const completion =
     readCopyleaksJsonFile(
       file.copyleaksCompletedFile
-    );
-
-  const aiCompletion =
-    readCopyleaksJsonFile(
-      file.copyleaksAiCompletedFile
-    );
-
-  const mergedCompletion =
-    mergeCopyleaksCompletionForBundle(
-      completion,
-      aiCompletion,
-      file
     );
 
   const crawled =
@@ -9441,8 +9232,7 @@ function writeCopyleaksBundle(
         null
     },
 
-    completion:
-      mergedCompletion,
+    completion,
 
     crawled,
 
@@ -9477,57 +9267,6 @@ function writeCopyleaksBundle(
   savePaidJobs();
 
   return bundlePath;
-}
-
-async function maybeRenderAndDeliverCopyleaksReports(
-  job,
-  file
-){
-  if(
-    !job||
-    !file||
-    !file.copyleaksScanId
-  ){
-    return false;
-  }
-
-  if(
-    String(
-      file.copyleaksExportStatus||""
-    )!=="COMPLETE"
-  ){
-    return false;
-  }
-
-  if(
-    shouldRunAiForFile(file)&&
-    ![
-      "COMPLETED",
-      "FAILED"
-    ].includes(
-      String(
-        file.copyleaksAiStatus||""
-      )
-    )
-  ){
-    return false;
-  }
-
-  const bundlePath=
-    writeCopyleaksBundle(
-      file.copyleaksScanId
-    );
-
-  if(!bundlePath)
-    return false;
-
-  await renderAndDeliverCopyleaksReports(
-    job,
-    file,
-    bundlePath
-  );
-
-  return true;
 }
 
 async function handleCopyleaksStatusWebhook(
@@ -9650,7 +9389,9 @@ async function handleCopyleaksStatusWebhook(
         ),
 
       aiPercent:
-        null
+        extractCopyleaksAiPercent(
+          payload
+        )
     };
 
     try {
@@ -9822,132 +9563,6 @@ await sendAdminMessage(
   savePaidJobs();
 }
 
-async function handleCopyleaksAiStatusWebhook(
-  status,
-  scanId,
-  payload
-){
-  const found=
-    findJobFileByCopyleaksAiScanId(
-      scanId
-    );
-
-  if(!found){
-    await sendAdminMessage(
-      "⚠️ Unmatched Copyleaks AI webhook\n"+
-      "Scan: "+safeText(scanId)+
-      "\nStatus: "+safeText(status)
-    );
-
-    return;
-  }
-
-  const {job,file}=found;
-
-  const normalized=
-    String(status||"")
-      .toUpperCase();
-
-  if(normalized==="COMPLETED"){
-    file.copyleaksAiStatus="COMPLETED";
-    file.copyleaksAiCompletedAt=Date.now();
-
-    file.copyleaksAiSummary={
-      aiPercent:
-        extractCopyleaksAiPercent(
-          payload
-        )
-    };
-
-    try{
-      const dir=
-        ensureCopyleaksScanDir(
-          scanId
-        );
-
-      const p=
-        path.join(
-          dir,
-          "completed.json"
-        );
-
-      fs.writeFileSync(
-        p,
-        JSON.stringify(
-          payload,
-          null,
-          2
-        ),
-        "utf8"
-      );
-
-      file.copyleaksAiCompletedFile=p;
-    }catch(e){
-      file.copyleaksAiStorageError=
-        String(e?.message||e);
-    }
-
-    savePaidJobs();
-
-    await sendAdminMessage(
-      "✅ COPYLEAKS AI PASS COMPLETE\n"+
-      "User: "+job.userId+
-      "\nFile: "+
-      safeText(
-        file.file_name||"N/A"
-      )+
-      "\nAI: "+
-      (
-        file.copyleaksAiSummary.aiPercent===null
-          ? "N/A"
-          : String(
-              file.copyleaksAiSummary.aiPercent
-            )+"%"
-      )+
-      "\nAI exclusions: Bibliography only; quoted text included."
-    );
-
-    await maybeRenderAndDeliverCopyleaksReports(
-      job,
-      file
-    );
-
-    return;
-  }
-
-  if(normalized==="ERROR"){
-    file.copyleaksAiStatus="FAILED";
-    file.copyleaksAiFailedAt=Date.now();
-    file.copyleaksAiErrorPayload=payload;
-
-    savePaidJobs();
-
-    await sendAdminMessage(
-      "❌ COPYLEAKS AI PASS ERROR\n"+
-      "User: "+job.userId+
-      "\nFile: "+
-      safeText(
-        file.file_name||"N/A"
-      )
-    );
-
-    await maybeRenderAndDeliverCopyleaksReports(
-      job,
-      file
-    );
-
-    return;
-  }
-
-  file.copyleaksAiStatus=
-    normalized||"PROCESSING";
-
-  file.copyleaksAiLastWebhookAt=
-    Date.now();
-
-  savePaidJobs();
-}
-
 // =====================
 // EXPRESS SERVER + WEBHOOKS
 // =====================
@@ -10040,48 +9655,6 @@ app.post(
   }
 );
 
-
-app.post(
-  "/copyleaks-ai/:status/:scanId",
-  (req,res)=>{
-    const secret=
-      String(
-        req.get(
-          "x-jk-copyleaks-secret"
-        )||""
-      );
-
-    if(
-      !COPYLEAKS_WEBHOOK_SECRET||
-      secret!==COPYLEAKS_WEBHOOK_SECRET
-    ){
-      return res
-        .status(401)
-        .json({ok:false});
-    }
-
-    res
-      .status(200)
-      .json({ok:true});
-
-    setImmediate(
-      async()=>{
-        try{
-          await handleCopyleaksAiStatusWebhook(
-            req.params.status,
-            req.params.scanId,
-            req.body||{}
-          );
-        }catch(e){
-          console.error(
-            "Copyleaks AI webhook processing failed:",
-            e?.message||e
-          );
-        }
-      }
-    );
-  }
-);
 
 app.put(
   "/copyleaks-export/:scanId/:exportId/crawled",
@@ -10450,9 +10023,10 @@ app.post(
             exportHealthy &&
             bundlePath
           ) {
-            await maybeRenderAndDeliverCopyleaksReports(
+            await renderAndDeliverCopyleaksReports(
               found.job,
-              found.file
+              found.file,
+              bundlePath
             );
           }
 
