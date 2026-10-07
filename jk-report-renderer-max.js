@@ -12,6 +12,9 @@ const {
   scale
 } = require("pdf-lib");
 const fontkit = require("@pdf-lib/fontkit");
+const { prepareOriginalLayout } = require("./jk-original-layout.js");
+
+// JK_PRESERVE_ORIGINAL_LAYOUT_V1
 
 const PAGE_W = 612;
 const PAGE_H = 792;
@@ -407,6 +410,13 @@ function drawCoverIcon(page, icons, key, top) {
 }
 
 function documentPageCount(bundle) {
+  const preserved =
+    Number(bundle?.__originalPageCount || 0);
+
+  if (preserved > 0) {
+    return preserved;
+  }
+
   const html = s(bundle?.crawled?.html?.value);
   const m = html.match(/<div id="pf\d+" class="[^"]*">/g);
   return m?.length || 1;
@@ -2901,6 +2911,58 @@ async function drawOriginalPages(
   for (const original of originalPages) {
     const page = doc.addPage([PAGE_W, PAGE_H]);
 
+    let sourceScale = 1;
+    let sourceX = 0;
+    let sourceY = 0;
+
+    if (original.embeddedPage) {
+      const sourceWidth =
+        Number(
+          original.width ||
+          original.embeddedPage.width ||
+          PAGE_W
+        );
+
+      const sourceHeight =
+        Number(
+          original.height ||
+          original.embeddedPage.height ||
+          PAGE_H
+        );
+
+      sourceScale =
+        Math.min(
+          PAGE_W / sourceWidth,
+          PAGE_H / sourceHeight
+        );
+
+      sourceX =
+        (PAGE_W -
+          sourceWidth *
+            sourceScale) /
+        2;
+
+      sourceY =
+        (PAGE_H -
+          sourceHeight *
+            sourceScale) /
+        2;
+
+      page.drawPage(
+        original.embeddedPage,
+        {
+          x: sourceX,
+          y: sourceY,
+          width:
+            sourceWidth *
+            sourceScale,
+          height:
+            sourceHeight *
+            sourceScale
+        }
+      );
+    }
+
     if (original.bg) {
       try {
         const bytes = Buffer.from(original.bg.data, "base64");
@@ -2922,11 +2984,43 @@ async function drawOriginalPages(
     const markerPlaced = new Set();
 
     for (const element of original.elements) {
-      const x = Number(element.style.left || 0);
-      const y = Number(element.style.bottom || 0);
-      const targetWidth = Number(element.style.width || 0);
-      const height = Number(element.style.height || element.size || 11);
-      const size = Number(element.size || 11);
+      const x =
+        sourceX +
+        Number(
+          element.style.left ||
+          0
+        ) *
+        sourceScale;
+
+      const y =
+        sourceY +
+        Number(
+          element.style.bottom ||
+          0
+        ) *
+        sourceScale;
+
+      const targetWidth =
+        Number(
+          element.style.width ||
+          0
+        ) *
+        sourceScale;
+
+      const height =
+        Number(
+          element.style.height ||
+          element.size ||
+          11
+        ) *
+        sourceScale;
+
+      const size =
+        Number(
+          element.size ||
+          11
+        ) *
+        sourceScale;
       const font = elementFont(originalFontCache, element);
 
       const relevant =
@@ -3041,6 +3135,12 @@ async function drawOriginalPages(
         }
       }
 
+      if (
+        original.preserveSourcePage
+      ) {
+        continue;
+      }
+
       try {
         drawFittedText(
           page,
@@ -3116,8 +3216,24 @@ async function renderSimilarity(bundle, outputPath) {
         ?.value
     );
 
+  let preservedOriginal = null;
+
+  try {
+    preservedOriginal =
+      await prepareOriginalLayout(
+        bundle
+      );
+  } catch (err) {
+    console.warn(
+      "Preserved original layout unavailable; using Copyleaks HTML fallback:",
+      err?.message || err
+    );
+  }
+
   const originalPages =
-    parseOriginalPages(html);
+    preservedOriginal?.pages?.length
+      ? preservedOriginal.pages
+      : parseOriginalPages(html);
 
   const parsedTextElements =
     originalPages.reduce(
@@ -3132,7 +3248,7 @@ async function renderSimilarity(bundle, outputPath) {
     !parsedTextElements
   ) {
     throw new Error(
-      `Crawled document parsing produced no content (pages=${originalPages.length}, elements=${parsedTextElements}).`
+      `Document parsing produced no content (pages=${originalPages.length}, elements=${parsedTextElements}).`
     );
   }
 
@@ -3140,6 +3256,45 @@ async function renderSimilarity(bundle, outputPath) {
     originalPages,
     text
   );
+
+  bundle.__originalPageCount =
+    originalPages.length;
+
+  if (
+    preservedOriginal?.pdfPath &&
+    originalPages.length
+  ) {
+    const sourcePdfBytes =
+      fs.readFileSync(
+        preservedOriginal.pdfPath
+      );
+
+    const embeddedPages =
+      await doc.embedPdf(
+        sourcePdfBytes,
+        originalPages.map(
+          (_, index) =>
+            index
+        )
+      );
+
+    for (
+      let index = 0;
+      index < originalPages.length;
+      index += 1
+    ) {
+      originalPages[index].embeddedPage =
+        embeddedPages[index];
+      originalPages[index].preserveSourcePage =
+        true;
+    }
+
+    console.log(
+      "Using preserved original document layout:",
+      originalPages.length,
+      "page(s)."
+    );
+  }
 
   const originalFonts =
     await embedOriginalFonts(
@@ -3315,8 +3470,24 @@ async function renderAi(bundle, outputPath) {
         ?.value
     );
 
+  let preservedOriginal = null;
+
+  try {
+    preservedOriginal =
+      await prepareOriginalLayout(
+        bundle
+      );
+  } catch (err) {
+    console.warn(
+      "Preserved original layout unavailable; using Copyleaks HTML fallback:",
+      err?.message || err
+    );
+  }
+
   const originalPages =
-    parseOriginalPages(html);
+    preservedOriginal?.pages?.length
+      ? preservedOriginal.pages
+      : parseOriginalPages(html);
 
   const parsedTextElements =
     originalPages.reduce(
@@ -3331,7 +3502,7 @@ async function renderAi(bundle, outputPath) {
     !parsedTextElements
   ) {
     throw new Error(
-      `Crawled document parsing produced no content (pages=${originalPages.length}, elements=${parsedTextElements}).`
+      `Document parsing produced no content (pages=${originalPages.length}, elements=${parsedTextElements}).`
     );
   }
 
@@ -3339,6 +3510,45 @@ async function renderAi(bundle, outputPath) {
     originalPages,
     text
   );
+
+  bundle.__originalPageCount =
+    originalPages.length;
+
+  if (
+    preservedOriginal?.pdfPath &&
+    originalPages.length
+  ) {
+    const sourcePdfBytes =
+      fs.readFileSync(
+        preservedOriginal.pdfPath
+      );
+
+    const embeddedPages =
+      await doc.embedPdf(
+        sourcePdfBytes,
+        originalPages.map(
+          (_, index) =>
+            index
+        )
+      );
+
+    for (
+      let index = 0;
+      index < originalPages.length;
+      index += 1
+    ) {
+      originalPages[index].embeddedPage =
+        embeddedPages[index];
+      originalPages[index].preserveSourcePage =
+        true;
+    }
+
+    console.log(
+      "Using preserved original document layout:",
+      originalPages.length,
+      "page(s)."
+    );
+  }
 
   const originalFonts =
     await embedOriginalFonts(
@@ -3431,6 +3641,9 @@ async function renderJkReports({
         "utf8"
       )
     );
+
+  bundle.__bundlePath =
+    bundlePath;
 
   const base =
     fileBase(

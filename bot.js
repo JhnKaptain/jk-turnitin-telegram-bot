@@ -7957,6 +7957,41 @@ async function submitPaidJobToCopyleaks(
           i
         );
 
+      // JK_PRESERVE_ORIGINAL_FILE_V1
+      const originalExt =
+        path.extname(
+          safeText(
+            file.file_name ||
+            ""
+          )
+        )
+          .toLowerCase()
+          .replace(
+            /[^.a-z0-9]/g,
+            ""
+          ) ||
+        ".bin";
+
+      const originalScanDir =
+        ensureCopyleaksScanDir(
+          scanId
+        );
+
+      const originalPath =
+        path.join(
+          originalScanDir,
+          "original" +
+            originalExt
+        );
+
+      fs.writeFileSync(
+        originalPath,
+        buffer
+      );
+
+      file.copyleaksOriginalFile =
+        originalPath;
+
       const filter =
         effectiveSimilarityFilter(
           file
@@ -9181,6 +9216,10 @@ function writeCopyleaksBundle(
 
       fileSize:
         Number(file.file_size || file.fileSize || 0) ||
+        null,
+
+      originalFilePath:
+        file.copyleaksOriginalFile ||
         null,
 
       similarityFilter:
