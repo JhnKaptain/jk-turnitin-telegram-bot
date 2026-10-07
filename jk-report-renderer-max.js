@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 const fs = require("fs");
 const path = require("path");
@@ -309,12 +309,31 @@ async function loadBrandFonts(doc) {
     lexMed: findFontFile(lexPkg, ["latin-500-normal", "500-normal"]),
     lexSemi: findFontFile(lexPkg, ["latin-600-normal", "600-normal"])
   };
+  // JK_CUSTOM_LOGO_V1
+  const brandLogoPath =
+    path.join(
+      __dirname,
+      "assets",
+      "logo.jpg"
+    );
+
+  let brandLogo = null;
+
+  if (fs.existsSync(brandLogoPath)) {
+    brandLogo =
+      await doc.embedJpg(
+        fs.readFileSync(
+          brandLogoPath
+        )
+      );
+  }
   return {
     noto: await doc.embedFont(fs.readFileSync(files.noto), { subset: true }),
     notoSemi: await doc.embedFont(fs.readFileSync(files.notoSemi), { subset: true }),
     lexMed: await doc.embedFont(fs.readFileSync(files.lexMed), { subset: true }),
     lexSemi: await doc.embedFont(fs.readFileSync(files.lexSemi), { subset: true }),
-    helv: await doc.embedFont(StandardFonts.Helvetica)
+    helv: await doc.embedFont(StandardFonts.Helvetica),
+    brandLogo
   };
 }
 
@@ -356,6 +375,67 @@ const BRAND_MARK = Object.freeze({
 function drawBrandMark(page, f, top) {
   const x = BRAND_MARK.x;
   const y = PAGE_H - top - BRAND_MARK.height;
+
+  if (f.brandLogo) {
+    const maxW =
+      BRAND_MARK.width;
+
+    const maxH =
+      BRAND_MARK.height;
+
+    const nativeW =
+      Number(
+        f.brandLogo.width ||
+        maxW
+      );
+
+    const nativeH =
+      Number(
+        f.brandLogo.height ||
+        maxH
+      );
+
+    const logoScale =
+      Math.min(
+        maxW / nativeW,
+        maxH / nativeH
+      );
+
+    const logoW =
+      nativeW *
+      logoScale;
+
+    const logoH =
+      nativeH *
+      logoScale;
+
+    page.drawImage(
+      f.brandLogo,
+      {
+        x:
+          x +
+          (
+            maxW -
+            logoW
+          ) / 2,
+
+        y:
+          y +
+          (
+            maxH -
+            logoH
+          ) / 2,
+
+        width:
+          logoW,
+
+        height:
+          logoH
+      }
+    );
+
+    return;
+  }
   const iconX = x + 0.5;
   const iconY = y + 1;
   const iconW = 14.5;
@@ -2301,7 +2381,11 @@ function aiInfo(bundle) {
   }
   for (const item of bundle?.results || []) {
     const type = s(item?.descriptor?.sourceType).toLowerCase();
-    if (type.includes("ai")) {
+    if (
+      type === "aidetection" ||
+      type === "ai-detection" ||
+      type === "ai_detection"
+    ) {
       detail = item.result;
       const raw = Number(detail?.summary?.ai);
       if (Number.isFinite(raw)) percent = raw <= 1 ? raw * 100 : raw;
