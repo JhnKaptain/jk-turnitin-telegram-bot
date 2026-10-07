@@ -986,40 +986,489 @@ function pageChunks(html) {
   return starts.map((p, i) => html.slice(p.index, i + 1 < starts.length ? starts[i + 1].index : html.length));
 }
 
-function parseOriginalPages(html) {
-  const classes = parseCssFontClasses(html);
+// COPYLEAKS_PARAGRAPH_HTML_FALLBACK_V1
 
-  return pageChunks(html).map((chunk) => {
-    const bg = chunk.match(/<img\s+width="(\d+)"\s+height="(\d+)"\s+src="data:image\/(png|jpeg);base64,([^"]+)"[^>]*alt="background image"/i);
-    const elements = [];
+function splitFallbackParagraph(
+  value,
+  maxChars = 92
+) {
+  const clean =
+    decodeEntities(
+      safeText(value)
+        .replace(
+          /<br\s*\/?>/gi,
+          " "
+        )
+        .replace(
+          /<[^>]+>/g,
+          ""
+        )
+    )
+      .replace(
+        /\s+/g,
+        " "
+      )
+      .trim();
 
-    const wordRe = /<span class="([^"]*\bw\b[^"]*)"[^>]*style="([^"]*)"[^>]*>\s*<span class="wt[^"]*"[^>]*>([\s\S]*?)<\/span>\s*<\/span>/g;
-    let m;
-    while ((m = wordRe.exec(chunk))) {
-      const value = decodeEntities(m[3].replace(/<[^>]+>/g, ""));
-      if (!value) continue;
-      const fontClass = m[1].match(/\bf\d+\b/)?.[0] || "f0";
-      const cfg = classes[fontClass] || { family: null, size: 11, weight: 400 };
-      elements.push({ order: m.index, type: "w", text: value, style: parseStyle(m[2]), fontClass, ...cfg });
+  if (!clean) {
+    return [];
+  }
+
+  const words =
+    clean.split(/\s+/);
+
+  const lines = [];
+
+  let line = "";
+
+  for (
+    const word of words
+  ) {
+    const next =
+      line
+        ? line +
+          " " +
+          word
+        : word;
+
+    if (
+      !line ||
+      next.length <=
+        maxChars
+    ) {
+      line = next;
+    } else {
+      lines.push(
+        line
+      );
+
+      line = word;
+    }
+  }
+
+  if (line) {
+    lines.push(
+      line
+    );
+  }
+
+  return lines;
+}
+
+function parseParagraphFallbackPages(
+  html
+) {
+  const bodyMatch =
+    safeText(html).match(
+      /<body\b[^>]*>([\s\S]*?)<\/body>/i
+    );
+
+  const body =
+    bodyMatch
+      ? bodyMatch[1]
+      : safeText(html);
+
+  const paragraphRe =
+    /<p\b[^>]*>([\s\S]*?)<\/p>/gi;
+
+  const lines = [];
+
+  let match;
+
+  while (
+    (
+      match =
+        paragraphRe.exec(
+          body
+        )
+    )
+  ) {
+    const paragraphLines =
+      splitFallbackParagraph(
+        match[1]
+      );
+
+    if (
+      paragraphLines.length
+    ) {
+      lines.push(
+        ...paragraphLines
+      );
+
+      /*
+        Preserve a little paragraph
+        separation without inventing
+        document content.
+      */
+      lines.push("");
+    }
+  }
+
+  /*
+    Some simple XHTML exports may not
+    use <p>. Fall back to visible body
+    text only if needed.
+  */
+  if (!lines.length) {
+    const visible =
+      splitFallbackParagraph(
+        body.replace(
+          /<\/(div|li|tr|h[1-6])>/gi,
+          " "
+        )
+      );
+
+    lines.push(
+      ...visible
+    );
+  }
+
+  while (
+    lines.length &&
+    !lines[
+      lines.length - 1
+    ]
+  ) {
+    lines.pop();
+  }
+
+  if (!lines.length) {
+    return [];
+  }
+
+  /*
+    These coordinates deliberately
+    leave room for the existing report
+    header and footer.
+
+    We do not claim to reproduce Word's
+    original pagination when Copyleaks
+    did not supply page geometry.
+  */
+  const LEFT = 68;
+  const WIDTH = 476;
+  const FIRST_Y = 688;
+  const LAST_Y = 82;
+  const LINE_STEP = 17;
+  const FONT_SIZE = 10;
+
+  const pages = [];
+
+  let current = {
+    width: PAGE_W,
+    height: PAGE_H,
+    bg: null,
+    elements: []
+  };
+
+  let y =
+    FIRST_Y;
+
+  let order =
+    0;
+
+  function finishPage() {
+    if (
+      current.elements.length
+    ) {
+      pages.push(
+        current
+      );
     }
 
-    const charRe = /<span class="([^"]*\bc\b[^"]*)"[^>]*style="([^"]*)"[^>]*>([\s\S]*?)<\/span>/g;
-    while ((m = charRe.exec(chunk))) {
-      const value = decodeEntities(m[3].replace(/<[^>]+>/g, ""));
-      if (!value) continue;
-      const fontClass = m[1].match(/\bf\d+\b/)?.[0] || "f0";
-      const cfg = classes[fontClass] || { family: null, size: 11, weight: 400 };
-      elements.push({ order: m.index, type: "c", text: value, style: parseStyle(m[2]), fontClass, ...cfg });
-    }
-
-    elements.sort((a, b) => a.order - b.order);
-    return {
-      width: Number(bg?.[1] || PAGE_W),
-      height: Number(bg?.[2] || PAGE_H),
-      bg: bg ? { type: bg[3].toLowerCase(), data: bg[4] } : null,
-      elements
+    current = {
+      width: PAGE_W,
+      height: PAGE_H,
+      bg: null,
+      elements: []
     };
-  });
+
+    y =
+      FIRST_Y;
+  }
+
+  for (
+    const line of lines
+  ) {
+    if (!line) {
+      y -= 7;
+
+      if (
+        y <
+        LAST_Y
+      ) {
+        finishPage();
+      }
+
+      continue;
+    }
+
+    if (
+      y <
+      LAST_Y
+    ) {
+      finishPage();
+    }
+
+    current.elements.push({
+      order:
+        order++,
+
+      type:
+        "fallback",
+
+      text:
+        line,
+
+      style: {
+        left:
+          LEFT,
+
+        bottom:
+          y,
+
+        width:
+          WIDTH,
+
+        height:
+          FONT_SIZE
+      },
+
+      fontClass:
+        "f0",
+
+      family:
+        null,
+
+      size:
+        FONT_SIZE,
+
+      weight:
+        400
+    });
+
+    y -=
+      LINE_STEP;
+  }
+
+  finishPage();
+
+  return pages;
+}
+
+function parseOriginalPages(html) {
+  const classes =
+    parseCssFontClasses(
+      html
+    );
+
+  const chunks =
+    pageChunks(
+      html
+    );
+
+  /*
+    Existing positioned Copyleaks
+    HTML remains completely unchanged.
+  */
+  if (
+    chunks.length
+  ) {
+    return chunks.map(
+      (chunk) => {
+        const bg =
+          chunk.match(
+            /<img\s+width="(\d+)"\s+height="(\d+)"\s+src="data:image\/(png|jpeg);base64,([^"]+)"[^>]*alt="background image"/i
+          );
+
+        const elements =
+          [];
+
+        const wordRe =
+          /<span class="([^"]*\bw\b[^"]*)"[^>]*style="([^"]*)"[^>]*>\s*<span class="wt[^"]*"[^>]*>([\s\S]*?)<\/span>\s*<\/span>/g;
+
+        let m;
+
+        while (
+          (
+            m =
+              wordRe.exec(
+                chunk
+              )
+          )
+        ) {
+          const value =
+            decodeEntities(
+              m[3].replace(
+                /<[^>]+>/g,
+                ""
+              )
+            );
+
+          if (!value) {
+            continue;
+          }
+
+          const fontClass =
+            m[1].match(
+              /\bf\d+\b/
+            )?.[0] ||
+            "f0";
+
+          const cfg =
+            classes[
+              fontClass
+            ] || {
+              family:
+                null,
+              size:
+                11,
+              weight:
+                400
+            };
+
+          elements.push({
+            order:
+              m.index,
+
+            type:
+              "w",
+
+            text:
+              value,
+
+            style:
+              parseStyle(
+                m[2]
+              ),
+
+            fontClass,
+
+            ...cfg
+          });
+        }
+
+        const charRe =
+          /<span class="([^"]*\bc\b[^"]*)"[^>]*style="([^"]*)"[^>]*>([\s\S]*?)<\/span>/g;
+
+        while (
+          (
+            m =
+              charRe.exec(
+                chunk
+              )
+          )
+        ) {
+          const value =
+            decodeEntities(
+              m[3].replace(
+                /<[^>]+>/g,
+                ""
+              )
+            );
+
+          if (!value) {
+            continue;
+          }
+
+          const fontClass =
+            m[1].match(
+              /\bf\d+\b/
+            )?.[0] ||
+            "f0";
+
+          const cfg =
+            classes[
+              fontClass
+            ] || {
+              family:
+                null,
+              size:
+                11,
+              weight:
+                400
+            };
+
+          elements.push({
+            order:
+              m.index,
+
+            type:
+              "c",
+
+            text:
+              value,
+
+            style:
+              parseStyle(
+                m[2]
+              ),
+
+            fontClass,
+
+            ...cfg
+          });
+        }
+
+        elements.sort(
+          (
+            a,
+            b
+          ) =>
+            a.order -
+            b.order
+        );
+
+        return {
+          width:
+            Number(
+              bg?.[1] ||
+              PAGE_W
+            ),
+
+          height:
+            Number(
+              bg?.[2] ||
+              PAGE_H
+            ),
+
+          bg:
+            bg
+              ? {
+                  type:
+                    bg[3]
+                      .toLowerCase(),
+
+                  data:
+                    bg[4]
+                }
+              : null,
+
+          elements
+        };
+      }
+    );
+  }
+
+  /*
+    Legacy/simple .doc XHTML path.
+  */
+  const fallbackPages =
+    parseParagraphFallbackPages(
+      html
+    );
+
+  if (
+    fallbackPages.length
+  ) {
+    console.log(
+      "Using paragraph XHTML fallback:",
+      fallbackPages.length,
+      "page(s)."
+    );
+  }
+
+  return fallbackPages;
 }
 
 function mapElementsToText(pages, fullText) {
