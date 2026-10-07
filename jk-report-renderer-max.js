@@ -412,47 +412,506 @@ function documentPageCount(bundle) {
   return m?.length || 1;
 }
 
-function drawCover(page, f, icons, bundle, pageNo, totalPages) {
-  const id = bundle.reportIdentity || {};
-  shell(page, f, id, pageNo, totalPages, "Cover Page");
+// TURNITIN_LONG_FILENAME_WRAP_V1
+function wrapLongFileName(
+  text,
+  font,
+  size,
+  maxWidth
+) {
+  let remaining =
+    safeText(text);
 
-  drawTextTop(page, id.reportName || "turnitin Report", 36, 304, 20, f.lexSemi, C.ink);
-  drawTextTop(page, fileBase(id.filename || "Document"), 36, 337, 17, f.lexMed, C.ink);
+  const lines = [];
 
-  drawCoverIcon(page, icons, "coverClipboard", 365);
-  drawTextTop(page, "Quick Submit", 56, 365.448, 8, f.noto, C.muted);
-  drawCoverIcon(page, icons, "coverTray", 381);
-  drawTextTop(page, "Quick Submit", 56, 381.448, 8, f.noto, C.muted);
-  drawCoverIcon(page, icons, "coverCap", 397);
-  drawTextTop(page, id.institution || "", 56, 397.448, 8, f.noto, C.muted);
-
-  drawRule(page, 425);
-  drawTextTop(page, "Document Details", 36, 443.31, 10, f.notoSemi, C.ink);
-
-  const details = [
-    ["Submission ID", id.jkSubmissionId || "N/A"],
-    ["Submission Date", fmtDate(bundle?.completion?.scannedDocument?.creationTime || bundle?.job?.paidAt)],
-    ["Download Date", fmtDate(bundle?.generatedAt)],
-    ["File Name", id.filename || "N/A"],
-    ["File Size", bytesText(resolveFileSizeBytes(bundle))]
-  ];
-
-  let top = 472.517;
-  for (const [label, value] of details) {
-    drawTextTop(page, label, 36, top, 7, f.notoSemi, C.muted);
-    drawTextTop(page, value, 36, top + 14, 7, f.notoSemi, C.ink);
-    top += 36;
+  if (!remaining) {
+    return [""];
   }
 
-  page.drawRectangle({ x: 403, y: PAGE_H - 548, width: 89, height: 78, color: hex(C.lightGray) });
+  while (remaining) {
+    if (
+      font.widthOfTextAtSize(
+        remaining,
+        size
+      ) <= maxWidth
+    ) {
+      lines.push(
+        remaining
+      );
 
-  const pageCount = documentPageCount(bundle);
-  const words = Number(bundle?.completion?.scannedDocument?.totalWords || 0);
-  const chars = s(bundle?.crawled?.text?.value).length;
+      break;
+    }
 
-  drawTextTop(page, `${pageCount} Pages`, 415, 484.517, 7, f.notoSemi, C.ink);
-  drawTextTop(page, `${words.toLocaleString("en-US")} Words`, 415, 506.517, 7, f.notoSemi, C.ink);
-  drawTextTop(page, `${chars.toLocaleString("en-US")} Characters`, 415, 528.517, 7, f.notoSemi, C.ink);
+    let low = 1;
+    let high =
+      remaining.length;
+
+    let fit = 1;
+
+    while (
+      low <= high
+    ) {
+      const mid =
+        Math.floor(
+          (
+            low +
+            high
+          ) /
+          2
+        );
+
+      const candidate =
+        remaining.slice(
+          0,
+          mid
+        );
+
+      if (
+        font.widthOfTextAtSize(
+          candidate,
+          size
+        ) <= maxWidth
+      ) {
+        fit = mid;
+        low =
+          mid + 1;
+      } else {
+        high =
+          mid - 1;
+      }
+    }
+
+    let cut = fit;
+
+    const candidate =
+      remaining.slice(
+        0,
+        fit
+      );
+
+    const preferredBreak =
+      Math.max(
+        candidate.lastIndexOf(
+          "_"
+        ),
+        candidate.lastIndexOf(
+          "-"
+        ),
+        candidate.lastIndexOf(
+          " "
+        ),
+        candidate.lastIndexOf(
+          "."
+        )
+      );
+
+    /*
+      Prefer a separator only when it
+      uses a reasonable amount of the line.
+      Otherwise use the measured character
+      boundary so we do not create a tiny line.
+    */
+    if (
+      preferredBreak >=
+      Math.floor(
+        fit * 0.55
+      )
+    ) {
+      cut =
+        preferredBreak +
+        1;
+    }
+
+    if (
+      cut <= 0
+    ) {
+      cut =
+        Math.max(
+          1,
+          fit
+        );
+    }
+
+    lines.push(
+      remaining.slice(
+        0,
+        cut
+      )
+    );
+
+    remaining =
+      remaining.slice(
+        cut
+      );
+  }
+
+  return lines;
+}
+
+function drawCover(
+  page,
+  f,
+  icons,
+  bundle,
+  pageNo,
+  totalPages
+) {
+  const id =
+    bundle.reportIdentity ||
+    {};
+
+  shell(
+    page,
+    f,
+    id,
+    pageNo,
+    totalPages,
+    "Cover Page"
+  );
+
+  /*
+    PERSON / REPORT NAME:
+    deliberately unchanged.
+  */
+  drawTextTop(
+    page,
+    id.reportName ||
+      "turnitin Report",
+    36,
+    304,
+    20,
+    f.lexSemi,
+    C.ink
+  );
+
+  /*
+    DOCUMENT TITLE:
+    wrap long filenames exactly like
+    a normal report cover instead of
+    allowing them to leave the page.
+  */
+  const titleText =
+    fileBase(
+      id.filename ||
+      "Document"
+    );
+
+  const titleSize = 17;
+  const titleLineGap = 3;
+  const titleStep =
+    titleSize +
+    titleLineGap;
+
+  const titleLines =
+    wrapLongFileName(
+      titleText,
+      f.lexMed,
+      titleSize,
+      540
+    );
+
+  titleLines.forEach(
+    (
+      line,
+      index
+    ) => {
+      drawTextTop(
+        page,
+        line,
+        36,
+        337 +
+          index *
+            titleStep,
+        titleSize,
+        f.lexMed,
+        C.ink
+      );
+    }
+  );
+
+  const titleShift =
+    Math.max(
+      0,
+      titleLines.length -
+        1
+    ) *
+    titleStep;
+
+  const quickTop =
+    365 +
+    titleShift;
+
+  drawCoverIcon(
+    page,
+    icons,
+    "coverClipboard",
+    quickTop
+  );
+
+  drawTextTop(
+    page,
+    "Quick Submit",
+    56,
+    quickTop +
+      0.448,
+    8,
+    f.noto,
+    C.muted
+  );
+
+  drawCoverIcon(
+    page,
+    icons,
+    "coverTray",
+    quickTop +
+      16
+  );
+
+  drawTextTop(
+    page,
+    "Quick Submit",
+    56,
+    quickTop +
+      16.448,
+    8,
+    f.noto,
+    C.muted
+  );
+
+  drawCoverIcon(
+    page,
+    icons,
+    "coverCap",
+    quickTop +
+      32
+  );
+
+  drawTextTop(
+    page,
+    id.institution ||
+      "",
+    56,
+    quickTop +
+      32.448,
+    8,
+    f.noto,
+    C.muted
+  );
+
+  const ruleTop =
+    425 +
+    titleShift;
+
+  drawRule(
+    page,
+    ruleTop
+  );
+
+  drawTextTop(
+    page,
+    "Document Details",
+    36,
+    443.31 +
+      titleShift,
+    10,
+    f.notoSemi,
+    C.ink
+  );
+
+  const details = [
+    [
+      "Submission ID",
+      id.jkSubmissionId ||
+        "N/A"
+    ],
+    [
+      "Submission Date",
+      fmtDate(
+        bundle
+          ?.completion
+          ?.scannedDocument
+          ?.creationTime ||
+        bundle
+          ?.job
+          ?.paidAt
+      )
+    ],
+    [
+      "Download Date",
+      fmtDate(
+        bundle
+          ?.generatedAt
+      )
+    ],
+    [
+      "File Name",
+      id.filename ||
+        "N/A"
+    ],
+    [
+      "File Size",
+      bytesText(
+        resolveFileSizeBytes(
+          bundle
+        )
+      )
+    ]
+  ];
+
+  let top =
+    472.517 +
+    titleShift;
+
+  for (
+    const [
+      label,
+      value
+    ] of details
+  ) {
+    drawTextTop(
+      page,
+      label,
+      36,
+      top,
+      7,
+      f.notoSemi,
+      C.muted
+    );
+
+    if (
+      label ===
+      "File Name"
+    ) {
+      const fileLines =
+        wrapLongFileName(
+          value,
+          f.notoSemi,
+          7,
+          540
+        );
+
+      const fileLineStep =
+        9;
+
+      fileLines.forEach(
+        (
+          line,
+          index
+        ) => {
+          drawTextTop(
+            page,
+            line,
+            36,
+            top +
+              14 +
+              index *
+                fileLineStep,
+            7,
+            f.notoSemi,
+            C.ink
+          );
+        }
+      );
+
+      top +=
+        36 +
+        Math.max(
+          0,
+          fileLines.length -
+            1
+        ) *
+        fileLineStep;
+    } else {
+      drawTextTop(
+        page,
+        value,
+        36,
+        top +
+          14,
+        7,
+        f.notoSemi,
+        C.ink
+      );
+
+      top += 36;
+    }
+  }
+
+  /*
+    Keep the statistics box aligned
+    with the shifted Document Details
+    area when the large title wraps.
+  */
+  page.drawRectangle({
+    x: 403,
+    y:
+      PAGE_H -
+      (
+        548 +
+        titleShift
+      ),
+    width: 89,
+    height: 78,
+    color:
+      hex(
+        C.lightGray
+      )
+  });
+
+  const pageCount =
+    documentPageCount(
+      bundle
+    );
+
+  const words =
+    Number(
+      bundle
+        ?.completion
+        ?.scannedDocument
+        ?.totalWords ||
+      0
+    );
+
+  const chars =
+    s(
+      bundle
+        ?.crawled
+        ?.text
+        ?.value
+    ).length;
+
+  drawTextTop(
+    page,
+    `${pageCount} Pages`,
+    415,
+    484.517 +
+      titleShift,
+    7,
+    f.notoSemi,
+    C.ink
+  );
+
+  drawTextTop(
+    page,
+    `${words.toLocaleString("en-US")} Words`,
+    415,
+    506.517 +
+      titleShift,
+    7,
+    f.notoSemi,
+    C.ink
+  );
+
+  drawTextTop(
+    page,
+    `${chars.toLocaleString("en-US")} Characters`,
+    415,
+    528.517 +
+      titleShift,
+    7,
+    f.notoSemi,
+    C.ink
+  );
 }
 
 function sourceList(bundle) {
