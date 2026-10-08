@@ -370,6 +370,10 @@ Your academic content remains unchanged.`;
 const REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
 
+// JK_API_DELIVERY_MESSAGE_V1
+const API_REPORTS_DELIVERED_MESSAGE =
+  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin.";
+
 const AI_UNAVAILABLE_NOTE =
   `ℹ️ AI Writing Report Unavailable
 
@@ -8094,14 +8098,9 @@ async function submitPaidJobToCopyleaks(
               false
           },
 
+          // JK_INDEPENDENT_AI_FILTER_V1
           aiGeneratedText: {
-            detect:
-              shouldRunAiForFile(
-                file
-              ),
-
-            sensitivity:
-              COPYLEAKS_AI_SENSITIVITY
+            detect: false
           }
         }
       };
@@ -8894,6 +8893,1092 @@ async function startCopyleaksDetailedExport(
   return exportId;
 }
 
+
+// ============================================================
+// JK_INDEPENDENT_AI_FILTER_V1
+// AI DETECTION IS COMPLETELY INDEPENDENT OF SIMILARITY FILTERING
+// ============================================================
+
+function findIndependentAiBibliographyStart(text) {
+  const value =
+    String(text || "");
+
+  const headingRe =
+    /(^|\n)[ \t]*(references|bibliography|works cited|reference list)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
+
+  const matches = [];
+
+  let match;
+
+  while (
+    (match =
+      headingRe.exec(value))
+  ) {
+    const start =
+      match.index +
+      (
+        match[1]
+          ? match[1].length
+          : 0
+      );
+
+    matches.push(start);
+  }
+
+  /*
+    A table of contents can contain the word
+    "References" near the start of a document.
+
+    Prefer a real References/Bibliography heading
+    occurring later in the document.
+  */
+  const eligible =
+    matches.filter(
+      (start) =>
+        start >=
+        value.length * 0.30
+    );
+
+  if (eligible.length) {
+    return eligible[
+      eligible.length - 1
+    ];
+  }
+
+  return -1;
+}
+
+function buildIndependentAiInput(rawText) {
+  const source =
+    String(rawText || "");
+
+  const bibliographyStart =
+    findIndependentAiBibliographyStart(
+      source
+    );
+
+  const limit =
+    bibliographyStart >= 0
+      ? bibliographyStart
+      : source.length;
+
+  let text = "";
+  const map = [];
+
+  function addGap(originIndex) {
+    if (
+      text.length &&
+      !/\s/.test(
+        text[text.length - 1]
+      )
+    ) {
+      text += " ";
+      // JK_AI_EXCLUDED_GAP_NO_SOURCE_V1
+      map.push(Number.NaN);
+    }
+  }
+
+  for (
+    let i = 0;
+    i < limit;
+    i += 1
+  ) {
+    const ch = source[i];
+
+    /*
+      Curly quotation marks.
+    */
+    if (ch === "“") {
+      const close =
+        source.indexOf(
+          "”",
+          i + 1
+        );
+
+      if (
+        close >= 0 &&
+        close < limit
+      ) {
+        addGap(i);
+        i = close;
+        addGap(i);
+        continue;
+      }
+    }
+
+    /*
+      Straight double quotation marks.
+
+      Only remove a quote when a matching
+      closing quotation mark exists.
+      Apostrophes/single quotes are untouched.
+    */
+    if (
+      ch === '"' &&
+      source[i - 1] !== "\\"
+    ) {
+      let close =
+        i + 1;
+
+      while (
+        close < limit
+      ) {
+        close =
+          source.indexOf(
+            '"',
+            close
+          );
+
+        if (close < 0) {
+          break;
+        }
+
+        if (
+          source[close - 1] !==
+          "\\"
+        ) {
+          break;
+        }
+
+        close += 1;
+      }
+
+      if (
+        close >= 0 &&
+        close < limit
+      ) {
+        addGap(i);
+        i = close;
+        addGap(i);
+        continue;
+      }
+    }
+
+    text += ch;
+    map.push(i);
+  }
+
+  /*
+    Trim only the outside whitespace while
+    keeping the character mapping aligned.
+  */
+  let first = 0;
+  let last = text.length;
+
+  while (
+    first < last &&
+    /\s/.test(text[first])
+  ) {
+    first += 1;
+  }
+
+  while (
+    last > first &&
+    /\s/.test(text[last - 1])
+  ) {
+    last -= 1;
+  }
+
+  return {
+    text:
+      text.slice(
+        first,
+        last
+      ),
+
+    map:
+      map.slice(
+        first,
+        last
+      ),
+
+    bibliographyStart:
+      bibliographyStart >= 0
+        ? bibliographyStart
+        : null,
+
+    originalLength:
+      source.length
+  };
+}
+
+function splitIndependentAiInput(
+  prepared
+) {
+  const MAX_CHARS = 90000;
+  const MIN_CHARS = 255;
+
+  const chunks = [];
+
+  let start = 0;
+
+  while (
+    prepared.text.length -
+      start >
+    MAX_CHARS
+  ) {
+    const hardEnd =
+      start +
+      MAX_CHARS;
+
+    const minimumCut =
+      start +
+      Math.floor(
+        MAX_CHARS * 0.80
+      );
+
+    let cut =
+      prepared.text
+        .lastIndexOf(
+          "\n",
+          hardEnd
+        );
+
+    if (
+      cut < minimumCut
+    ) {
+      cut =
+        prepared.text
+          .lastIndexOf(
+            " ",
+            hardEnd
+          );
+    }
+
+    if (
+      cut < minimumCut
+    ) {
+      cut = hardEnd;
+    }
+
+    chunks.push({
+      text:
+        prepared.text.slice(
+          start,
+          cut
+        ),
+
+      map:
+        prepared.map.slice(
+          start,
+          cut
+        )
+    });
+
+    start = cut;
+  }
+
+  chunks.push({
+    text:
+      prepared.text.slice(start),
+
+    map:
+      prepared.map.slice(start)
+  });
+
+  /*
+    Avoid sending a final chunk shorter
+    than Copyleaks' 255-character minimum.
+  */
+  if (
+    chunks.length > 1 &&
+    chunks[
+      chunks.length - 1
+    ].text.length <
+      MIN_CHARS
+  ) {
+    const tail =
+      chunks.pop();
+
+    const previous =
+      chunks.pop();
+
+    chunks.push({
+      text:
+        previous.text +
+        tail.text,
+
+      map:
+        previous.map.concat(
+          tail.map
+        )
+    });
+  }
+
+  return chunks.filter(
+    (chunk) =>
+      chunk.text.trim().length > 0
+  );
+}
+
+function independentAiRanges(
+  response,
+  charMap
+) {
+  const ranges = [];
+
+  const sections =
+    Array.isArray(
+      response?.results
+    )
+      ? response.results
+      : Array.isArray(
+          response?.result
+        )
+        ? response.result
+        : [];
+
+  for (
+    const section of sections
+  ) {
+    if (
+      Number(
+        section?.classification
+      ) !== 2
+    ) {
+      continue;
+    }
+
+    for (
+      const match of
+        section?.matches || []
+    ) {
+      const starts =
+        match
+          ?.text
+          ?.chars
+          ?.starts || [];
+
+      const lengths =
+        match
+          ?.text
+          ?.chars
+          ?.lengths || [];
+
+      for (
+        let j = 0;
+        j < starts.length;
+        j += 1
+      ) {
+        const localStart =
+          Number(starts[j]);
+
+        const length =
+          Number(
+            lengths[j] || 0
+          );
+
+        if (
+          !Number.isFinite(
+            localStart
+          ) ||
+          length <= 0
+        ) {
+          continue;
+        }
+
+        const localEnd =
+          Math.min(
+            charMap.length,
+            localStart +
+              length
+          );
+
+        let runStart = null;
+        let previous = null;
+
+        /*
+          Split ranges whenever removed quoted
+          material creates a discontinuity in
+          original-document coordinates.
+
+          This prevents excluded quote text
+          from being highlighted accidentally.
+        */
+        for (
+          let k = localStart;
+          k < localEnd;
+          k += 1
+        ) {
+          const originalIndex =
+            Number(
+              charMap[k]
+            );
+
+          if (
+            !Number.isFinite(
+              originalIndex
+            )
+          ) {
+            continue;
+          }
+
+          if (
+            runStart === null
+          ) {
+            runStart =
+              originalIndex;
+
+            previous =
+              originalIndex;
+
+            continue;
+          }
+
+          if (
+            originalIndex ===
+            previous + 1
+          ) {
+            previous =
+              originalIndex;
+
+            continue;
+          }
+
+          ranges.push({
+            start:
+              runStart,
+
+            end:
+              previous + 1
+          });
+
+          runStart =
+            originalIndex;
+
+          previous =
+            originalIndex;
+        }
+
+        if (
+          runStart !== null
+        ) {
+          ranges.push({
+            start:
+              runStart,
+
+            end:
+              previous + 1
+          });
+        }
+      }
+    }
+  }
+
+  ranges.sort(
+    (a, b) =>
+      a.start -
+      b.start ||
+      a.end -
+      b.end
+  );
+
+  const merged = [];
+
+  for (
+    const range of ranges
+  ) {
+    const last =
+      merged[
+        merged.length - 1
+      ];
+
+    if (
+      last &&
+      range.start <=
+        last.end
+    ) {
+      last.end =
+        Math.max(
+          last.end,
+          range.end
+        );
+    } else {
+      merged.push({
+        ...range
+      });
+    }
+  }
+
+  return merged;
+}
+
+function makeIndependentAiScanId(
+  file,
+  chunkIndex
+) {
+  const base =
+    safeCopyleaksPathPart(
+      file?.copyleaksScanId ||
+        "scan"
+    )
+      .toLowerCase()
+      .slice(0, 18);
+
+  const stamp =
+    Date.now()
+      .toString(36)
+      .slice(-6);
+
+  return (
+    "ai-" +
+    base +
+    "-" +
+    stamp +
+    "-" +
+    chunkIndex
+  ).slice(0, 36);
+}
+
+async function runIndependentCopyleaksAi(
+  job,
+  file,
+  bundlePath
+) {
+  if (
+    !shouldRunAiForFile(
+      file
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    file
+      .copyleaksIndependentAiStatus ===
+      "COMPLETE" &&
+    file
+      .copyleaksIndependentAiFile &&
+    fs.existsSync(
+      file
+        .copyleaksIndependentAiFile
+    )
+  ) {
+    writeCopyleaksBundle(
+      file.copyleaksScanId
+    );
+
+    return readCopyleaksJsonFile(
+      file
+        .copyleaksIndependentAiFile
+    );
+  }
+
+  const bundle =
+    readCopyleaksJsonFile(
+      bundlePath
+    );
+
+  const rawText =
+    String(
+      bundle
+        ?.crawled
+        ?.text
+        ?.value ||
+      ""
+    );
+
+  const prepared =
+    buildIndependentAiInput(
+      rawText
+    );
+
+  // JK_TURNITIN_AI_WORD_ELIGIBILITY_V1
+  // Turnitin-style AI eligibility:
+  // qualifying text must be 300-30,000 words.
+  const qualifyingWordCount =
+    prepared.text
+      .trim()
+      .split(/\s+/u)
+      .filter(Boolean)
+      .length;
+
+  const AI_MIN_QUALIFYING_WORDS =
+    300;
+
+  const AI_MAX_QUALIFYING_WORDS =
+    30000;
+
+  const scanDir =
+    ensureCopyleaksScanDir(
+      file.copyleaksScanId
+    );
+
+  const resultPath =
+    path.join(
+      scanDir,
+      "ai-independent.json"
+    );
+
+  const rawResultPath =
+    path.join(
+      scanDir,
+      "ai-independent-raw.json"
+    );
+
+  let record;
+
+  if (
+    qualifyingWordCount <
+    AI_MIN_QUALIFYING_WORDS
+  ) {
+    record = {
+      available: false,
+
+      reason:
+        "AI writing detection is unavailable because qualifying text is fewer than 300 words.",
+
+      percent: null,
+
+      ranges: [],
+
+      eligibilityPolicy:
+        "TURNITIN_300_30000_V1",
+
+      qualifyingWords:
+        qualifyingWordCount,
+
+      minimumQualifyingWords:
+        AI_MIN_QUALIFYING_WORDS,
+
+      maximumQualifyingWords:
+        AI_MAX_QUALIFYING_WORDS,
+
+      excluded: {
+        quotes: true,
+        references: true,
+        citations: false
+      },
+
+      originalCharacters:
+        prepared.originalLength,
+
+      analyzedCharacters:
+        prepared.text.length,
+
+      bibliographyStart:
+        prepared.bibliographyStart
+    };
+
+  } else if (
+    qualifyingWordCount >
+    AI_MAX_QUALIFYING_WORDS
+  ) {
+    record = {
+      available: false,
+
+      reason:
+        "AI writing detection is unavailable because qualifying text exceeds 30,000 words.",
+
+      percent: null,
+
+      ranges: [],
+
+      eligibilityPolicy:
+        "TURNITIN_300_30000_V1",
+
+      qualifyingWords:
+        qualifyingWordCount,
+
+      minimumQualifyingWords:
+        AI_MIN_QUALIFYING_WORDS,
+
+      maximumQualifyingWords:
+        AI_MAX_QUALIFYING_WORDS,
+
+      excluded: {
+        quotes: true,
+        references: true,
+        citations: false
+      },
+
+      originalCharacters:
+        prepared.originalLength,
+
+      analyzedCharacters:
+        prepared.text.length,
+
+      bibliographyStart:
+        prepared.bibliographyStart
+    };
+
+  } else if (
+    prepared.text.length <
+    255
+  ) {
+    record = {
+      available: false,
+
+      reason:
+        "Text too short for AI detection after excluding quotes and bibliography.",
+
+      percent: null,
+
+      ranges: [],
+
+      excluded: {
+        quotes: true,
+        references: true,
+        citations: false
+      },
+
+      originalCharacters:
+        prepared.originalLength,
+
+      analyzedCharacters:
+        prepared.text.length,
+
+      bibliographyStart:
+        prepared.bibliographyStart
+    };
+  } else {
+    try {
+      const token =
+        await getCopyleaksToken();
+
+      const chunks =
+        splitIndependentAiInput(
+          prepared
+        );
+
+      const responses = [];
+
+      const allRanges = [];
+
+      let weightedAi = 0;
+      let totalWeight = 0;
+
+      for (
+        let index = 0;
+        index < chunks.length;
+        index += 1
+      ) {
+        const chunk =
+          chunks[index];
+
+        if (
+          chunk.text.length <
+          255
+        ) {
+          continue;
+        }
+
+        const aiScanId =
+          makeIndependentAiScanId(
+            file,
+            index
+          );
+
+        const response =
+          await copyleaksJson(
+            COPYLEAKS_API_BASE +
+              "/v2/writer-detector/" +
+              encodeURIComponent(
+                aiScanId
+              ) +
+              "/check",
+            {
+              method: "POST",
+
+              headers: {
+                Authorization:
+                  "Bearer " +
+                  token,
+
+                "Content-Type":
+                  "application/json",
+
+                Accept:
+                  "application/json"
+              },
+
+              body:
+                JSON.stringify({
+                  text:
+                    chunk.text,
+
+                  sandbox:
+                    COPYLEAKS_SANDBOX,
+
+                  explain:
+                    false,
+
+                  sensitivity:
+                    COPYLEAKS_AI_SENSITIVITY
+                })
+            }
+          );
+
+        responses.push({
+          scanId:
+            aiScanId,
+
+          response
+        });
+
+        const rawAi =
+          Number(
+            response
+              ?.summary
+              ?.ai
+          );
+
+        const fraction =
+          Number.isFinite(rawAi)
+            ? Math.max(
+                0,
+                Math.min(
+                  1,
+                  rawAi > 1
+                    ? rawAi / 100
+                    : rawAi
+                )
+              )
+            : 0;
+
+        const words =
+          Number(
+            response
+              ?.scannedDocument
+              ?.totalWords
+          );
+
+        const weight =
+          Number.isFinite(words) &&
+          words > 0
+            ? words
+            : Math.max(
+                1,
+                chunk.text
+                  .trim()
+                  .split(
+                    /\s+/
+                  )
+                  .filter(Boolean)
+                  .length
+              );
+
+        weightedAi +=
+          fraction *
+          weight;
+
+        totalWeight +=
+          weight;
+
+        allRanges.push(
+          ...independentAiRanges(
+            response,
+            chunk.map
+          )
+        );
+      }
+
+      allRanges.sort(
+        (a, b) =>
+          a.start -
+          b.start ||
+          a.end -
+          b.end
+      );
+
+      const mergedRanges =
+        [];
+
+      for (
+        const range of
+          allRanges
+      ) {
+        const last =
+          mergedRanges[
+            mergedRanges.length -
+              1
+          ];
+
+        if (
+          last &&
+          range.start <=
+            last.end
+        ) {
+          last.end =
+            Math.max(
+              last.end,
+              range.end
+            );
+        } else {
+          mergedRanges.push({
+            ...range
+          });
+        }
+      }
+
+      const aiFraction =
+        totalWeight > 0
+          ? weightedAi /
+            totalWeight
+          : 0;
+
+      record = {
+        available: true,
+
+        reason: null,
+
+        source:
+          "copyleaks-writer-detector",
+
+        percent:
+          Math.round(
+            aiFraction *
+              1000
+          ) / 10,
+
+        summary: {
+          ai:
+            aiFraction,
+
+          human:
+            1 -
+            aiFraction
+        },
+
+        ranges:
+          mergedRanges,
+
+        excluded: {
+          quotes: true,
+          references: true,
+          citations: false
+        },
+
+        originalCharacters:
+          prepared.originalLength,
+
+        analyzedCharacters:
+          prepared.text.length,
+
+        bibliographyStart:
+          prepared.bibliographyStart,
+
+        chunkCount:
+          responses.length
+      };
+
+      fs.writeFileSync(
+        rawResultPath,
+        JSON.stringify(
+          responses,
+          null,
+          2
+        ),
+        "utf8"
+      );
+
+      file
+        .copyleaksIndependentAiRawFile =
+        rawResultPath;
+
+      file
+        .copyleaksIndependentAiStatus =
+        "COMPLETE";
+
+      file
+        .copyleaksIndependentAiCompletedAt =
+        Date.now();
+    } catch (err) {
+      record = {
+        available: false,
+
+        reason:
+          "AI detection failed",
+
+        percent: null,
+
+        ranges: [],
+
+        excluded: {
+          quotes: true,
+          references: true,
+          citations: false
+        },
+
+        error:
+          String(
+            err?.message ||
+            err
+          )
+      };
+
+      file
+        .copyleaksIndependentAiStatus =
+        "FAILED";
+
+      file
+        .copyleaksIndependentAiError =
+        String(
+          err?.message ||
+          err
+        );
+
+      file
+        .copyleaksIndependentAiFailedAt =
+        Date.now();
+
+      await sendAdminMessage(
+        "❌ INDEPENDENT AI DETECTION FAILED\n" +
+        "User: " +
+        job.userId +
+        "\nFile: " +
+        safeText(
+          file.file_name ||
+          "N/A"
+        ) +
+        "\nError: " +
+        safeText(
+          err?.message ||
+          err
+        )
+      );
+    }
+  }
+
+  fs.writeFileSync(
+    resultPath,
+    JSON.stringify(
+      record,
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  file
+    .copyleaksIndependentAiFile =
+    resultPath;
+
+  if (
+    record.available === false &&
+    file
+      .copyleaksIndependentAiStatus !==
+      "FAILED"
+  ) {
+    file
+      .copyleaksIndependentAiStatus =
+      "UNAVAILABLE";
+  }
+
+  savePaidJobs();
+
+  /*
+    Rebuild the normal similarity bundle,
+    now including this completely separate
+    AI result.
+  */
+  writeCopyleaksBundle(
+    file.copyleaksScanId
+  );
+
+  return record;
+}
+
 async function renderAndDeliverCopyleaksReports(
   job,
   file,
@@ -8952,6 +10037,31 @@ async function renderAndDeliverCopyleaksReports(
   savePaidJobs();
 
   try {
+    /*
+      JK_INDEPENDENT_AI_FILTER_V1
+
+      Similarity filtering has already finished.
+
+      AI now uses the complete crawled document
+      independently and ALWAYS excludes:
+      - quoted passages
+      - bibliography/references
+
+      Client FILTERED/UNFILTERED choice has
+      no effect on this call.
+    */
+    if (
+      shouldRunAiForFile(
+        file
+      )
+    ) {
+      await runIndependentCopyleaksAi(
+        job,
+        file,
+        bundlePath
+      );
+    }
+
     const outputDir =
       path.join(
         path.dirname(
@@ -8979,10 +10089,6 @@ async function renderAndDeliverCopyleaksReports(
             ),
           filename:
             rendered.similarityFileName
-        },
-        {
-          caption:
-            "✅ Similarity report ready."
         }
       );
 
@@ -9005,10 +10111,6 @@ async function renderAndDeliverCopyleaksReports(
             ),
           filename:
             rendered.aiFileName
-        },
-        {
-          caption:
-            "✅ AI writing report ready."
         }
       );
 
@@ -9049,6 +10151,40 @@ async function renderAndDeliverCopyleaksReports(
 
       job.deliveredAt =
         Date.now();
+
+      /*
+        API delivery should look like manual delivery:
+        send the report PDFs first, then one clean
+        completion message for the entire paid job.
+      */
+      if (
+        !job.apiDeliveryMessageSentAt &&
+        !job.apiDeliveryMessageSending
+      ) {
+        job.apiDeliveryMessageSending =
+          true;
+
+        savePaidJobs();
+
+        try {
+          await bot.telegram.sendMessage(
+            job.userId,
+            API_REPORTS_DELIVERED_MESSAGE
+          );
+
+          job.apiDeliveryMessageSentAt =
+            Date.now();
+        } catch (messageErr) {
+          console.error(
+            "API delivery completion message failed:",
+            messageErr?.description ||
+              messageErr?.message ||
+              messageErr
+          );
+        } finally {
+          delete job.apiDeliveryMessageSending;
+        }
+      }
     }
 
     savePaidJobs();
@@ -9231,6 +10367,10 @@ function writeCopyleaksBundle(
         file.type ||
         null
     },
+    aiDetection:
+      readCopyleaksJsonFile(
+        file.copyleaksIndependentAiFile
+      ),
 
     completion,
 
@@ -9389,9 +10529,7 @@ async function handleCopyleaksStatusWebhook(
         ),
 
       aiPercent:
-        extractCopyleaksAiPercent(
-          payload
-        )
+        null
     };
 
     try {

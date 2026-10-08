@@ -5,6 +5,7 @@ const path = require("path");
 const {
   PDFDocument,
   StandardFonts,
+  BlendMode,
   rgb,
   pushGraphicsState,
   popGraphicsState,
@@ -20,27 +21,28 @@ const PAGE_W = 612;
 const PAGE_H = 792;
 
 const C = {
+  // JK_EXACT_TURNITIN_HIGHLIGHT_COLORS_V1
   ink: "#191919",
   muted: "#636363",
   iconDark: "#2D2D2D",
   softBlue: "#D1E9FA",
   rule: "#CDCDCD",
   brandBlue: "#0096FF",
-  coral: "#F96371",
-  orange: "#F78F4A",
-  yellow: "#F5E5AB",
-  mint: "#C2EDE0",
-  ai: "#52C7DB",
+  coral: "#F86371",
+  orange: "#F68E4A",
+  yellow: "#F4E4AA",
+  mint: "#C1ECDF",
+  ai: "#52C6DA",
   white: "#FEFEFE",
   lightGray: "#F9F9F9",
-  magenta: "#CC1476",
-  blue: "#225EC7",
+  magenta: "#CB1476",
+  blue: "#225EC6",
   green: "#007546",
-  purple: "#7533E8",
-  paleMagenta: "#FFDDE8",
-  paleBlue: "#D7E6FC",
-  paleGreen: "#C2EDE0",
-  palePurple: "#EDE0FF"
+  purple: "#7533E7",
+  paleMagenta: "#FEDCE7",
+  paleBlue: "#D6E5FB",
+  paleGreen: "#C1ECDF",
+  palePurple: "#ECDFFE"
 };
 
 const SOURCE_COLORS = [C.magenta, C.blue, C.green, C.purple];
@@ -2320,6 +2322,110 @@ function validateSimilaritySourceMapping(
 }
 
 function aiInfo(bundle) {
+
+  // JK_INDEPENDENT_AI_RENDERER_V1
+  //
+  // New API architecture:
+  // AI is calculated independently from the
+  // similarity scan and stored as bundle.aiDetection.
+  //
+  // Older saved bundles remain supported below.
+  const independent =
+    bundle?.aiDetection;
+
+  if (
+    independent &&
+    typeof independent ===
+      "object"
+  ) {
+    if (
+      independent.available ===
+      false
+    ) {
+      return {
+        available: false,
+
+        reason:
+          s(
+            independent.reason ||
+            "AI detection unavailable"
+          ),
+
+        percent: null,
+
+        ranges: []
+      };
+    }
+
+    const rawPercent =
+      Number(
+        independent.percent
+      );
+
+    const percent =
+      Number.isFinite(
+        rawPercent
+      )
+        ? Math.max(
+            0,
+            Math.min(
+              100,
+              rawPercent
+            )
+          )
+        : 0;
+
+    const ranges =
+      (
+        Array.isArray(
+          independent.ranges
+        )
+          ? independent.ranges
+          : []
+      )
+        .map(
+          (range) => {
+            const start =
+              Number(
+                range?.start
+              );
+
+            const end =
+              Number(
+                range?.end
+              );
+
+            if (
+              !Number.isFinite(
+                start
+              ) ||
+              !Number.isFinite(
+                end
+              ) ||
+              end <= start
+            ) {
+              return null;
+            }
+
+            return {
+              start,
+              end
+            };
+          }
+        )
+        .filter(Boolean);
+
+    return {
+      available: true,
+
+      reason: null,
+
+      percent,
+
+      ranges
+    };
+  }
+
   const alerts = Array.isArray(bundle?.completion?.notifications?.alerts) ? bundle.completion.notifications.alerts : [];
   const unavailable = {
     "ai-detection-failed": "AI detection failed",
@@ -2445,8 +2551,36 @@ function drawSimilaritySummaryBlock(page, f, icons, groups, cats, topBase = 161.
 
   for (const group of groups) {
     drawGroupIcon(page, icons, group, top);
-    drawTextTop(page, String(group.count), 53, top, 7, f.notoSemi, C.ink);
-    drawTextTop(page, ` ${group.label}  ${fmtPct(group.percent)}`, 57, top, 7, f.noto, C.ink);
+    // JK_MATCH_GROUP_COUNT_SPACING_V1
+    const countText = String(group.count);
+
+    drawTextTop(
+      page,
+      countText,
+      53,
+      top,
+      7,
+      f.notoSemi,
+      C.ink
+    );
+
+    const groupLabelX =
+      53 +
+      f.notoSemi.widthOfTextAtSize(
+        countText,
+        7
+      ) +
+      3;
+
+    drawTextTop(
+      page,
+      `${group.label}  ${fmtPct(group.percent)}`,
+      groupLabelX,
+      top,
+      7,
+      f.noto,
+      C.ink
+    );
     drawTextTop(page, group.desc, 53, top + 10, 7, f.noto, C.muted);
     top += 25;
   }
@@ -2951,43 +3085,40 @@ async function drawOriginalPages(
   for (const original of originalPages) {
     const page = doc.addPage([PAGE_W, PAGE_H]);
 
-    let sourceScale = 1;
-    let sourceX = 0;
-    let sourceY = 0;
+    // JK_PRESERVED_PAGE_SCALE_V1
+    const sourceWidth =
+      Number(
+        original.width ||
+        original.embeddedPage?.width ||
+        PAGE_W
+      );
+
+    const sourceHeight =
+      Number(
+        original.height ||
+        original.embeddedPage?.height ||
+        PAGE_H
+      );
+
+    const sourceScale =
+      Math.min(
+        PAGE_W / sourceWidth,
+        PAGE_H / sourceHeight
+      );
+
+    const sourceX =
+      (PAGE_W -
+        sourceWidth *
+          sourceScale) /
+      2;
+
+    const sourceY =
+      (PAGE_H -
+        sourceHeight *
+          sourceScale) /
+      2;
 
     if (original.embeddedPage) {
-      const sourceWidth =
-        Number(
-          original.width ||
-          original.embeddedPage.width ||
-          PAGE_W
-        );
-
-      const sourceHeight =
-        Number(
-          original.height ||
-          original.embeddedPage.height ||
-          PAGE_H
-        );
-
-      sourceScale =
-        Math.min(
-          PAGE_W / sourceWidth,
-          PAGE_H / sourceHeight
-        );
-
-      sourceX =
-        (PAGE_W -
-          sourceWidth *
-            sourceScale) /
-        2;
-
-      sourceY =
-        (PAGE_H -
-          sourceHeight *
-            sourceScale) /
-        2;
-
       page.drawPage(
         original.embeddedPage,
         {
@@ -3002,7 +3133,6 @@ async function drawOriginalPages(
         }
       );
     }
-
     if (original.bg) {
       try {
         const bytes = Buffer.from(original.bg.data, "base64");
@@ -3012,11 +3142,16 @@ async function drawOriginalPages(
             ? await doc.embedJpg(bytes)
             : await doc.embedPng(bytes);
 
+        // JK_PRESERVED_BG_SCALE_V1
         page.drawImage(image, {
-          x: 0,
-          y: 0,
-          width: PAGE_W,
-          height: PAGE_H
+          x: sourceX,
+          y: sourceY,
+          width:
+            sourceWidth *
+            sourceScale,
+          height:
+            sourceHeight *
+            sourceScale
         });
       } catch {}
     }
@@ -3083,6 +3218,10 @@ async function drawOriginalPages(
         targetWidth
       );
 
+      // JK_NO_DOUBLE_HIGHLIGHT_PAINT_V1
+      const paintedHighlightSpans =
+        new Map();
+
       for (const range of relevant) {
         const a = Math.max(element.start, range.start);
         const b = Math.min(element.end, range.end);
@@ -3122,19 +3261,156 @@ async function drawOriginalPages(
             span;
         }
 
-        page.drawRectangle({
-          x: x + dx0,
-          y: y - 1.1,
-          width: Math.max(1, dx1 - dx0),
-          height: Math.max(7, height + 1.9),
-          color: hex(
-            kind === "AI"
-              ? C.ai
-              : groupForKey(range.group).fill
-          ),
-          opacity: kind === "AI" ? 0.40 : 0.76
-        });
+        /*
+          Draw only portions that have not already
+          been painted for this match group.
 
+          Overlapping Copyleaks ranges therefore
+          retain one uniform Turnitin highlight
+          instead of becoming darker.
+        */
+        const highlightKey =
+          kind === "AI"
+            ? "AI"
+            : String(
+                range.group || ""
+              );
+
+        const highlightStart =
+          x + dx0;
+
+        const highlightEnd =
+          x + dx1;
+
+        const alreadyPainted =
+          paintedHighlightSpans.get(
+            highlightKey
+          ) || [];
+
+        let pendingSpans = [
+          [
+            highlightStart,
+            highlightEnd
+          ]
+        ];
+
+        for (
+          const painted of
+            alreadyPainted
+        ) {
+          const next = [];
+
+          for (
+            const pending of
+              pendingSpans
+          ) {
+            const start =
+              pending[0];
+
+            const end =
+              pending[1];
+
+            const paintedStart =
+              painted[0];
+
+            const paintedEnd =
+              painted[1];
+
+            if (
+              paintedEnd <= start ||
+              paintedStart >= end
+            ) {
+              next.push(
+                pending
+              );
+
+              continue;
+            }
+
+            if (
+              paintedStart > start
+            ) {
+              next.push([
+                start,
+                Math.min(
+                  paintedStart,
+                  end
+                )
+              ]);
+            }
+
+            if (
+              paintedEnd < end
+            ) {
+              next.push([
+                Math.max(
+                  paintedEnd,
+                  start
+                ),
+                end
+              ]);
+            }
+          }
+
+          pendingSpans = next;
+        }
+
+        for (
+          const pending of
+            pendingSpans
+        ) {
+          const start =
+            pending[0];
+
+          const end =
+            pending[1];
+
+          if (
+            end - start <
+            0.01
+          ) {
+            continue;
+          }
+
+          page.drawRectangle({
+            x: start,
+            y: y - 1.1,
+            width:
+              end - start,
+            height:
+              Math.max(
+                7,
+                height + 1.9
+              ),
+            color: hex(
+              kind === "AI"
+                ? C.ai
+                : groupForKey(
+                    range.group
+                  ).fill
+            ),
+            opacity:
+              kind === "AI"
+                ? 0.40
+                : 0.80,
+            blendMode:
+              BlendMode.Multiply
+          });
+        }
+
+        alreadyPainted.push([
+          highlightStart,
+          highlightEnd
+        ]);
+
+        paintedHighlightSpans.set(
+          highlightKey,
+          alreadyPainted
+        );
+
+        // JK_HIGHLIGHT_MULTIPLY_NO_REFLECTION_V1
+        // Highlight is blended into the preserved page.
+        // Do NOT redraw the matched text.
         if (kind === "SIMILARITY") {
           const key =
             `${range.start}:${range.end}:${range.sourceNumber}:${range.group}`;
