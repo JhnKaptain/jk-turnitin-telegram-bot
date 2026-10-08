@@ -8839,6 +8839,31 @@ async function startCopyleaksDetailedExport(
       )
   };
 
+  // JK_COPYLEAKS_RESULT_RACE_FIX_V1
+  /*
+    Prepare all callback state BEFORE starting
+    the Copyleaks detailed export.
+
+    Copyleaks may send result callbacks before
+    this POST request has returned.
+  */
+  file.copyleaksExportId =
+    exportId;
+
+  file.copyleaksExportStatus =
+    "REQUESTED";
+
+  file.copyleaksExportRequestedAt =
+    Date.now();
+
+  file.copyleaksResultDescriptors =
+    descriptors;
+
+  file.copyleaksDetailedResultFiles =
+    {};
+
+  savePaidJobs();
+
   await copyleaksJson(
     COPYLEAKS_API_BASE +
       "/v3/downloads/" +
@@ -8872,23 +8897,6 @@ async function startCopyleaksDetailedExport(
         )
     }
   );
-
-  file.copyleaksExportId =
-    exportId;
-
-  file.copyleaksExportStatus =
-    "REQUESTED";
-
-  file.copyleaksExportRequestedAt =
-    Date.now();
-
-  file.copyleaksResultDescriptors =
-    descriptors;
-
-  file.copyleaksDetailedResultFiles =
-    {};
-
-  savePaidJobs();
 
   return exportId;
 }
@@ -10286,11 +10294,35 @@ function writeCopyleaksBundle(
       []
     ).map(
       (descriptor) => {
-        const resultPath =
+        const mappedResultPath =
           file
             .copyleaksDetailedResultFiles
             ?.[descriptor.id] ||
           null;
+
+        const fallbackResultPath =
+          path.join(
+            scanDir,
+            "result-" +
+              safeCopyleaksPathPart(
+                descriptor.id
+              ) +
+              ".json"
+          );
+
+        const resultPath =
+          (
+            mappedResultPath &&
+            fs.existsSync(
+              mappedResultPath
+            )
+          )
+            ? mappedResultPath
+            : fs.existsSync(
+                fallbackResultPath
+              )
+              ? fallbackResultPath
+              : mappedResultPath;
 
         return {
           descriptor,
