@@ -259,6 +259,17 @@ const REPORT_PROCESSING_MAX_MINUTES = Math.max(
   readIntEnv("REPORT_PROCESSING_MAX_MINUTES", 20)
 );
 
+// JK_API_DELIVERY_RESTART_SAFE_V6
+const API_DELIVERY_HOLD_MINUTES = Math.max(
+  0,
+  readIntEnv("API_DELIVERY_HOLD_MINUTES", 3)
+);
+
+const API_DELIVERY_RECOVERY_INTERVAL_MS = Math.max(
+  30000,
+  readIntEnv("API_DELIVERY_RECOVERY_SECONDS", 60) * 1000
+);
+
 const REPORT_PROCESSING_LABEL = String(process.env.REPORT_PROCESSING_LABEL || "queue")
   .replace(/[^A-Za-z0-9 ,._()/-]/g, "")
   .replace(/\s+/g, " ")
@@ -9451,10 +9462,23 @@ async function runIndependentCopyleaksAi(
     return null;
   }
 
+  const resolvedAiStatus =
+    String(
+      file
+        .copyleaksIndependentAiStatus ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
   if (
-    file
-      .copyleaksIndependentAiStatus ===
-      "COMPLETE" &&
+    [
+      "COMPLETE",
+      "UNAVAILABLE",
+      "FAILED"
+    ].includes(
+      resolvedAiStatus
+    ) &&
     file
       .copyleaksIndependentAiFile &&
     fs.existsSync(
@@ -9987,7 +10011,30 @@ async function runIndependentCopyleaksAi(
   return record;
 }
 
-async function renderAndDeliverCopyleaksReports(
+const apiDeliveryActive = new Set();
+const apiDeliveryTimers = new Map();
+let apiDeliveryRecoveryRunning = false;
+
+function apiDeliveryKey(
+  job,
+  file
+) {
+  return String(
+    file?.copyleaksScanId ||
+      String(
+        job?.jobId ||
+        "job"
+      ) +
+      ":" +
+      String(
+        file?.fileIndex ??
+        file?.file_name ??
+        "file"
+      )
+  );
+}
+
+function schedulePendingApiDelivery(
   job,
   file,
   bundlePath
@@ -9995,10 +10042,83 @@ async function renderAndDeliverCopyleaksReports(
   if (
     !job ||
     !file ||
-    !bundlePath
+    file.apiReportsDeliveredAt
+  ) {
+    return;
+  }
+
+  const key =
+    apiDeliveryKey(
+      job,
+      file
+    );
+
+  if (
+    apiDeliveryTimers.has(
+      key
+    )
+  ) {
+    return;
+  }
+
+  const dueAt =
+    Number(
+      file.apiDeliveryNotBeforeAt ||
+      Date.now()
+    );
+
+  const waitMs =
+    Math.max(
+      0,
+      dueAt -
+        Date.now()
+    );
+
+  const timer =
+    setTimeout(
+      () => {
+        apiDeliveryTimers.delete(
+          key
+        );
+
+        renderAndDeliverCopyleaksReports(
+          job,
+          file,
+          bundlePath ||
+            file.copyleaksBundleFile ||
+            null
+        ).catch(
+          (err) => {
+            console.error(
+              "Scheduled API report delivery failed:",
+              file.file_name ||
+                file.copyleaksScanId,
+              err?.message ||
+                err
+            );
+          }
+        );
+      },
+      waitMs
+    );
+
+  apiDeliveryTimers.set(
+    key,
+    timer
+  );
+}
+
+async function renderAndDeliverCopyleaksReports(
+  job,
+  file,
+  bundlePath
+) {
+  if (
+    !job ||
+    !file
   ) {
     throw new Error(
-      "Missing job, file or bundle path."
+      "Missing job or file."
     );
   }
 
@@ -10017,21 +10137,26 @@ async function renderAndDeliverCopyleaksReports(
     return;
   }
 
-  const now =
-    Date.now();
+  const deliveryKey =
+    apiDeliveryKey(
+      job,
+      file
+    );
 
   if (
-    file.apiReportDeliveryStatus ===
-      "IN_PROGRESS" &&
-    now -
-      Number(
-        file.apiReportDeliveryStartedAt ||
-        0
-      ) <
-      15 * 60 * 1000
+    apiDeliveryActive.has(
+      deliveryKey
+    )
   ) {
     return;
   }
+
+  apiDeliveryActive.add(
+    deliveryKey
+  );
+
+  const now =
+    Date.now();
 
   file.apiReportDeliveryStatus =
     "IN_PROGRESS";
@@ -10045,6 +10170,43 @@ async function renderAndDeliverCopyleaksReports(
   savePaidJobs();
 
   try {
+    if (
+      !bundlePath ||
+      !fs.existsSync(
+        bundlePath
+      )
+    ) {
+      bundlePath =
+        file.copyleaksBundleFile ||
+        null;
+    }
+
+    if (
+      (
+        !bundlePath ||
+        !fs.existsSync(
+          bundlePath
+        )
+      ) &&
+      file.copyleaksScanId
+    ) {
+      bundlePath =
+        writeCopyleaksBundle(
+          file.copyleaksScanId
+        );
+    }
+
+    if (
+      !bundlePath ||
+      !fs.existsSync(
+        bundlePath
+      )
+    ) {
+      throw new Error(
+        "Copyleaks bundle is unavailable for report delivery."
+      );
+    }
+
     /*
       JK_INDEPENDENT_AI_FILTER_V1
 
@@ -10083,6 +10245,138 @@ async function renderAndDeliverCopyleaksReports(
         bundlePath,
         outputDir
       });
+
+    if (
+      shouldRunAiForFile(file) &&
+      !file.apiAiFinalStatusSentAt
+    ) {
+      let finalAiStatus;
+
+      if (
+        rendered.aiAvailable
+      ) {
+        const aiValue =
+          Number(
+            rendered.aiPercent
+          );
+
+        finalAiStatus =
+          (
+            Number.isFinite(
+              aiValue
+            )
+              ? aiValue
+              : 0
+          )
+            .toFixed(1)
+            .replace(
+              /\.0$/,
+              ""
+            ) +
+          "%";
+      } else {
+        finalAiStatus =
+          "Unavailable - " +
+          safeText(
+            rendered
+              .aiUnavailableReason ||
+            "AI detection unavailable"
+          );
+      }
+
+      await sendAdminMessage(
+        "✅ AI CHECK COMPLETE\n" +
+        "File: " +
+        safeText(
+          file.file_name ||
+          "N/A"
+        ) +
+        "\nAI: " +
+        finalAiStatus
+      );
+
+      file.apiAiFinalStatusSentAt =
+        Date.now();
+
+      savePaidJobs();
+    }
+
+    if (
+      !Number(
+        file.apiDeliveryNotBeforeAt ||
+        0
+      )
+    ) {
+      file.apiDeliveryReadyAt =
+        Date.now();
+
+      file.apiDeliveryNotBeforeAt =
+        file.apiDeliveryReadyAt +
+        API_DELIVERY_HOLD_MINUTES *
+          60 *
+          1000;
+
+      file.apiReportDeliveryStatus =
+        "HOLDING";
+
+      savePaidJobs();
+    }
+
+    const remainingDeliveryWaitMs =
+      Math.max(
+        0,
+        Number(
+          file.apiDeliveryNotBeforeAt ||
+          0
+        ) -
+        Date.now()
+      );
+
+    if (
+      remainingDeliveryWaitMs > 0
+    ) {
+      if (
+        !file.apiDeliveryHoldNotifiedAt
+      ) {
+        await sendAdminMessage(
+          "⏳ REPORTS READY\n" +
+          "File: " +
+          safeText(
+            file.file_name ||
+            "N/A"
+          ) +
+          "\nClient delivery hold: " +
+          API_DELIVERY_HOLD_MINUTES +
+          " minute(s)"
+        );
+
+        file.apiDeliveryHoldNotifiedAt =
+          Date.now();
+
+        savePaidJobs();
+      }
+
+      file.apiReportDeliveryStatus =
+        "HOLDING";
+
+      savePaidJobs();
+
+      schedulePendingApiDelivery(
+        job,
+        file,
+        bundlePath
+      );
+
+      return;
+    }
+
+    file.apiReportDeliveryStatus =
+      "DELIVERING";
+
+    file.apiReportDeliveryStartedAt =
+      Date.now();
+
+    savePaidJobs();
 
     if (
       rendered.similarityPath &&
@@ -10252,7 +10546,203 @@ async function renderAndDeliverCopyleaksReports(
     );
 
     throw err;
+  } finally {
+    apiDeliveryActive.delete(
+      deliveryKey
+    );
   }
+}
+
+async function recoverPendingApiDeliveries(
+  source = "recovery"
+) {
+  if (
+    apiDeliveryRecoveryRunning
+  ) {
+    return;
+  }
+
+  apiDeliveryRecoveryRunning =
+    true;
+
+  try {
+    for (
+      const job of
+        Object.values(
+          paidJobs ||
+          {}
+        )
+    ) {
+      if (
+        !job ||
+        !Array.isArray(
+          job.files
+        )
+      ) {
+        continue;
+      }
+
+      const jobStatus =
+        String(
+          job.status ||
+          ""
+        )
+          .trim()
+          .toUpperCase();
+
+      if (
+        [
+          "CANCEL_REQUESTED",
+          "CANCELLED"
+        ].includes(
+          jobStatus
+        )
+      ) {
+        continue;
+      }
+
+      for (
+        const file of
+          job.files
+      ) {
+        if (
+          !file ||
+          file.apiReportsDeliveredAt
+        ) {
+          continue;
+        }
+
+        if (
+          String(
+            file
+              .copyleaksExportStatus ||
+            ""
+          )
+            .trim()
+            .toUpperCase() !==
+          "COMPLETE"
+        ) {
+          continue;
+        }
+
+        if (
+          !file.copyleaksScanId
+        ) {
+          continue;
+        }
+
+        const key =
+          apiDeliveryKey(
+            job,
+            file
+          );
+
+        if (
+          apiDeliveryActive.has(
+            key
+          )
+        ) {
+          continue;
+        }
+
+        const notBeforeAt =
+          Number(
+            file.apiDeliveryNotBeforeAt ||
+            0
+          );
+
+        if (
+          notBeforeAt >
+          Date.now()
+        ) {
+          schedulePendingApiDelivery(
+            job,
+            file,
+            file.copyleaksBundleFile ||
+              null
+          );
+
+          continue;
+        }
+
+        try {
+          let recoveryBundle =
+            file.copyleaksBundleFile ||
+            null;
+
+          if (
+            !recoveryBundle ||
+            !fs.existsSync(
+              recoveryBundle
+            )
+          ) {
+            recoveryBundle =
+              writeCopyleaksBundle(
+                file.copyleaksScanId
+              );
+          }
+
+          if (
+            !recoveryBundle ||
+            !fs.existsSync(
+              recoveryBundle
+            )
+          ) {
+            console.error(
+              "API delivery recovery bundle unavailable:",
+              file.file_name ||
+                file.copyleaksScanId
+            );
+
+            continue;
+          }
+
+          console.log(
+            "Recovering pending API delivery:",
+            source,
+            file.file_name ||
+              file.copyleaksScanId
+          );
+
+          await renderAndDeliverCopyleaksReports(
+            job,
+            file,
+            recoveryBundle
+          );
+        } catch (err) {
+          console.error(
+            "Pending API delivery recovery failed:",
+            file.file_name ||
+              file.copyleaksScanId,
+            err?.message ||
+              err
+          );
+        }
+      }
+    }
+  } finally {
+    apiDeliveryRecoveryRunning =
+      false;
+  }
+}
+
+function startApiDeliveryRecoveryScheduler() {
+  setInterval(
+    () => {
+      recoverPendingApiDeliveries(
+        "scheduled"
+      ).catch(
+        (err) => {
+          console.error(
+            "API delivery recovery scheduler failed:",
+            err?.message ||
+              err
+          );
+        }
+      );
+    },
+    API_DELIVERY_RECOVERY_INTERVAL_MS
+  );
 }
 
 function writeCopyleaksBundle(
@@ -10677,15 +11167,9 @@ await sendAdminMessage(
       "\n" +
       "AI: " +
       (
-        file
-          .copyleaksSummary
-          .aiPercent === null
-          ? "N/A"
-          : String(
-              file
-                .copyleaksSummary
-                .aiPercent
-            ) + "%"
+        shouldRunAiForFile(file)
+          ? "Pending independent check"
+          : "Not requested"
       ) +
       "\n\n" +
       "Raw API data has been stored for JK report rendering."
@@ -11502,6 +11986,26 @@ app.listen(port, async () => {
   startBotDisplayNameScheduler();
   startDailySalesSummaryScheduler();
   startDiscountBroadcastPreviewScheduler();
+
+  // JK_API_DELIVERY_RESTART_SAFE_V6
+  setTimeout(
+    () => {
+      recoverPendingApiDeliveries(
+        "startup"
+      ).catch(
+        (err) => {
+          console.error(
+            "Startup API delivery recovery failed:",
+            err?.message ||
+              err
+          );
+        }
+      );
+    },
+    5000
+  );
+
+  startApiDeliveryRecoveryScheduler();
 });
 
 process.on("uncaughtException", (err) => {
