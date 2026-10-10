@@ -2,75 +2,328 @@
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
+const { pathToFileURL } = require("url");
 const { spawnSync } = require("child_process");
 
 let pdfJsPromise = null;
 
+/*
+  --------------------------------------------------
+  General helpers
+  --------------------------------------------------
+*/
+
 function safeString(value) {
-  return String(value == null ? "" : value);
+  return String(
+    value == null
+      ? ""
+      : value
+  );
 }
+
+/*
+  --------------------------------------------------
+  Find the original uploaded document
+  --------------------------------------------------
+*/
 
 function resolveOriginalPath(bundle) {
-  const direct = safeString(bundle?.reportIdentity?.originalFilePath).trim();
-  if (direct && fs.existsSync(direct)) return direct;
+  const direct =
+    safeString(
+      bundle
+        ?.reportIdentity
+        ?.originalFilePath
+    ).trim();
 
-  const bundlePath = safeString(bundle?.__bundlePath).trim();
-  const dir = bundlePath ? path.dirname(bundlePath) : "";
-  if (!dir || !fs.existsSync(dir)) return null;
+  if (
+    direct &&
+    fs.existsSync(
+      direct
+    )
+  ) {
+    return direct;
+  }
 
-  const matches = fs.readdirSync(dir)
-    .filter((name) => /^original\.[A-Za-z0-9]+$/i.test(name))
-    .map((name) => path.join(dir, name));
+  const bundlePath =
+    safeString(
+      bundle?.__bundlePath
+    ).trim();
 
-  return matches.find((p) => fs.existsSync(p)) || null;
-}
+  const dir =
+    bundlePath
+      ? path.dirname(
+          bundlePath
+        )
+      : "";
 
-function convertOfficeToPdf(originalPath) {
-  const ext = path.extname(originalPath).toLowerCase();
-  if (ext === ".pdf") return originalPath;
-
-  if (![".doc", ".docx", ".odt", ".rtf"].includes(ext)) {
+  if (
+    !dir ||
+    !fs.existsSync(
+      dir
+    )
+  ) {
     return null;
   }
 
-  const dir = path.dirname(originalPath);
-  const pdfPath = path.join(
-    dir,
-    path.basename(originalPath, ext) + ".pdf"
+  const matches =
+    fs
+      .readdirSync(
+        dir
+      )
+      .filter(
+        (name) =>
+          /^original\.[A-Za-z0-9]+$/i.test(
+            name
+          )
+      )
+      .map(
+        (name) =>
+          path.join(
+            dir,
+            name
+          )
+      );
+
+  return (
+    matches.find(
+      (filePath) =>
+        fs.existsSync(
+          filePath
+        )
+    ) ||
+    null
   );
+}
 
-  if (fs.existsSync(pdfPath)) return pdfPath;
+/*
+  --------------------------------------------------
+  Convert supported Office documents to PDF.
 
-  const profile =
-    "/tmp/jk-lo-" +
-    process.pid +
-    "-" +
-    Date.now() +
-    "-" +
-    Math.random().toString(36).slice(2);
+  PDF files are returned directly.
 
-  const result = spawnSync(
-    "soffice",
-    [
-      "--headless",
-      "--nologo",
-      "--nodefault",
-      "--nolockcheck",
-      "--nofirststartwizard",
-      "-env:UserInstallation=file://" + profile,
-      "--convert-to",
-      "pdf:writer_pdf_Export",
-      "--outdir",
-      dir,
-      originalPath
-    ],
-    {
-      encoding: "utf8",
-      timeout: 120000
+  DOC / DOCX / ODT / RTF use LibreOffice.
+  --------------------------------------------------
+*/
+
+// JK_SOFFICE_RESOLVER_V1
+//
+// Resolve LibreOffice without requiring somebody
+// to manually modify PATH after a restart.
+//
+// Priority:
+// 1. explicit SOFFICE_PATH
+// 2. standard Windows installations
+// 3. "soffice" from PATH (Linux/Render/etc.)
+function resolveSofficeExecutable() {
+  const configured =
+    safeString(
+      process.env.SOFFICE_PATH
+    ).trim();
+
+  if (configured) {
+    if (
+      fs.existsSync(
+        configured
+      )
+    ) {
+      return configured;
     }
-  );
 
-  if (result.error || result.status !== 0 || !fs.existsSync(pdfPath)) {
+    throw new Error(
+      "SOFFICE_PATH does not exist: " +
+      configured
+    );
+  }
+
+  if (
+    process.platform ===
+    "win32"
+  ) {
+    const programFiles =
+      safeString(
+        process.env.ProgramFiles
+      ).trim() ||
+      "C:\\Program Files";
+
+    const programFilesX86 =
+      safeString(
+        process.env["ProgramFiles(x86)"]
+      ).trim() ||
+      "C:\\Program Files (x86)";
+
+    const candidates = [
+      path.join(
+        programFiles,
+        "LibreOffice",
+        "program",
+        "soffice.exe"
+      ),
+
+      path.join(
+        programFilesX86,
+        "LibreOffice",
+        "program",
+        "soffice.exe"
+      )
+    ];
+
+    for (
+      const candidate of
+      candidates
+    ) {
+      if (
+        fs.existsSync(
+          candidate
+        )
+      ) {
+        return candidate;
+      }
+    }
+  }
+
+  return "soffice";
+}
+
+function convertOfficeToPdf(
+  originalPath
+) {
+  originalPath =
+    path.resolve(
+      String(
+        originalPath ||
+        ""
+      )
+    );
+
+  if (
+    !fs.existsSync(
+      originalPath
+    )
+  ) {
+    throw new Error(
+      "Original document does not exist: " +
+      originalPath
+    );
+  }
+
+  const ext =
+    path
+      .extname(
+        originalPath
+      )
+      .toLowerCase();
+
+  if (
+    ext === ".pdf"
+  ) {
+    return originalPath;
+  }
+
+  if (
+    ![
+      ".doc",
+      ".docx",
+      ".odt",
+      ".rtf"
+    ].includes(
+      ext
+    )
+  ) {
+    return null;
+  }
+
+  const dir =
+    path.dirname(
+      originalPath
+    );
+
+  const pdfPath =
+    path.join(
+      dir,
+      path.basename(
+        originalPath,
+        ext
+      ) + ".pdf"
+    );
+
+  /*
+    Reuse an existing converted PDF.
+
+    In production each report is stored in
+    its own working directory, so this also
+    prevents unnecessary repeated conversion.
+  */
+  if (
+    fs.existsSync(
+      pdfPath
+    )
+  ) {
+    return pdfPath;
+  }
+
+  /*
+    Use a unique LibreOffice user profile.
+
+    os.tmpdir() makes this work on:
+    - Render/Linux
+    - Windows development machines
+  */
+  const profile =
+    path.join(
+      os.tmpdir(),
+      "jk-lo-" +
+        process.pid +
+        "-" +
+        Date.now() +
+        "-" +
+        Math.random()
+          .toString(36)
+          .slice(2)
+    );
+
+  const profileUrl =
+    pathToFileURL(
+      profile
+    ).href;
+
+  const result =
+    spawnSync(
+      resolveSofficeExecutable(),
+      [
+        "--headless",
+        "--nologo",
+        "--nodefault",
+        "--nolockcheck",
+        "--nofirststartwizard",
+
+        "-env:UserInstallation=" +
+          profileUrl,
+
+        "--convert-to",
+        "pdf:writer_pdf_Export",
+
+        "--outdir",
+        dir,
+
+        originalPath
+      ],
+      {
+        encoding:
+          "utf8",
+
+        timeout:
+          120000
+      }
+    );
+
+  if (
+    result.error ||
+    result.status !== 0 ||
+    !fs.existsSync(
+      pdfPath
+    )
+  ) {
     const reason =
       result.error?.message ||
       result.stderr ||
@@ -79,113 +332,337 @@ function convertOfficeToPdf(originalPath) {
 
     throw new Error(
       "Could not convert original document to PDF: " +
-      safeString(reason).trim()
+      safeString(
+        reason
+      ).trim()
     );
   }
 
   return pdfPath;
 }
 
+/*
+  --------------------------------------------------
+  Load PDF.js once
+  --------------------------------------------------
+*/
+
 async function pdfJs() {
-  if (!pdfJsPromise) {
-    pdfJsPromise = import("pdfjs-dist/legacy/build/pdf.mjs");
+  if (
+    !pdfJsPromise
+  ) {
+    pdfJsPromise =
+      import(
+        "pdfjs-dist/legacy/build/pdf.mjs"
+      );
   }
+
   return pdfJsPromise;
 }
 
-async function extractPdfPages(pdfPath) {
-  const pdfjs = await pdfJs();
-  const bytes = fs.readFileSync(pdfPath);
+/*
+  --------------------------------------------------
+  Extract page layout from PDF.
 
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(bytes),
-    disableWorker: true,
-    useSystemFonts: true
-  });
+  These coordinates are used by the renderer
+  to preserve the original visible document.
+  --------------------------------------------------
+*/
 
-  const pdf = await loadingTask.promise;
+async function extractPdfPages(
+  pdfPath
+) {
+  pdfPath =
+    path.resolve(
+      String(
+        pdfPath ||
+        ""
+      )
+    );
+
+  if (
+    !fs.existsSync(
+      pdfPath
+    )
+  ) {
+    throw new Error(
+      "PDF not found: " +
+      pdfPath
+    );
+  }
+
+  const pdfjs =
+    await pdfJs();
+
+  const bytes =
+    fs.readFileSync(
+      pdfPath
+    );
+
+  const loadingTask =
+    pdfjs.getDocument({
+      data:
+        new Uint8Array(
+          bytes
+        ),
+
+      disableWorker:
+        true,
+
+      useSystemFonts:
+        true
+    });
+
+  const pdf =
+    await loadingTask
+      .promise;
+
   const pages = [];
-  let elementCount = 0;
+
+  let elementCount =
+    0;
 
   try {
-    for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
-      const pdfPage = await pdf.getPage(pageIndex);
-      const viewport = pdfPage.getViewport({ scale: 1 });
-      const textContent = await pdfPage.getTextContent({
-        disableNormalization: false
-      });
+    for (
+      let pageIndex = 1;
+      pageIndex <=
+        pdf.numPages;
+      pageIndex += 1
+    ) {
+      const pdfPage =
+        await pdf.getPage(
+          pageIndex
+        );
 
-      const elements = [];
+      const viewport =
+        pdfPage.getViewport({
+          scale: 1
+        });
+
+      const textContent =
+        await pdfPage
+          .getTextContent({
+            disableNormalization:
+              false
+          });
+
+      const elements =
+        [];
+
       let order = 0;
 
-      for (const item of textContent.items || []) {
-        if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
-        if (!Array.isArray(item.transform) || item.transform.length < 6) continue;
+      for (
+        const item of
+          textContent.items ||
+          []
+      ) {
+        if (
+          !item ||
+          typeof item.str !==
+            "string" ||
+          !item.str.trim()
+        ) {
+          continue;
+        }
 
-        const size = Math.max(
-          1,
-          Math.abs(Number(item.height || item.transform[3] || 10))
-        );
+        if (
+          !Array.isArray(
+            item.transform
+          ) ||
+          item.transform.length <
+            6
+        ) {
+          continue;
+        }
 
-        const width = Math.max(
-          0.1,
-          Math.abs(Number(item.width || 0.1))
-        );
+        const size =
+          Math.max(
+            1,
+            Math.abs(
+              Number(
+                item.height ||
+                  item
+                    .transform[3] ||
+                  10
+              )
+            )
+          );
+
+        const width =
+          Math.max(
+            0.1,
+            Math.abs(
+              Number(
+                item.width ||
+                  0.1
+              )
+            )
+          );
 
         elements.push({
-          order: order++,
-          type: "pdf-original",
-          text: item.str,
+          order:
+            order++,
+
+          type:
+            "pdf-original",
+
+          text:
+            item.str,
+
           style: {
-            left: Number(item.transform[4] || 0),
-            bottom: Number(item.transform[5] || 0),
+            left:
+              Number(
+                item
+                  .transform[4] ||
+                  0
+              ),
+
+            bottom:
+              Number(
+                item
+                  .transform[5] ||
+                  0
+              ),
+
             width,
-            height: size
+
+            height:
+              size
           },
-          fontClass: "f0",
-          family: null,
+
+          fontClass:
+            "f0",
+
+          family:
+            null,
+
           size,
-          weight: 400
+
+          weight:
+            400
         });
       }
 
-      elementCount += elements.length;
+      elementCount +=
+        elements.length;
 
       pages.push({
-        width: Number(viewport.width || 612),
-        height: Number(viewport.height || 792),
-        bg: null,
+        width:
+          Number(
+            viewport.width ||
+              612
+          ),
+
+        height:
+          Number(
+            viewport.height ||
+              792
+          ),
+
+        bg:
+          null,
+
         elements,
-        preserveSourcePage: true,
-        sourcePdfPageIndex: pageIndex - 1
+
+        preserveSourcePage:
+          true,
+
+        sourcePdfPageIndex:
+          pageIndex - 1
       });
+
+      try {
+        pdfPage.cleanup();
+      } catch {}
     }
   } finally {
+    /*
+      PDF.js 6 cleanup belongs to the
+      PDFDocumentLoadingTask.
+    */
     try {
-      await pdf.destroy();
+      await loadingTask.destroy();
     } catch {}
   }
 
-  if (!pages.length || !elementCount) return null;
+  if (
+    !pages.length ||
+    !elementCount
+  ) {
+    return null;
+  }
 
   return {
     pdfPath,
+
     pages,
-    pageCount: pages.length,
+
+    pageCount:
+      pages.length,
+
     elementCount
   };
 }
 
-async function prepareOriginalLayout(bundle) {
-  const originalPath = resolveOriginalPath(bundle);
-  if (!originalPath) return null;
+/*
+  --------------------------------------------------
+  Prepare the visible original-document layout.
 
-  const pdfPath = convertOfficeToPdf(originalPath);
-  if (!pdfPath || !fs.existsSync(pdfPath)) return null;
+  Original Office file
+        ↓
+  PDF conversion
+        ↓
+  PDF page extraction
+        ↓
+  renderer
+  --------------------------------------------------
+*/
 
-  return extractPdfPages(pdfPath);
+async function prepareOriginalLayout(
+  bundle
+) {
+  const originalPath =
+    resolveOriginalPath(
+      bundle
+    );
+
+  if (
+    !originalPath
+  ) {
+    return null;
+  }
+
+  const pdfPath =
+    convertOfficeToPdf(
+      originalPath
+    );
+
+  if (
+    !pdfPath ||
+    !fs.existsSync(
+      pdfPath
+    )
+  ) {
+    return null;
+  }
+
+  return extractPdfPages(
+    pdfPath
+  );
 }
 
+/*
+  --------------------------------------------------
+  Exports
+
+  convertOfficeToPdf is now exported so that
+  jk-document-extractor.js can use exactly the
+  same DOCX → PDF conversion pathway.
+  --------------------------------------------------
+*/
+
 module.exports = {
-  prepareOriginalLayout
+  prepareOriginalLayout,
+  convertOfficeToPdf,
+  extractPdfPages
 };

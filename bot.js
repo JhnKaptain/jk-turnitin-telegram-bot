@@ -661,6 +661,58 @@ const COPYLEAKS_EXPORT_ENABLED = readBoolEnv(
   true
 );
 
+/*
+  JK_PROVIDER_FLAGS_EARLY_V1
+
+  These must exist before report settings are
+  loaded because the startup safety lock needs
+  to know which provider route is active.
+*/
+const JK_PROVIDER_CUTOVER_ENABLED =
+  readBoolEnv(
+    "JK_PROVIDER_CUTOVER_ENABLED",
+    false
+  );
+
+const JK_PROVIDER_LIVE =
+  readBoolEnv(
+    "JK_PROVIDER_LIVE",
+    false
+  );
+
+function legacyCopyleaksConfigured() {
+  return Boolean(
+    COPYLEAKS_ENABLED &&
+    COPYLEAKS_EMAIL &&
+    COPYLEAKS_API_KEY &&
+    COPYLEAKS_WEBHOOK_SECRET
+  );
+}
+
+function activeProviderReadyForReportMode() {
+  /*
+    When provider cutover is enabled, new jobs no
+    longer use Copyleaks.
+
+    Require LIVE mode before allowing client-facing
+    automatic/API report modes. This prevents a
+    paid job from accidentally ending as DRY_RUN_READY.
+  */
+  if (
+    JK_PROVIDER_CUTOVER_ENABLED
+  ) {
+    return Boolean(
+      JK_PROVIDER_LIVE
+    );
+  }
+
+  /*
+    Legacy compatibility route.
+  */
+  return legacyCopyleaksConfigured();
+}
+
+
 let reportSettings = {
   reportMode: [
     REPORT_MODE_MANUAL,
@@ -834,7 +886,7 @@ function generateJkSubmissionId() {
       ) + digits.slice(1);
   }
 
-  return "trn:oid:::1:" + digits;
+  return "JKW-" + digits;
 }
 
 function chooseReportName() {
@@ -899,12 +951,17 @@ function similarityFilterLabel(value) {
 loadReportSettings();
 
 /*
-  SAFETY LOCK:
-  If Copyleaks itself is disabled,
-  the bot is forced into MANUAL mode
-  regardless of an old saved setting.
+  JK_PROVIDER_READINESS_V2
+
+  API modes are allowed only when the ACTIVE
+  provider route can actually run live.
+
+  - Provider cutover ON  -> JK_PROVIDER_LIVE required
+  - Provider cutover OFF -> legacy Copyleaks required
 */
-if (!COPYLEAKS_ENABLED) {
+if (
+  !activeProviderReadyForReportMode()
+) {
   reportSettings.reportMode =
     REPORT_MODE_MANUAL;
 }
@@ -1733,6 +1790,21 @@ function cleanupPaidJobs() {
   if (changed) savePaidJobs();
 }
 
+const PROVIDER_NEUTRAL_PIPELINE =
+  "PROVIDER_NEUTRAL_V1";
+
+function isProviderNeutralJob(job) {
+  return (
+    String(
+      job?.reportPipeline ||
+      ""
+    )
+      .trim()
+      .toUpperCase() ===
+    PROVIDER_NEUTRAL_PIPELINE
+  );
+}
+
 function createPaidJob({ userId, apiRef, ref, invoiceId, source }) {
   const now = Date.now();
   const batchId = ref?.batchId || `paid_${userId}_${now}`;
@@ -1740,6 +1812,12 @@ function createPaidJob({ userId, apiRef, ref, invoiceId, source }) {
   const cancelAllowedAt = now + REPORT_PROCESSING_MAX_MINUTES * 60 * 1000;
 
   paidJobs[jobId] = {
+    ...(JK_PROVIDER_CUTOVER_ENABLED
+      ? {
+          reportPipeline:
+            PROVIDER_NEUTRAL_PIPELINE
+        }
+      : {}),
     jobId,
     userId: Number(userId),
     batchId,
@@ -3033,7 +3111,7 @@ function adminActionKeyboard(userId, variant) {
           `ADMIN_MANUAL_${userId}`
         ),
         Markup.button.callback(
-          "⚡ Copyleaks API",
+          "⚡ Provider API",
           `ADMIN_COPYLEAKS_${userId}`
         )
       ]);
@@ -4274,12 +4352,12 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
     setImmediate(
       async () => {
         try {
-          await submitPaidJobToCopyleaks(
+          await submitPaidJobToActiveProvider(
             paidJob.jobId
           );
         } catch (err) {
           await sendAdminMessage(
-            "❌ Automatic Copyleaks submission failed\n" +
+            "❌ Automatic provider submission failed\n" +
             "User: " +
             userId +
             "\nError: " +
@@ -6020,13 +6098,10 @@ bot.action(
     }
 
     if (
-      !COPYLEAKS_ENABLED ||
-      !COPYLEAKS_EMAIL ||
-      !COPYLEAKS_API_KEY ||
-      !COPYLEAKS_WEBHOOK_SECRET
+      !activeProviderReadyForReportMode()
     ) {
       return ctx.answerCbQuery(
-        "Configure and enable Copyleaks first.",
+        "Enable the active provider in live mode first.",
         {
           show_alert: true
         }
@@ -6065,13 +6140,10 @@ bot.action(
     }
 
     if (
-      !COPYLEAKS_ENABLED ||
-      !COPYLEAKS_EMAIL ||
-      !COPYLEAKS_API_KEY ||
-      !COPYLEAKS_WEBHOOK_SECRET
+      !activeProviderReadyForReportMode()
     ) {
       return ctx.answerCbQuery(
-        "Configure and enable Copyleaks first.",
+        "Enable the active provider in live mode first.",
         {
           show_alert: true
         }
@@ -6083,7 +6155,7 @@ bot.action(
     await showAdminScreen(
       ctx,
       "⚠️ ENABLE AUTOMATIC API?\n\n" +
-      "Every newly paid eligible document will be submitted to Copyleaks automatically and may consume API credits. Existing jobs are not changed.",
+      "Every newly paid eligible document will be submitted to the active provider automatically and may consume provider credits. Existing jobs are not changed.",
       reportModeAutoConfirmKeyboard(),
       true
     );
@@ -6102,13 +6174,10 @@ bot.action(
     }
 
     if (
-      !COPYLEAKS_ENABLED ||
-      !COPYLEAKS_EMAIL ||
-      !COPYLEAKS_API_KEY ||
-      !COPYLEAKS_WEBHOOK_SECRET
+      !activeProviderReadyForReportMode()
     ) {
       return ctx.answerCbQuery(
-        "Configure and enable Copyleaks first.",
+        "Enable the active provider in live mode first.",
         {
           show_alert: true
         }
@@ -6509,22 +6578,22 @@ bot.action(
     }
 
     await ctx.answerCbQuery(
-      "Starting Copyleaks..."
+      "Starting provider..."
     );
 
     try {
-      await submitPaidJobToCopyleaks(
+      await submitPaidJobToActiveProvider(
         job.jobId
       );
 
       await ctx.reply(
-        "✅ Copyleaks submission started for user " +
+        "✅ Provider submission started for user " +
           userId +
           "."
       );
     } catch (err) {
       await ctx.reply(
-        "❌ Copyleaks submission failed: " +
+        "❌ Provider submission failed: " +
           safeText(
             err?.message || err
           )
@@ -6664,7 +6733,7 @@ bot.action(
 
     await ctx.reply(
       "🔎 FILTER OVERRIDE\n\n" +
-      "Changes are allowed only before the file is submitted to Copyleaks.",
+      "Changes are allowed only before the file is submitted to the active provider.",
       {
         reply_markup:
           Markup.inlineKeyboard(
@@ -7889,6 +7958,514 @@ function shouldRunAiForFile(file) {
     file?.type || ""
   ).toUpperCase() !==
     "SIMILARITY";
+}
+
+
+/*
+  JK_PROVIDER_CUTOVER_V1
+
+  Safe feature gates.
+
+  DEFAULT:
+    cutover = OFF
+    live    = OFF
+
+  Therefore installing this patch does NOT make
+  any Quetext or Sapling request.
+
+  Enable later with:
+
+    JK_PROVIDER_CUTOVER_ENABLED=true
+
+  Paid provider calls additionally require:
+
+    JK_PROVIDER_LIVE=true
+*/
+
+function safeProviderPathPart(
+  value
+) {
+  return String(
+    value == null
+      ? ""
+      : value
+  )
+    .trim()
+    .replace(
+      /[^a-zA-Z0-9._-]+/g,
+      "-"
+    )
+    .replace(
+      /^[-.]+|[-.]+$/g,
+      ""
+    )
+    .slice(
+      0,
+      80
+    ) ||
+    "item";
+}
+
+function ensureProviderRunDir(
+  job,
+  file
+) {
+  const root =
+    path.join(
+      DATA_DIR,
+      "provider-runs"
+    );
+
+  fs.mkdirSync(
+    root,
+    {
+      recursive: true
+    }
+  );
+
+  const jobPart =
+    safeProviderPathPart(
+      job?.jobId ||
+      "job"
+    );
+
+  const filePart =
+    safeProviderPathPart(
+      String(
+        file?.fileIndex ??
+        file?.file_name ??
+        "file"
+      )
+    );
+
+  const dir =
+    path.join(
+      root,
+      jobPart +
+      "-" +
+      filePart
+    );
+
+  fs.mkdirSync(
+    dir,
+    {
+      recursive: true
+    }
+  );
+
+  return dir;
+}
+
+async function submitPaidJobToProviders(
+  jobId
+) {
+  const {
+    buildProviderJobBundle
+  } =
+    require(
+      "./jk-provider-job-bundle.js"
+    );
+
+  const job =
+    paidJobs[
+      jobId
+    ];
+
+  if (!job) {
+    throw new Error(
+      "Paid job not found."
+    );
+  }
+
+  if (
+    !Array.isArray(
+      job.files
+    ) ||
+    job.files.length === 0
+  ) {
+    throw new Error(
+      "Paid job has no stored files."
+    );
+  }
+
+  job.route =
+    JK_PROVIDER_LIVE
+      ? "PROVIDER"
+      : "PROVIDER_DRY_RUN";
+
+  job.status =
+    "API_PROCESSING";
+
+  savePaidJobs();
+
+  let completedCount = 0;
+  let failedCount = 0;
+
+  const errors = [];
+
+  for (
+    let i = 0;
+    i <
+      job.files.length;
+    i += 1
+  ) {
+    const file =
+      job.files[i];
+
+    if (!file) {
+      continue;
+    }
+
+    /*
+      Do not redo a successfully completed
+      provider scan.
+    */
+    if (
+      JK_PROVIDER_LIVE &&
+      String(
+        file.providerStatus ||
+        ""
+      )
+        .trim()
+        .toUpperCase() ===
+        "COMPLETE" &&
+      file.providerBundleFile &&
+      fs.existsSync(
+        file.providerBundleFile
+      )
+    ) {
+      completedCount += 1;
+
+      continue;
+    }
+
+    try {
+      file.providerStatus =
+        "DOWNLOADING";
+
+      file.providerStartedAt =
+        Date.now();
+
+      file.providerError =
+        null;
+
+      savePaidJobs();
+
+      const buffer =
+        await downloadTelegramFileBuffer(
+          file.file_id
+        );
+
+      if (
+        !Number(
+          file.file_size ||
+          file.fileSize ||
+          0
+        )
+      ) {
+        file.file_size =
+          buffer.length;
+      }
+
+      const runDir =
+        ensureProviderRunDir(
+          job,
+          file
+        );
+
+      const sourceExt =
+        path
+          .extname(
+            String(
+              file.file_name ||
+              ""
+            )
+          )
+          .toLowerCase()
+          .replace(
+            /[^.a-z0-9]/g,
+            ""
+          ) ||
+        ".bin";
+
+      const sourcePath =
+        path.join(
+          runDir,
+          "original" +
+          sourceExt
+        );
+
+      fs.writeFileSync(
+        sourcePath,
+        buffer
+      );
+
+      const bundlePath =
+        path.join(
+          runDir,
+          "bundle.json"
+        );
+
+      file.providerOriginalFile =
+        sourcePath;
+
+      file.providerBundleFile =
+        bundlePath;
+
+      file.providerStatus =
+        "SCANNING";
+
+      savePaidJobs();
+
+      const similarityMode =
+        effectiveSimilarityFilter(
+          file
+        );
+
+      const result =
+        await buildProviderJobBundle({
+          sourcePath,
+
+          outputPath:
+            bundlePath,
+
+          job,
+
+          file,
+
+          reportSettings,
+
+          similarityMode,
+
+          runSimilarity:
+            true,
+
+          runAi:
+            shouldRunAiForFile(
+              file
+            ),
+
+          live:
+            JK_PROVIDER_LIVE
+        });
+
+      file.providerSimilarityPercent =
+        result
+          ?.similarityDetection
+          ?.percent ??
+        null;
+
+      file.providerAiPercent =
+        result
+          ?.aiDetection
+          ?.percent ??
+        null;
+
+      file.providerUpdatedAt =
+        Date.now();
+
+      /*
+        DRY RUN:
+        Prove extraction, identity, filtering,
+        bundle generation and canonical layout.
+
+        DO NOT render/deliver fake detector scores.
+      */
+      if (
+        !JK_PROVIDER_LIVE
+      ) {
+        file.providerStatus =
+          "DRY_RUN_READY";
+
+        completedCount += 1;
+
+        savePaidJobs();
+
+        await sendAdminMessage(
+          "PROVIDER DRY RUN READY\n" +
+          "File: " +
+          safeText(
+            file.file_name ||
+            "N/A"
+          ) +
+          "\nSimilarity: DRY_RUN" +
+          (
+            shouldRunAiForFile(
+              file
+            )
+              ? "\nAI: DRY_RUN"
+              : "\nAI: Not requested"
+          ) +
+          "\nNo paid provider request was made."
+        );
+
+        continue;
+      }
+
+      /*
+        Similarity is mandatory for report
+        rendering. AI may legitimately be
+        unavailable and the renderer already
+        handles that case.
+      */
+      const similarityPercent =
+        Number(
+          result
+            ?.similarityDetection
+            ?.percent
+        );
+
+      if (
+        result
+          ?.similarityDetection
+          ?.available !==
+          true ||
+        !Number.isFinite(
+          similarityPercent
+        )
+      ) {
+        throw new Error(
+          "Similarity provider did not return a usable result."
+        );
+      }
+
+      file.providerStatus =
+        "COMPLETE";
+
+      file.providerCompletedAt =
+        Date.now();
+
+      completedCount += 1;
+
+      savePaidJobs();
+
+      /*
+        Reuse the proven existing delivery
+        pipeline. That function is patched
+        below to prefer providerBundleFile.
+      */
+      await renderAndDeliverApiReports(
+        job,
+        file,
+        bundlePath
+      );
+    } catch (err) {
+      failedCount += 1;
+
+      file.providerStatus =
+        "FAILED";
+
+      file.providerFailedAt =
+        Date.now();
+
+      file.providerError =
+        String(
+          err?.stack ||
+          err?.message ||
+          err
+        );
+
+      errors.push({
+        file:
+          file.file_name ||
+          String(i + 1),
+
+        error:
+          String(
+            err?.message ||
+            err
+          )
+      });
+
+      savePaidJobs();
+
+      await sendAdminMessage(
+        "PROVIDER PROCESSING FAILED\n" +
+        "File: " +
+        safeText(
+          file.file_name ||
+          "N/A"
+        ) +
+        "\nError: " +
+        safeText(
+          err?.message ||
+          err
+        )
+      );
+    }
+  }
+
+  if (
+    !JK_PROVIDER_LIVE
+  ) {
+    job.status =
+      failedCount
+        ? "PROVIDER_DRY_RUN_PARTIAL"
+        : "PROVIDER_DRY_RUN_READY";
+  } else if (
+    failedCount
+  ) {
+    job.status =
+      completedCount
+        ? "API_PARTIAL"
+        : "API_FAILED";
+  } else if (
+    job.status !==
+    "DELIVERED"
+  ) {
+    job.status =
+      "API_SCAN_COMPLETE";
+  }
+
+  savePaidJobs();
+
+  return {
+    live:
+      JK_PROVIDER_LIVE,
+
+    completedCount,
+
+    failedCount,
+
+    errors
+  };
+}
+
+/*
+  One stable entry point for NEW jobs.
+
+  When cutover is disabled the exact legacy
+  Copyleaks path remains available for existing
+  operation/in-flight jobs.
+
+  When enabled, new submissions use the
+  Quetext/Sapling provider-neutral pipeline.
+*/
+async function submitPaidJobToActiveProvider(
+  jobId
+) {
+  const job =
+    paidJobs[jobId];
+
+  if (!job) {
+    throw new Error(
+      "Paid job not found."
+    );
+  }
+
+  if (
+    isProviderNeutralJob(
+      job
+    )
+  ) {
+    return submitPaidJobToProviders(
+      jobId
+    );
+  }
+
+  return submitPaidJobToCopyleaks(
+    jobId
+  );
 }
 
 async function submitPaidJobToCopyleaks(
@@ -10081,10 +10658,11 @@ function schedulePendingApiDelivery(
           key
         );
 
-        renderAndDeliverCopyleaksReports(
+        renderAndDeliverApiReports(
           job,
           file,
           bundlePath ||
+            file.providerBundleFile ||
             file.copyleaksBundleFile ||
             null
         ).catch(
@@ -10108,7 +10686,7 @@ function schedulePendingApiDelivery(
   );
 }
 
-async function renderAndDeliverCopyleaksReports(
+async function renderAndDeliverApiReports(
   job,
   file,
   bundlePath
@@ -10170,10 +10748,41 @@ async function renderAndDeliverCopyleaksReports(
   savePaidJobs();
 
   try {
+    /*
+      JK_PROVIDER_CUTOVER_V1
+
+      Prefer the new provider-neutral bundle.
+      Fall back to the old Copyleaks bundle only
+      for legacy/in-flight jobs.
+    */
+    const neutralJob =
+      isProviderNeutralJob(
+        job
+      );
+
+    const providerNeutralBundle =
+      neutralJob &&
+      file.providerBundleFile &&
+      fs.existsSync(
+        file.providerBundleFile
+      )
+        ? file.providerBundleFile
+        : null;
+
     if (
-      !bundlePath ||
-      !fs.existsSync(
-        bundlePath
+      neutralJob
+    ) {
+      bundlePath =
+        providerNeutralBundle;
+    }
+
+    if (
+      !neutralJob &&
+      (
+        !bundlePath ||
+        !fs.existsSync(
+          bundlePath
+        )
       )
     ) {
       bundlePath =
@@ -10182,6 +10791,7 @@ async function renderAndDeliverCopyleaksReports(
     }
 
     if (
+      !neutralJob &&
       (
         !bundlePath ||
         !fs.existsSync(
@@ -10203,7 +10813,7 @@ async function renderAndDeliverCopyleaksReports(
       )
     ) {
       throw new Error(
-        "Copyleaks bundle is unavailable for report delivery."
+        "Provider bundle is unavailable for report delivery."
       );
     }
 
@@ -10221,6 +10831,8 @@ async function renderAndDeliverCopyleaksReports(
       no effect on this call.
     */
     if (
+      !neutralJob &&
+      !providerNeutralBundle &&
       shouldRunAiForFile(
         file
       )
@@ -10601,6 +11213,11 @@ async function recoverPendingApiDeliveries(
         continue;
       }
 
+      const neutralJob =
+        isProviderNeutralJob(
+          job
+        );
+
       for (
         const file of
           job.files
@@ -10612,21 +11229,39 @@ async function recoverPendingApiDeliveries(
           continue;
         }
 
-        if (
+        const providerReady =
+          neutralJob &&
+          String(
+            file.providerStatus ||
+            ""
+          )
+            .trim()
+            .toUpperCase() ===
+            "COMPLETE" &&
+          Boolean(
+            file.providerBundleFile
+          ) &&
+          fs.existsSync(
+            file.providerBundleFile
+          );
+
+        const legacyReady =
+          !neutralJob &&
           String(
             file
               .copyleaksExportStatus ||
             ""
           )
             .trim()
-            .toUpperCase() !==
-          "COMPLETE"
-        ) {
-          continue;
-        }
+            .toUpperCase() ===
+            "COMPLETE" &&
+          Boolean(
+            file.copyleaksScanId
+          );
 
         if (
-          !file.copyleaksScanId
+          !providerReady &&
+          !legacyReady
         ) {
           continue;
         }
@@ -10658,8 +11293,12 @@ async function recoverPendingApiDeliveries(
           schedulePendingApiDelivery(
             job,
             file,
-            file.copyleaksBundleFile ||
-              null
+            providerReady
+              ? file.providerBundleFile
+              : (
+                  file.copyleaksBundleFile ||
+                  null
+                )
           );
 
           continue;
@@ -10667,13 +11306,20 @@ async function recoverPendingApiDeliveries(
 
         try {
           let recoveryBundle =
-            file.copyleaksBundleFile ||
-            null;
+            providerReady
+              ? file.providerBundleFile
+              : (
+                  file.copyleaksBundleFile ||
+                  null
+                );
 
           if (
-            !recoveryBundle ||
-            !fs.existsSync(
-              recoveryBundle
+            !providerReady &&
+            (
+              !recoveryBundle ||
+              !fs.existsSync(
+                recoveryBundle
+              )
             )
           ) {
             recoveryBundle =
@@ -10704,7 +11350,7 @@ async function recoverPendingApiDeliveries(
               file.copyleaksScanId
           );
 
-          await renderAndDeliverCopyleaksReports(
+          await renderAndDeliverApiReports(
             job,
             file,
             recoveryBundle
@@ -11677,7 +12323,7 @@ app.post(
             exportHealthy &&
             bundlePath
           ) {
-            await renderAndDeliverCopyleaksReports(
+            await renderAndDeliverApiReports(
               found.job,
               found.file,
               bundlePath
@@ -11721,6 +12367,29 @@ app.get("/health", (req, res) => {
     reportInstitution:
       reportSettings.institution,
 
+    providerCutoverEnabled:
+      JK_PROVIDER_CUTOVER_ENABLED,
+
+    providerLive:
+      JK_PROVIDER_LIVE,
+
+    providerReadyForReportMode:
+      activeProviderReadyForReportMode(),
+
+    activeProviderRoute:
+      JK_PROVIDER_CUTOVER_ENABLED
+        ? (
+            JK_PROVIDER_LIVE
+              ? "QUETEXT_SAPLING_LIVE"
+              : "QUETEXT_SAPLING_DRY"
+          )
+        : "LEGACY_COPYLEAKS",
+
+    /*
+      Legacy compatibility diagnostics below.
+      Keep these while old in-flight jobs may
+      still receive Copyleaks callbacks.
+    */
     copyleaksEnabled:
       COPYLEAKS_ENABLED,
 
@@ -11964,7 +12633,7 @@ app.listen(port, async () => {
   );
 
   console.log(
-    `Copyleaks enabled/configured/sandbox: ${COPYLEAKS_ENABLED ? "YES" : "NO"}/${COPYLEAKS_EMAIL && COPYLEAKS_API_KEY && COPYLEAKS_WEBHOOK_SECRET ? "YES" : "NO"}/${COPYLEAKS_SANDBOX ? "YES" : "NO"}`
+    `Legacy Copyleaks compatibility enabled/configured/sandbox: ${COPYLEAKS_ENABLED ? "YES" : "NO"}/${COPYLEAKS_EMAIL && COPYLEAKS_API_KEY && COPYLEAKS_WEBHOOK_SECRET ? "YES" : "NO"}/${COPYLEAKS_SANDBOX ? "YES" : "NO"}`
   );
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);

@@ -1,7 +1,7 @@
 {
-  "name": "jk-turnitin-telegram-bot",
+  "name": "jk-integrity-telegram-bot",
   "version": "1.0.0",
-  "description": "JK Turnitin Telegram bot",
+  "description": "JK provider-neutral integrity report Telegram bot",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",

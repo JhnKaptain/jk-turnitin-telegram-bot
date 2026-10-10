@@ -42,10 +42,19 @@ const C = {
   paleMagenta: "#FEDCE7",
   paleBlue: "#D6E5FB",
   paleGreen: "#C1ECDF",
-  palePurple: "#ECDFFE"
+  palePurple: "#ECDFFE",
+  // JK_FIVE_SOURCE_COLORS_V1
+  teal: "#30B8B8",
+  paleTeal: "#D5F1F1"
 };
 
-const SOURCE_COLORS = [C.magenta, C.blue, C.green, C.purple];
+const SOURCE_COLORS = [
+  C.magenta,
+  C.blue,
+  C.green,
+  C.purple,
+  C.teal
+];
 
 const zlib = require("zlib");
 
@@ -179,7 +188,23 @@ function drawRoundedPill(page, x, top, width, height, fill) {
 }
 
 function paleSourceColour(number) {
-  return [C.paleMagenta, C.paleBlue, C.paleGreen, C.palePurple][(Math.max(1, Number(number || 1)) - 1) % 4];
+  const colors = [
+    C.paleMagenta,
+    C.paleBlue,
+    C.paleGreen,
+    C.palePurple,
+    C.paleTeal
+  ];
+
+  return colors[
+    (
+      Math.max(
+        1,
+        Number(number || 1)
+      ) - 1
+    ) %
+    colors.length
+  ];
 }
 
 function groupIconKey(key) {
@@ -204,8 +229,8 @@ function hex(hexValue) {
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }
 
-function topY(top, size) {
-  return PAGE_H - top - size;
+function topY(top, size, pageHeight = PAGE_H) {
+  return pageHeight - top - size;
 }
 
 function safeText(v) {
@@ -221,6 +246,547 @@ function fileBase(name) {
   return (s(name || "report").replace(/[\\/:*?"<>|]+/g, "_").trim() || "report").replace(/\.[^.]+$/, "") || "report";
 }
 
+// JK_PROVIDER_NEUTRAL_RENDERER_V2
+function providerDocument(bundle){
+  const d =
+    bundle?.canonicalDocument;
+
+  return (
+    d &&
+    typeof d === "object"
+  )
+    ? d
+    : null;
+}
+
+function providerText(bundle){
+  return (
+    typeof providerDocument(bundle)?.text ===
+    "string"
+  )
+    ? providerDocument(bundle).text
+    : "";
+}
+
+function providerSimilarity(bundle){
+  const d =
+    bundle?.similarityDetection;
+
+  return (
+    d &&
+    typeof d === "object"
+  )
+    ? d
+    : null;
+}
+
+function providerSimilarityScore(bundle){
+  const d =
+    providerSimilarity(bundle);
+
+  const v =
+    d?.percent;
+
+  if(
+    v === null ||
+    v === undefined ||
+    v === ""
+  ){
+    return null;
+  }
+
+  const n =
+    Number(v);
+
+  return Number.isFinite(n)
+    ? Math.max(
+        0,
+        Math.min(
+          100,
+          n
+        )
+      )
+    : null;
+}
+
+function providerSimilarityFiltered(bundle){
+  return s(
+    bundle
+      ?.preparation
+      ?.similarityMode ||
+    bundle
+      ?.reportIdentity
+      ?.similarityFilter ||
+    ""
+  )
+    .toUpperCase() ===
+    "FILTERED";
+}
+
+// JK_METADATA_AI_GAP_V2
+function firstIdentityText(
+  ...values
+) {
+  for (
+    const value of
+    values
+  ) {
+    const text =
+      s(
+        value
+      ).trim();
+
+    if (
+      text
+    ) {
+      return text;
+    }
+  }
+
+  return "";
+}
+
+function ensureProviderIdentity(bundle){
+  if(
+    !bundle.reportIdentity ||
+    typeof bundle.reportIdentity !==
+      "object"
+  ){
+    bundle.reportIdentity =
+      {};
+  }
+
+  const id =
+    bundle.reportIdentity;
+
+  const d =
+    providerDocument(
+      bundle
+    );
+
+  id.filename =
+    firstIdentityText(
+      id.filename,
+
+      bundle
+        ?.source
+        ?.filename,
+
+      bundle
+        ?.file
+        ?.file_name,
+
+      bundle
+        ?.file
+        ?.fileName,
+
+      d?.sourcePath
+        ? path.basename(
+            d.sourcePath
+          )
+        : "",
+
+      bundle
+        ?.source
+        ?.path
+        ? path.basename(
+            bundle.source.path
+          )
+        : ""
+    ) ||
+    "report";
+
+  id.originalFilePath =
+    firstIdentityText(
+      id.originalFilePath,
+
+      bundle
+        ?.file
+        ?.originalFilePath,
+
+      bundle
+        ?.source
+        ?.path,
+
+      d?.sourcePath,
+
+      bundle
+        ?.source
+        ?.pdfPath,
+
+      d?.pdfPath
+    ) ||
+    null;
+
+  id.jkSubmissionId =
+    firstIdentityText(
+      id.jkSubmissionId,
+
+      bundle
+        ?.jkSubmissionId,
+
+      bundle
+        ?.file
+        ?.jkSubmissionId,
+
+      bundle
+        ?.job
+        ?.jkSubmissionId,
+
+      bundle
+        ?.metadata
+        ?.jkSubmissionId
+    ) ||
+    null;
+
+  id.reportName =
+    firstIdentityText(
+      id.reportName,
+
+      bundle
+        ?.reportName,
+
+      bundle
+        ?.file
+        ?.reportName,
+
+      bundle
+        ?.job
+        ?.reportName,
+
+      bundle
+        ?.job
+        ?.name,
+
+      bundle
+        ?.metadata
+        ?.reportName
+    ) ||
+    null;
+
+  id.institution =
+    firstIdentityText(
+      id.institution,
+
+      bundle
+        ?.reportInstitution,
+
+      bundle
+        ?.file
+        ?.reportInstitution,
+
+      bundle
+        ?.job
+        ?.reportInstitution,
+
+      bundle
+        ?.metadata
+        ?.institution
+    ) ||
+    null;
+
+  id.similarityFilter =
+    firstIdentityText(
+      id.similarityFilter,
+
+      bundle
+        ?.preparation
+        ?.similarityMode,
+
+      bundle
+        ?.file
+        ?.similarityFilter
+    ) ||
+    "FILTERED";
+
+  id.serviceType =
+    firstIdentityText(
+      id.serviceType,
+
+      bundle
+        ?.file
+        ?.type,
+
+      bundle
+        ?.job
+        ?.serviceType
+    ) ||
+    "CHECK";
+
+  return id;
+}
+
+
+function providerPageCount(bundle){
+  const d =
+    providerDocument(bundle);
+
+  const n =
+    Number(
+      d?.pageCount ||
+      d?.pages?.length ||
+      bundle?.source?.pages ||
+      0
+    );
+
+  return n > 0
+    ? n
+    : 1;
+}
+
+function providerWordCount(bundle){
+  const d =
+    providerDocument(bundle);
+
+  const n =
+    Number(
+      d?.wordCount ??
+      bundle
+        ?.source
+        ?.words
+    );
+
+  return (
+    Number.isFinite(n) &&
+    n >= 0
+  )
+    ? n
+    : 0;
+}
+
+function providerCharacterCount(bundle){
+  const d =
+    providerDocument(bundle);
+
+  const n =
+    Number(
+      d?.characterCount ??
+      bundle
+        ?.source
+        ?.characters
+    );
+
+  return (
+    Number.isFinite(n) &&
+    n >= 0
+  )
+    ? n
+    : providerText(bundle).length;
+}
+
+function providerPdfPath(bundle){
+  const candidates = [
+    providerDocument(bundle)?.pdfPath,
+    bundle?.source?.pdfPath,
+    bundle
+      ?.reportIdentity
+      ?.originalFilePath
+  ];
+
+  for(
+    const candidate of
+    candidates
+  ){
+    const p =
+      s(candidate).trim();
+
+    if(
+      p &&
+      path
+        .extname(p)
+        .toLowerCase() ===
+        ".pdf" &&
+      fs.existsSync(p)
+    ){
+      return p;
+    }
+  }
+
+  return null;
+}
+
+function providerPages(bundle){
+  const pages =
+    Array.isArray(
+      providerDocument(bundle)
+        ?.pages
+    )
+      ? providerDocument(bundle)
+          .pages
+      : [];
+
+  return pages.map(
+    (
+      p,
+      pageIndex
+    ) => ({
+      width:
+        Number(
+          p?.width ||
+          PAGE_W
+        ),
+
+      height:
+        Number(
+          p?.height ||
+          PAGE_H
+        ),
+
+      bg:
+        null,
+
+      preserveSourcePage:
+        true,
+
+      sourcePdfPageIndex:
+        pageIndex,
+
+      elements:
+        (
+          Array.isArray(
+            p?.items
+          )
+            ? p.items
+            : []
+        )
+          .map(
+            (
+              item,
+              i
+            ) => {
+              const text =
+                s(
+                  item?.text
+                );
+
+              const start =
+                Number(
+                  item?.start
+                );
+
+              const end =
+                Number(
+                  item?.end
+                );
+
+              if(
+                !text ||
+                !Number.isFinite(start) ||
+                !Number.isFinite(end) ||
+                end <= start
+              ){
+                return null;
+              }
+
+              const t =
+                Array.isArray(
+                  item?.transform
+                )
+                  ? item.transform
+                  : [];
+
+              const x =
+                Number.isFinite(
+                  Number(
+                    item?.x
+                  )
+                )
+                  ? Number(
+                      item.x
+                    )
+                  : Number(
+                      t[4] ||
+                      0
+                    );
+
+              const y =
+                Number.isFinite(
+                  Number(
+                    item?.y
+                  )
+                )
+                  ? Number(
+                      item.y
+                    )
+                  : Number(
+                      t[5] ||
+                      0
+                    );
+
+              const width =
+                Math.max(
+                  0,
+                  Number(
+                    item?.width ||
+                    0
+                  )
+                );
+
+              const h =
+                Math.max(
+                  1,
+                  Number(
+                    item?.height ||
+                    0
+                  ) ||
+                  Math.hypot(
+                    Number(
+                      t[2] ||
+                      0
+                    ),
+                    Number(
+                      t[3] ||
+                      0
+                    )
+                  ) ||
+                  11
+                );
+
+              return {
+                order:
+                  i,
+
+                type:
+                  "canonical",
+
+                text,
+
+                start,
+
+                end,
+
+                style: {
+                  left:
+                    x,
+
+                  bottom:
+                    y,
+
+                  width,
+
+                  height:
+                    h
+                },
+
+                fontClass:
+                  "f0",
+
+                family:
+                  null,
+
+                size:
+                  h,
+
+                weight:
+                  400
+              };
+            }
+          )
+          .filter(Boolean)
+    })
+  );
+}
+
 function bytesText(v) {
   const n = Number(v || 0);
   if (!n) return "N/A";
@@ -231,26 +797,193 @@ function bytesText(v) {
 
 function resolveFileSizeBytes(bundle) {
   const values = [
-    bundle?.reportIdentity?.fileSize,
-    bundle?.reportIdentity?.file_size,
-    bundle?.job?.fileSize,
-    bundle?.job?.file_size,
-    bundle?.file?.fileSize,
-    bundle?.file?.file_size,
-    bundle?.completion?.scannedDocument?.fileSize,
-    bundle?.completion?.scannedDocument?.file_size,
-    bundle?.completion?.scannedDocument?.size,
-    bundle?.completion?.scannedDocument?.metadata?.fileSize,
-    bundle?.completion?.scannedDocument?.metadata?.file_size
+    bundle
+      ?.reportIdentity
+      ?.fileSize,
+
+    bundle
+      ?.reportIdentity
+      ?.file_size,
+
+    bundle
+      ?.job
+      ?.fileSize,
+
+    bundle
+      ?.job
+      ?.file_size,
+
+    bundle
+      ?.file
+      ?.fileSize,
+
+    bundle
+      ?.file
+      ?.file_size,
+
+    bundle
+      ?.source
+      ?.fileSize,
+
+    bundle
+      ?.source
+      ?.file_size,
+
+    bundle
+      ?.completion
+      ?.scannedDocument
+      ?.fileSize,
+
+    bundle
+      ?.completion
+      ?.scannedDocument
+      ?.file_size,
+
+    bundle
+      ?.completion
+      ?.scannedDocument
+      ?.size,
+
+    bundle
+      ?.completion
+      ?.scannedDocument
+      ?.metadata
+      ?.fileSize,
+
+    bundle
+      ?.completion
+      ?.scannedDocument
+      ?.metadata
+      ?.file_size
   ];
 
-  for (const value of values) {
-    const n = Number(value || 0);
-    if (Number.isFinite(n) && n > 0) return n;
+  for (
+    const value of
+    values
+  ) {
+    const number =
+      Number(
+        value
+      );
+
+    if (
+      Number.isFinite(
+        number
+      ) &&
+      number > 0
+    ) {
+      return number;
+    }
+  }
+
+  const d =
+    providerDocument(
+      bundle
+    );
+
+  const paths = [
+    bundle
+      ?.reportIdentity
+      ?.originalFilePath,
+
+    bundle
+      ?.source
+      ?.path,
+
+    d?.sourcePath,
+
+    bundle
+      ?.source
+      ?.pdfPath,
+
+    d?.pdfPath
+  ];
+
+  for (
+    const value of
+    paths
+  ) {
+    const candidate =
+      s(
+        value
+      ).trim();
+
+    if (
+      !candidate
+    ) {
+      continue;
+    }
+
+    try {
+      if (
+        fs.existsSync(
+          candidate
+        )
+      ) {
+        const stat =
+          fs.statSync(
+            candidate
+          );
+
+        if (
+          stat.isFile() &&
+          stat.size > 0
+        ) {
+          return stat.size;
+        }
+      }
+    } catch {}
   }
 
   return null;
 }
+
+function resolveSubmissionDate(
+  bundle
+) {
+  return (
+    bundle
+      ?.reportIdentity
+      ?.submissionDate ||
+
+    bundle
+      ?.job
+      ?.paidAt ||
+
+    bundle
+      ?.job
+      ?.submittedAt ||
+
+    bundle
+      ?.source
+      ?.submittedAt ||
+
+    bundle
+      ?.source
+      ?.createdAt ||
+
+    bundle
+      ?.generatedAt ||
+
+    null
+  );
+}
+
+function resolveDownloadDate(
+  bundle
+) {
+  return (
+    bundle
+      ?.reportIdentity
+      ?.downloadDate ||
+
+    bundle
+      ?.generatedAt ||
+
+    null
+  );
+}
+
 
 // JK_WHOLE_PERCENT_DISPLAY_V1
 function fmtPct(v) {
@@ -272,7 +1005,16 @@ function fmtPct(v) {
 }
 
 function fmtDate(v) {
-  const d = v ? new Date(v) : new Date();
+  if (
+    v === null ||
+    v === undefined ||
+    v === ""
+  ) {
+    return "N/A";
+  }
+
+  const d =
+    new Date(v);
   if (Number.isNaN(d.getTime())) return "N/A";
   const parts = new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -344,7 +1086,17 @@ async function loadBrandFonts(doc) {
 }
 
 function drawTextTop(page, text, x, top, size, font, color = C.ink) {
-  page.drawText(safeText(text), { x, y: topY(top, size), size, font, color: hex(color) });
+  page.drawText(safeText(text), {
+    x,
+    y: topY(
+      top,
+      size,
+      page.getHeight()
+    ),
+    size,
+    font,
+    color: hex(color)
+  });
 }
 
 function drawRule(page, top) {
@@ -417,7 +1169,7 @@ function drawBrandMark(page, f, top) {
     ) / 2;
 
   const y =
-    PAGE_H -
+    page.getHeight() -
     imageTop -
     height;
 
@@ -433,17 +1185,89 @@ function drawBrandMark(page, f, top) {
 }
 
 function shell(page, f, identity, pageNo, totalPages, label) {
-  const leftText = `Page ${pageNo} of ${totalPages} - ${label}`;
+  const pageWidth =
+    page.getWidth();
+
+  const pageHeight =
+    page.getHeight();
+
+  const leftText =
+    `Page ${pageNo} of ${totalPages} - ${label}`;
+
+  /*
+    Preserve the verified Letter-page edge
+    offsets while allowing native A4/other
+    submission-page dimensions.
+
+    On a 612 x 792 report page these resolve
+    to the original coordinates exactly.
+  */
+  const footerTop =
+    pageHeight -
+    (PAGE_H - BRAND_MARK.footerTop);
+
+  const footerTextTop =
+    pageHeight -
+    (PAGE_H - BRAND_MARK.footerTextTop);
+
+  const submissionLabelX =
+    pageWidth -
+    (PAGE_W - BRAND_MARK.submissionLabelX);
+
+  const submissionValueX =
+    pageWidth -
+    (PAGE_W - BRAND_MARK.submissionValueX);
+
   const placements = [
-    [BRAND_MARK.headerTop, BRAND_MARK.headerTextTop],
-    [BRAND_MARK.footerTop, BRAND_MARK.footerTextTop]
+    [
+      BRAND_MARK.headerTop,
+      BRAND_MARK.headerTextTop
+    ],
+    [
+      footerTop,
+      footerTextTop
+    ]
   ];
 
-  for (const [logoTop, textTop] of placements) {
-    drawBrandMark(page, f, logoTop);
-    drawTextTop(page, leftText, BRAND_MARK.pageLabelX, textTop, 6, f.noto, C.ink);
-    drawTextTop(page, "Submission ID", BRAND_MARK.submissionLabelX, textTop, 6, f.noto, C.ink);
-    drawTextTop(page, identity.jkSubmissionId || "", BRAND_MARK.submissionValueX, textTop, 6, f.noto, C.ink);
+  for (
+    const [logoTop, textTop] of
+      placements
+  ) {
+    drawBrandMark(
+      page,
+      f,
+      logoTop
+    );
+
+    drawTextTop(
+      page,
+      leftText,
+      BRAND_MARK.pageLabelX,
+      textTop,
+      6,
+      f.noto,
+      C.ink
+    );
+
+    drawTextTop(
+      page,
+      "Submission ID",
+      submissionLabelX,
+      textTop,
+      6,
+      f.noto,
+      C.ink
+    );
+
+    drawTextTop(
+      page,
+      identity.jkSubmissionId || "",
+      submissionValueX,
+      textTop,
+      6,
+      f.noto,
+      C.ink
+    );
   }
 }
 
@@ -452,17 +1276,9 @@ function drawCoverIcon(page, icons, key, top) {
 }
 
 function documentPageCount(bundle) {
-  const preserved =
-    Number(bundle?.__originalPageCount || 0);
-
-  if (preserved > 0) {
-    return preserved;
-  }
-
-  const html = s(bundle?.crawled?.html?.value);
-  const m = html.match(/<div id="pf\d+" class="[^"]*">/g);
-  return m?.length || 1;
+  return providerPageCount(bundle);
 }
+
 
 // TURNITIN_LONG_FILENAME_WRAP_V1
 function wrapLongFileName(
@@ -628,7 +1444,7 @@ function drawCover(
   drawTextTop(
     page,
     id.reportName ||
-      "turnitin Report",
+      "N/A",
     36,
     304,
     20,
@@ -741,7 +1557,7 @@ function drawCover(
   drawTextTop(
     page,
     id.institution ||
-      "",
+      "N/A",
     56,
     quickTop +
       32.448,
@@ -779,20 +1595,17 @@ function drawCover(
     [
       "Submission Date",
       fmtDate(
-        bundle
-          ?.completion
-          ?.scannedDocument
-          ?.creationTime ||
-        bundle
-          ?.job
-          ?.paidAt
+        resolveSubmissionDate(
+          bundle
+        )
       )
     ],
     [
       "Download Date",
       fmtDate(
-        bundle
-          ?.generatedAt
+        resolveDownloadDate(
+          bundle
+        )
       )
     ],
     [
@@ -916,21 +1729,14 @@ function drawCover(
     );
 
   const words =
-    Number(
+    providerWordCount(
       bundle
-        ?.completion
-        ?.scannedDocument
-        ?.totalWords ||
-      0
     );
 
   const chars =
-    s(
+    providerCharacterCount(
       bundle
-        ?.crawled
-        ?.text
-        ?.value
-    ).length;
+    );
 
   drawTextTop(
     page,
@@ -967,13 +1773,86 @@ function drawCover(
 }
 
 function sourceList(bundle) {
-  const r = bundle?.completion?.results || {};
-  const out = [];
-  for (const [key, label] of [["internet", "Internet"], ["database", "Publications"], ["repositories", "Submitted works"], ["batch", "Submitted works"]]) {
-    for (const item of Array.isArray(r[key]) ? r[key] : []) out.push({ ...item, sourceType: key, sourceLabel: label });
-  }
-  return out.map((item, i) => ({ ...item, number: i + 1, badge: SOURCE_COLORS[i % SOURCE_COLORS.length] }));
+  const d =
+    providerSimilarity(
+      bundle
+    );
+
+  const list =
+    Array.isArray(
+      d?.sources
+    )
+      ? d.sources
+      : [];
+
+  return list.map(
+    (
+      item,
+      index
+    ) => {
+      const number =
+        Number(
+          item?.rank
+        ) > 0
+          ? Number(
+              item.rank
+            )
+          : index + 1;
+
+      const id =
+        s(
+          item?.id ||
+          item?.url ||
+          (
+            "source-" +
+            number
+          )
+        )
+          .trim();
+
+      const url =
+        s(
+          item?.url
+        )
+          .trim() ||
+        null;
+
+      return {
+        ...item,
+
+        id,
+
+        url,
+
+        title:
+          item?.title ||
+          url ||
+          (
+            "Source " +
+            number
+          ),
+
+        sourceType:
+          "internet",
+
+        sourceLabel:
+          "Internet",
+
+        number,
+
+        badge:
+          SOURCE_COLORS[
+            (
+              number -
+              1
+            ) %
+            SOURCE_COLORS.length
+          ]
+      };
+    }
+  );
 }
+
 
 function normalizeMap(text) {
   let norm = "";
@@ -1567,155 +2446,101 @@ function simRanges(
   fullText
 ) {
   const byId =
-    new Map();
-
-  for (
-    const source of
-      sources
-  ) {
-    const id =
-      s(
-        source?.id
-      ).trim();
-
-    if (
-      id &&
-      !byId.has(id)
-    ) {
-      byId.set(
-        id,
-        source
-      );
-    }
-  }
-
-  const out = [];
-
-  for (
-    const item of
-      bundle?.results || []
-  ) {
-    const sourceId =
-      s(
-        item
-          ?.descriptor
-          ?.id
-      ).trim();
-
-    const descriptorSourceType =
-      s(
-        item
-          ?.descriptor
-          ?.sourceType
-      ).trim();
-
-    const source =
-      sourceId
-        ? byId.get(
-            sourceId
-          )
-        : null;
-
-    const comparison =
-      item
-        ?.result
-        ?.text
-        ?.comparison;
-
-    if (
-      !comparison
-    ) {
-      continue;
-    }
-
-    for (
-      const kind of
-        [
-          "identical",
-          "minorChanges",
-          "relatedMeaning"
+    new Map(
+      sources.map(
+        (x) => [
+          s(
+            x?.id
+          ).trim(),
+          x
         ]
-    ) {
-      const chars =
-        comparison
-          ?.[kind]
-          ?.suspected
-          ?.chars;
+      )
+    );
 
-      const starts =
-        chars?.starts ||
-        [];
+  const ranges =
+    Array.isArray(
+      providerSimilarity(
+        bundle
+      )?.ranges
+    )
+      ? providerSimilarity(
+          bundle
+        ).ranges
+      : [];
 
-      const lengths =
-        chars?.lengths ||
-        [];
-
-      for (
-        let i = 0;
-        i <
-        starts.length;
-        i += 1
-      ) {
+  return ranges
+    .map(
+      (r) => {
         const start =
           Number(
-            starts[i]
+            r?.start
           );
 
-        const length =
+        const end =
           Number(
-            lengths[i] ||
-            0
+            r?.end
           );
 
-        if (
+        if(
           !Number.isFinite(
             start
           ) ||
-          length <=
-            0
-        ) {
-          continue;
+          !Number.isFinite(
+            end
+          ) ||
+          end <= start
+        ){
+          return null;
         }
 
-        out.push({
+        const sourceId =
+          s(
+            r?.sourceId ||
+            r?.sourceUrl
+          )
+            .trim();
+
+        const source =
+          sourceId
+            ? byId.get(
+                sourceId
+              )
+            : null;
+
+        return {
           start,
 
-          end:
-            start +
-            length,
+          end,
 
-          length,
+          length:
+            end -
+            start,
 
-          kind,
+          kind:
+            "matched",
 
           sourceId:
             sourceId ||
             null,
 
           sourceNumber:
-            source
-              ? source.number
-              : null,
+            source?.number ??
+            null,
 
           sourceType:
-            source
-              ?.sourceType ||
-            descriptorSourceType ||
-            null,
+            "internet",
 
           sourceLabel:
-            source
-              ?.sourceLabel ||
-            null,
+            "Internet",
 
           sourceTitle:
-            source
-              ?.title ||
+            source?.title ||
+            source?.url ||
             null,
 
           sourceUrl:
-            source
-              ?.url ||
+            r?.sourceUrl ||
+            source?.url ||
             null,
 
           resolvedSource:
@@ -1727,393 +2552,311 @@ function simRanges(
             classifyContext(
               fullText,
               start,
-              start +
-                length
+              end
             )
-        });
+        };
       }
-    }
-  }
-
-  return out.sort(
-    (
-      a,
-      b
-    ) =>
-      a.start -
-        b.start ||
-      a.end -
-        b.end ||
-      Number(
-        a.sourceNumber ||
-        0
-      ) -
-      Number(
-        b.sourceNumber ||
-        0
-      )
-  );
+    )
+    .filter(Boolean)
+    .sort(
+      (
+        a,
+        b
+      ) =>
+        a.start -
+          b.start ||
+        a.end -
+          b.end ||
+        Number(
+          a.sourceNumber ||
+          0
+        ) -
+        Number(
+          b.sourceNumber ||
+          0
+        )
+    );
 }
 
 
-// JK_SOURCE_AUDIT_V2
+
+// JK_SOURCE_AUDIT_V3_PROVIDER_NEUTRAL
 function validateSimilaritySourceMapping(
   bundle,
   sources,
   ranges,
   fullText
 ) {
-  const errors = [];
+  const errors =
+    [];
 
-  const sourceById =
+  const byId =
     new Map();
 
-  const sourceByNumber =
+  const byNumber =
     new Map();
 
-
-  /*
-    Validate the source list itself.
-  */
-  for (
+  for(
     const source of
-      sources
-  ) {
+    sources
+  ){
     const id =
       s(
         source?.id
-      ).trim();
+      )
+        .trim();
 
     const number =
       Number(
         source?.number
       );
 
-    if (
-      !id &&
-      Number(
-        source
-          ?.matchedWords ||
-        0
-      ) >
-        0
-    ) {
+    if(!id){
       errors.push(
         "Source #" +
         (
           number ||
           "?"
         ) +
-        " has matched words but no Copyleaks source ID."
-      );
-    }
-
-    if (id) {
-      if (
-        sourceById.has(
-          id
-        )
-      ) {
-        errors.push(
-          "Duplicate Copyleaks source ID detected: " +
-          id +
-          "."
-        );
-      } else {
-        sourceById.set(
-          id,
-          source
-        );
-      }
-    }
-
-    if (
-      Number.isFinite(
-        number
-      ) &&
-      number >
-        0
-    ) {
-      if (
-        sourceByNumber.has(
-          number
-        )
-      ) {
-        errors.push(
-          "Duplicate displayed source number detected: " +
-          number +
-          "."
-        );
-      } else {
-        sourceByNumber.set(
-          number,
-          source
-        );
-      }
-    }
-  }
-
-
-  /*
-    Validate every individual highlighted range.
-  */
-  for (
-    let index = 0;
-    index <
-    ranges.length;
-    index += 1
-  ) {
-    const range =
-      ranges[index];
-
-    const tag =
-      "range " +
-      (
-        index +
-        1
-      );
-
-    if (
-      !Number.isFinite(
-        range.start
-      ) ||
-      !Number.isFinite(
-        range.end
-      ) ||
-      range.end <=
-        range.start
-    ) {
-      errors.push(
-        tag +
-        ": invalid character range " +
-        range.start +
-        "-" +
-        range.end +
-        "."
+        " has no source ID."
       );
 
       continue;
     }
 
-    // JK_SOURCE_COORDINATE_FIX_V1
-    if (
-      range.start <
-        0
-    ) {
-      errors.push(
-        tag +
-        ": character range starts below zero: " +
-        range.start +
-        "."
-      );
-    }
-
-    /*
-      Important:
-
-      Do not reject range.end > fullText.length.
-
-      Copyleaks comparison offsets can use a less-normalized
-      coordinate stream than crawled.text.value. The original
-      Copyleaks start/end values must stay untouched so that the
-      document-layout mapper can place the match where Copyleaks
-      detected it.
-    */
-
-    if (
-      !range.sourceId
-    ) {
-      errors.push(
-        tag +
-        ": Copyleaks detailed result did not provide a source ID."
-      );
-
-      continue;
-    }
-
-    if (
-      !range.resolvedSource
-    ) {
-      errors.push(
-        tag +
-        ": source ID " +
-        range.sourceId +
-        " could not be matched to the Copyleaks completion source list."
-      );
-
-      continue;
-    }
-
-    const sourceFromId =
-      sourceById.get(
-        range.sourceId
-      );
-
-    if (
-      !sourceFromId
-    ) {
-      errors.push(
-        tag +
-        ": source ID " +
-        range.sourceId +
-        " is missing from the source map."
-      );
-
-      continue;
-    }
-
-    const sourceNumber =
-      Number(
-        range.sourceNumber
-      );
-
-    if (
-      !Number.isFinite(
-        sourceNumber
-      ) ||
-      sourceNumber <=
-        0
-    ) {
-      errors.push(
-        tag +
-        ": resolved source " +
-        range.sourceId +
-        " has no valid displayed source number."
-      );
-
-      continue;
-    }
-
-    const sourceFromNumber =
-      sourceByNumber.get(
-        sourceNumber
-      );
-
-    if (
-      !sourceFromNumber ||
-      s(
-        sourceFromNumber.id
-      ).trim() !==
-        range.sourceId
-    ) {
-      errors.push(
-        tag +
-        ": source number " +
-        sourceNumber +
-        " does not point back to source ID " +
-        range.sourceId +
-        "."
-      );
-    }
-
-    if (
-      !GROUPS.some(
-        (
-          group
-        ) =>
-          group.key ===
-          range.group
+    if(
+      byId.has(
+        id
       )
-    ) {
+    ){
       errors.push(
-        tag +
-        ": unknown match group " +
-        range.group +
+        "Duplicate source ID: " +
+        id +
         "."
+      );
+    }else{
+      byId.set(
+        id,
+        source
+      );
+    }
+
+    if(
+      !Number.isFinite(
+        number
+      ) ||
+      number <= 0
+    ){
+      errors.push(
+        "Source " +
+        id +
+        " has no valid displayed number."
+      );
+    }else if(
+      byNumber.has(
+        number
+      )
+    ){
+      errors.push(
+        "Duplicate displayed source number: " +
+        number +
+        "."
+      );
+    }else{
+      byNumber.set(
+        number,
+        source
       );
     }
   }
 
+  ranges.forEach(
+    (
+      range,
+      index
+    ) => {
+      const tag =
+        "range " +
+        (
+          index +
+          1
+        );
 
-  /*
-    If even one source connection is uncertain,
-    stop generation rather than guessing.
-  */
-  if (
+      if(
+        !Number.isFinite(
+          range.start
+        ) ||
+        !Number.isFinite(
+          range.end
+        ) ||
+        range.end <=
+          range.start
+      ){
+        errors.push(
+          tag +
+          ": invalid coordinates."
+        );
+
+        return;
+      }
+
+      if(
+        range.start <
+          0 ||
+        range.end >
+          fullText.length
+      ){
+        errors.push(
+          tag +
+          ": outside canonical text bounds."
+        );
+      }
+
+      if(
+        !range.sourceId
+      ){
+        errors.push(
+          tag +
+          ": no source ID."
+        );
+
+        return;
+      }
+
+      if(
+        !range.resolvedSource ||
+        !byId.has(
+          range.sourceId
+        )
+      ){
+        errors.push(
+          tag +
+          ": unresolved source " +
+          range.sourceId +
+          "."
+        );
+
+        return;
+      }
+
+      const n =
+        Number(
+          range.sourceNumber
+        );
+
+      const source =
+        byNumber.get(
+          n
+        );
+
+      if(
+        !Number.isFinite(
+          n
+        ) ||
+        n <= 0 ||
+        !source ||
+        s(
+          source.id
+        )
+          .trim() !==
+          range.sourceId
+      ){
+        errors.push(
+          tag +
+          ": source number does not map back to source ID."
+        );
+      }
+
+      if(
+        !GROUPS.some(
+          (g) =>
+            g.key ===
+            range.group
+        )
+      ){
+        errors.push(
+          tag +
+          ": unknown match group " +
+          range.group +
+          "."
+        );
+      }
+    }
+  );
+
+  if(
     errors.length
-  ) {
-    const shown =
+  ){
+    const nl =
+      String.fromCharCode(
+        10
+      );
+
+    throw new Error(
+      "Similarity source mapping validation failed. No report was generated." +
+      nl +
       errors
         .slice(
           0,
           30
         )
         .map(
-          (
-            error
-          ) =>
+          (e) =>
             "- " +
-            error
+            e
         )
         .join(
-          "\n"
-        );
-
-    const more =
-      errors.length >
-        30
-        ? (
-            "\n- ...and " +
-            (
-              errors.length -
-              30
-            ) +
-            " more validation error(s)."
-          )
-        : "";
-
-    throw new Error(
-      "Similarity source mapping validation failed. " +
-      "No report was generated because source-to-text matching was not trustworthy.\n" +
-      shown +
-      more
+          nl
+        ) +
+      (
+        errors.length >
+          30
+          ? (
+              nl +
+              "- ...and " +
+              (
+                errors.length -
+                30
+              ) +
+              " more."
+            )
+          : ""
+      )
     );
   }
 
-
-  const typeCounts = {};
-
-  const rangeCountBySource =
+  const counts =
     {};
 
-
-  for (
-    const range of
-      ranges
-  ) {
-    const type =
-      range.sourceType ||
-      "unknown";
-
-    typeCounts[type] =
-      Number(
-        typeCounts[type] ||
-        0
-      ) +
-      1;
-
-    const key =
+  for(
+    const r of
+    ranges
+  ){
+    counts[
       String(
-        range.sourceNumber
-      );
-
-    rangeCountBySource[key] =
+        r.sourceNumber
+      )
+    ] =
       Number(
-        rangeCountBySource[key] ||
+        counts[
+          String(
+            r.sourceNumber
+          )
+        ] ||
         0
       ) +
       1;
   }
 
-
-  /*
-    Internal audit object.
-
-    This is not sent to customers.
-  */
   return {
     schema:
-      "JK_SIMILARITY_SOURCE_AUDIT_V2",
+      "JK_SIMILARITY_SOURCE_AUDIT_V3",
+
+    provider:
+      providerSimilarity(
+        bundle
+      )?.provider ||
+      "unknown",
 
     generatedAt:
       new Date()
@@ -2132,13 +2875,8 @@ function validateSimilaritySourceMapping(
       null,
 
     overallSimilarity:
-      Number(
+      providerSimilarityScore(
         bundle
-          ?.completion
-          ?.results
-          ?.score
-          ?.aggregatedScore ||
-        0
       ),
 
     documentCharacterCount:
@@ -2153,73 +2891,55 @@ function validateSimilaritySourceMapping(
     unresolvedRangeCount:
       0,
 
-    normalizedTextCoordinateOverflowCount:
-      ranges.filter(
-        (range) =>
-          range.end >
-          fullText.length
-      ).length,
-
     coordinatePolicy:
-      "Copyleaks comparison start/end values are preserved exactly; crawled.text.value length is not used to clip them.",
-
-    rangeCountBySourceType:
-      typeCounts,
+      "Provider ranges are mapped to canonical JKW offsets before rendering.",
 
     sources:
       sources.map(
-        (
-          source
-        ) => ({
+        (x) => ({
           sourceId:
             s(
-              source?.id
-            ).trim() ||
+              x?.id
+            )
+              .trim() ||
             null,
 
           sourceNumber:
             Number(
-              source?.number
+              x?.number
             ) ||
             null,
 
           sourceType:
-            source
-              ?.sourceType ||
-            null,
+            "internet",
 
           sourceLabel:
-            source
-              ?.sourceLabel ||
-            null,
+            "Internet",
 
           matchedWords:
             Number(
-              source
-                ?.matchedWords ||
+              x?.matchedWords ||
               0
             ),
 
           title:
-            source
-              ?.title ||
+            x?.title ||
             null,
 
           url:
-            source
-              ?.url ||
+            x?.url ||
             null,
 
           domain:
             sourceDomain(
-              source
+              x
             ),
 
           mappedRangeCount:
             Number(
-              rangeCountBySource[
+              counts[
                 String(
-                  source?.number
+                  x?.number
                 )
               ] ||
               0
@@ -2230,85 +2950,61 @@ function validateSimilaritySourceMapping(
     matches:
       ranges.map(
         (
-          range,
-          index
+          r,
+          i
         ) => ({
           matchNumber:
-            index +
+            i +
             1,
 
           start:
-            range.start,
+            r.start,
 
           end:
-            range.end,
+            r.end,
 
           length:
-            range.end -
-            range.start,
+            r.end -
+            r.start,
 
           matchKind:
-            range.kind,
+            r.kind,
 
           matchGroup:
-            range.group,
+            r.group,
 
           sourceId:
-            range.sourceId,
+            r.sourceId,
 
           sourceNumber:
-            range.sourceNumber,
+            r.sourceNumber,
 
           sourceType:
-            range.sourceType,
+            r.sourceType,
 
           sourceLabel:
-            range.sourceLabel,
+            r.sourceLabel,
 
           sourceDomain:
             sourceDomain({
               url:
-                range.sourceUrl,
+                r.sourceUrl,
 
               title:
-                range.sourceTitle,
+                r.sourceTitle,
 
               number:
-                range.sourceNumber
+                r.sourceNumber
             }),
 
-          copyleaksCoordinateStart:
-            range.start,
-
-          copyleaksCoordinateEnd:
-            range.end,
-
-          crawledTextLength:
-            fullText.length,
-
-          extendsPastNormalizedCrawledText:
-            range.end >
-            fullText.length,
-
-          /*
-            This preview uses crawled.text.value only for human
-            inspection. It is NOT used to alter the original
-            Copyleaks match coordinates.
-          */
           textPreview:
             fullText
               .slice(
-                Math.min(
-                  range.start,
-                  fullText.length
-                ),
-                Math.min(
-                  range.end,
-                  fullText.length
-                )
+                r.start,
+                r.end
               )
               .replace(
-                /\s+/g,
+                /s+/g,
                 " "
               )
               .trim()
@@ -2321,167 +3017,180 @@ function validateSimilaritySourceMapping(
   };
 }
 
-function aiInfo(bundle) {
 
-  // JK_INDEPENDENT_AI_RENDERER_V1
-  //
-  // New API architecture:
-  // AI is calculated independently from the
-  // similarity scan and stored as bundle.aiDetection.
-  //
-  // Older saved bundles remain supported below.
-  const independent =
+function aiInfo(bundle) {
+  const d =
     bundle?.aiDetection;
 
-  if (
-    independent &&
-    typeof independent ===
-      "object"
-  ) {
-    if (
-      independent.available ===
-      false
-    ) {
-      return {
-        available: false,
-
-        reason:
-          s(
-            independent.reason ||
-            "AI detection unavailable"
-          ),
-
-        percent: null,
-
-        ranges: []
-      };
-    }
-
-    const rawPercent =
-      Number(
-        independent.percent
-      );
-
-    const percent =
-      Number.isFinite(
-        rawPercent
-      )
-        ? Math.max(
-            0,
-            Math.min(
-              100,
-              rawPercent
-            )
-          )
-        : 0;
-
-    const ranges =
-      (
-        Array.isArray(
-          independent.ranges
-        )
-          ? independent.ranges
-          : []
-      )
-        .map(
-          (range) => {
-            const start =
-              Number(
-                range?.start
-              );
-
-            const end =
-              Number(
-                range?.end
-              );
-
-            if (
-              !Number.isFinite(
-                start
-              ) ||
-              !Number.isFinite(
-                end
-              ) ||
-              end <= start
-            ) {
-              return null;
-            }
-
-            return {
-              start,
-              end
-            };
-          }
-        )
-        .filter(Boolean);
-
+  if(
+    !d ||
+    typeof d !== "object" ||
+    d.available === false
+  ){
     return {
-      available: true,
+      available:
+        false,
 
-      reason: null,
+      reason:
+        s(
+          d?.reason ||
+          "AI detection unavailable"
+        ),
 
-      percent,
+      percent:
+        null,
 
-      ranges
+      ranges:
+        []
     };
   }
 
-  const alerts = Array.isArray(bundle?.completion?.notifications?.alerts) ? bundle.completion.notifications.alerts : [];
-  const unavailable = {
-    "ai-detection-failed": "AI detection failed",
-    "file-type-not-supported": "File type not supported for AI detection",
-    "ai-detection-lang-not-supported": "Language not supported for AI detection",
-    "ai-detection-text-too-short": "Text too short for AI detection"
-  };
-  for (const a of alerts) if (unavailable[s(a?.code)]) return { available: false, reason: unavailable[s(a.code)], percent: null, ranges: [] };
+  if(
+    d.percent === null ||
+    d.percent === undefined ||
+    d.percent === ""
+  ){
+    return {
+      available:
+        false,
 
-  let percent = 0;
-  let detail = null;
-  const alert = alerts.find((a) => s(a?.code) === "suspected-ai-text");
-  if (alert) {
-    let d = alert.additionalData;
-    if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = null; } }
-    detail = d;
-    const raw = Number(d?.summary?.ai);
-    if (Number.isFinite(raw)) percent = raw <= 1 ? raw * 100 : raw;
-  }
-  for (const item of bundle?.results || []) {
-    const type = s(item?.descriptor?.sourceType).toLowerCase();
-    if (type.includes("ai")) {
-      detail = item.result;
-      const raw = Number(detail?.summary?.ai);
-      if (Number.isFinite(raw)) percent = raw <= 1 ? raw * 100 : raw;
-      break;
-    }
+      reason:
+        "AI detection returned an invalid percentage",
+
+      percent:
+        null,
+
+      ranges:
+        []
+    };
   }
 
-  const ranges = [];
-  const sections = detail?.result || detail?.results || [];
+  const raw =
+    Number(
+      d.percent
+    );
 
-  if (Array.isArray(sections)) {
-    for (const section of sections) {
-      if (Number(section?.classification) !== 2) continue;
+  if(
+    !Number.isFinite(
+      raw
+    )
+  ){
+    return {
+      available:
+        false,
 
-      for (const m of section?.matches || []) {
-        const starts = m?.text?.chars?.starts || [];
-        const lengths = m?.text?.chars?.lengths || [];
+      reason:
+        "AI detection returned an invalid percentage",
 
-        for (let i = 0; i < starts.length; i++) {
-          const start = Number(starts[i]);
-          const len = Number(lengths[i] || 0);
-          if (Number.isFinite(start) && len > 0) ranges.push({ start, end: start + len });
+      percent:
+        null,
+
+      ranges:
+        []
+    };
+  }
+
+  const ranges =
+    (
+      Array.isArray(
+        d.ranges
+      )
+        ? d.ranges
+        : []
+    )
+      .map(
+        (r) => {
+          const start =
+            Number(
+              r?.start
+            );
+
+          const end =
+            Number(
+              r?.end
+            );
+
+          return (
+            Number.isFinite(
+              start
+            ) &&
+            Number.isFinite(
+              end
+            ) &&
+            end > start
+          )
+            ? {
+                start,
+                end
+              }
+            : null;
         }
-      }
-    }
-  }
+      )
+      .filter(Boolean);
 
   return {
-    available: true,
-    reason: null,
-    percent: Math.max(0, Math.min(100, percent)),
+    available:
+      true,
+
+    reason:
+      null,
+
+    percent:
+      Math.max(
+        0,
+        Math.min(
+          100,
+          raw
+        )
+      ),
+
+    score:
+      (
+        d.score === null ||
+        d.score === undefined ||
+        d.score === ""
+      )
+        ? null
+        : (
+            Number.isFinite(
+              Number(
+                d.score
+              )
+            )
+              ? Number(
+                  d.score
+                )
+              : null
+          ),
+
+    aiFraction:
+      (
+        d.aiFraction === null ||
+        d.aiFraction === undefined ||
+        d.aiFraction === ""
+      )
+        ? null
+        : (
+            Number.isFinite(
+              Number(
+                d.aiFraction
+              )
+            )
+              ? Number(
+                  d.aiFraction
+                )
+              : null
+          ),
+
+    detectorVersion:
+      d.detectorVersion ||
+      d.version ||
+      null,
+
     ranges
   };
 }
+
 
 function overlaps(a, b, c, d) {
   return Math.max(a, c) < Math.min(b, d);
@@ -2603,7 +3312,7 @@ function similarityOverviewPage(page, f, icons, bundle, groups, cats, pageNo, to
   const id = bundle.reportIdentity || {};
   shell(page, f, id, pageNo, totalPages, "Integrity Overview");
 
-  const score = Number(bundle?.completion?.results?.score?.aggregatedScore || 0);
+  const score = providerSimilarityScore(bundle);
 
   drawTextTop(page, `${fmtPct(score)} Overall Similarity`, 36, 55, 17, f.lexMed, C.ink);
   drawTextTop(
@@ -2618,7 +3327,7 @@ function similarityOverviewPage(page, f, icons, bundle, groups, cats, pageNo, to
 
   let summaryTop = 161.81;
 
-  if (s(id.similarityFilter).toUpperCase() === "FILTERED") {
+  if (providerSimilarityFiltered(bundle)) {
     drawTextTop(page, "Filtered from the Report", 36, 100.81, 10, f.notoSemi, C.ink);
     drawPngTop(page, icons.filterBullet, 39, 125.5, 2, 3);
     drawTextTop(page, "Quoted Text", 48, 122.017, 7, f.noto, C.ink);
@@ -2772,7 +3481,9 @@ function sourceOverviewPages(doc, f, icons, bundle, groups, cats, sources, start
         sources.reduce((n, item) => n + Number(item.matchedWords || 0), 0) || 1;
 
       const score =
-        Number(bundle?.completion?.results?.score?.aggregatedScore || 0);
+        providerSimilarityScore(
+          bundle
+        );
 
       const sourcePercent =
         score * Number(source.matchedWords || 0) / totalMatched;
@@ -3083,9 +3794,6 @@ async function drawOriginalPages(
   let pageNo = startPageNo;
 
   for (const original of originalPages) {
-    const page = doc.addPage([PAGE_W, PAGE_H]);
-
-    // JK_PRESERVED_PAGE_SCALE_V1
     const sourceWidth =
       Number(
         original.width ||
@@ -3100,23 +3808,31 @@ async function drawOriginalPages(
         PAGE_H
       );
 
-    const sourceScale =
-      Math.min(
-        PAGE_W / sourceWidth,
-        PAGE_H / sourceHeight
-      );
+    // JK_NATIVE_SOURCE_PAGE_V1
+    //
+    // Preserve the submitted PDF page at its
+    // canonical/native dimensions. Letter stays
+    // Letter; A4 stays A4.
+    const page =
+      doc.addPage([
+        sourceWidth,
+        sourceHeight
+      ]);
 
-    const sourceX =
-      (PAGE_W -
-        sourceWidth *
-          sourceScale) /
-      2;
+    const pageWidth =
+      page.getWidth();
 
-    const sourceY =
-      (PAGE_H -
-        sourceHeight *
-          sourceScale) /
-      2;
+    const pageHeight =
+      page.getHeight();
+
+    /*
+      The output page now has the same dimensions
+      as the source page, so no fit-to-Letter
+      transformation is required.
+    */
+    const sourceScale = 1;
+    const sourceX = 0;
+    const sourceY = 0;
 
     if (original.embeddedPage) {
       page.drawPage(
@@ -3156,7 +3872,1042 @@ async function drawOriginalPages(
       } catch {}
     }
 
+    // JK_PAGE_NUMBER_HIGHLIGHT_PROTECT_V7C
+    //
+    // Preserve source page numbers, but keep them
+    // out of AI/similarity highlighting.
+    //
+    // This version is intentionally more robust than
+    // V7B: it considers text, page-edge band,
+    // approximate width/height, and common page-number
+    // horizontal placement.
+    const isSourcePageNumberElement =
+      (sourceElement) => {
+        const value =
+          s(
+            sourceElement?.text
+          ).trim();
+
+        if (
+          !value
+        ) {
+          return false;
+        }
+
+        const looksLikePageNumber =
+          /^\d{1,4}$/.test(
+            value
+          ) ||
+          /^[ivxlcdm]{1,8}$/i.test(
+            value
+          );
+
+        if (
+          !looksLikePageNumber
+        ) {
+          return false;
+        }
+
+        const left =
+          sourceX +
+          Number(
+            sourceElement
+              ?.style
+              ?.left ||
+            0
+          ) *
+          sourceScale;
+
+        const bottom =
+          sourceY +
+          Number(
+            sourceElement
+              ?.style
+              ?.bottom ||
+            0
+          ) *
+          sourceScale;
+
+        const width =
+          Math.max(
+            1,
+            Number(
+              sourceElement
+                ?.style
+                ?.width ||
+              0
+            ) *
+            sourceScale
+          );
+
+        const height =
+          Math.max(
+            1,
+            Number(
+              sourceElement
+                ?.style
+                ?.height ||
+              sourceElement
+                ?.size ||
+              11
+            ) *
+            sourceScale
+          );
+
+        const topFromPage =
+          pageHeight -
+          (
+            bottom + height
+          );
+
+        const bottomFromPage =
+          bottom;
+
+        const nearTop =
+          topFromPage < 110;
+
+        const nearBottom =
+          bottomFromPage < 110;
+
+        const rightEdge =
+          left + width;
+
+        const nearRight =
+          rightEdge >
+          pageWidth - 140;
+
+        const nearCenter =
+          left >
+            pageWidth * 0.40 &&
+          rightEdge <
+            pageWidth * 0.60;
+
+        const smallBox =
+          width < 40 &&
+          height < 28;
+
+        /*
+          Real page numbers normally sit in:
+          - top-right
+          - bottom-right
+          - top-center
+          - bottom-center
+        */
+        const likelyPageNumberPlacement =
+          (nearTop || nearBottom) &&
+          (nearRight || nearCenter) &&
+          smallBox;
+
+        return (
+          likelyPageNumberPlacement
+        );
+      };
+
     const markerPlaced = new Set();
+
+    // JK_AI_UNIFORM_GAP_PAINT_V3
+    // Remember AI highlight paint across neighbouring
+    // text elements on the same visual line.
+    //
+    // This prevents aiGapPad from painting the same
+    // cyan area twice and creating a darker seam.
+    const paintedAiHighlightSpansByLine =
+      new Map();
+
+    // JK_AI_LINE_MERGE_V5
+    //
+    // AI highlighting is prepared as complete
+    // visual-line spans before the normal element
+    // rendering loop.
+    //
+    // This avoids:
+    // - white gaps between words
+    // - dark multiply overlaps
+    // - PDF hairline seams between rectangles
+    if (kind === "AI") {
+      const aiLineSpans =
+        new Map();
+
+      for (
+        const aiElement of
+          original.elements
+      ) {
+        if (
+          isSourcePageNumberElement(
+            aiElement
+          )
+        ) {
+          continue;
+        }
+
+        if (
+          !Number.isFinite(
+            aiElement.start
+          ) ||
+          !Number.isFinite(
+            aiElement.end
+          )
+        ) {
+          continue;
+        }
+
+        const aiRelevant =
+          ranges.filter(
+            (range) =>
+              overlaps(
+                aiElement.start,
+                aiElement.end,
+                range.start,
+                range.end
+              )
+          );
+
+        if (
+          !aiRelevant.length
+        ) {
+          continue;
+        }
+
+        const aiX =
+          sourceX +
+          Number(
+            aiElement.style.left ||
+            0
+          ) *
+          sourceScale;
+
+        const aiY =
+          sourceY +
+          Number(
+            aiElement.style.bottom ||
+            0
+          ) *
+          sourceScale;
+
+        const aiTargetWidth =
+          Number(
+            aiElement.style.width ||
+            0
+          ) *
+          sourceScale;
+
+        const aiHeight =
+          Number(
+            aiElement.style.height ||
+            aiElement.size ||
+            11
+          ) *
+          sourceScale;
+
+        const aiSize =
+          Number(
+            aiElement.size ||
+            11
+          ) *
+          sourceScale;
+
+        const aiFont =
+          elementFont(
+            originalFontCache,
+            aiElement
+          );
+
+        const aiScale =
+          fittedScale(
+            aiFont,
+            s(aiElement.text),
+            aiSize,
+            aiTargetWidth
+          );
+
+        for (
+          const aiRange of
+            aiRelevant
+        ) {
+          const a =
+            Math.max(
+              aiElement.start,
+              aiRange.start
+            );
+
+          const b =
+            Math.min(
+              aiElement.end,
+              aiRange.end
+            );
+
+          if (
+            b <= a
+          ) {
+            continue;
+          }
+
+          const i0 =
+            localTextIndex(
+              aiElement,
+              a
+            );
+
+          const i1 =
+            localTextIndex(
+              aiElement,
+              b
+            );
+
+          let dx0 = 0;
+          let dx1 =
+            aiTargetWidth;
+
+          try {
+            dx0 =
+              aiFont
+                .widthOfTextAtSize(
+                  s(
+                    aiElement.text
+                  ).slice(
+                    0,
+                    i0
+                  ),
+                  aiSize
+                ) *
+              aiScale;
+
+            dx1 =
+              aiFont
+                .widthOfTextAtSize(
+                  s(
+                    aiElement.text
+                  ).slice(
+                    0,
+                    i1
+                  ),
+                  aiSize
+                ) *
+              aiScale;
+          } catch {
+            const span =
+              Math.max(
+                1,
+                aiElement.end -
+                  aiElement.start
+              );
+
+            dx0 =
+              aiTargetWidth *
+              (
+                a -
+                aiElement.start
+              ) /
+              span;
+
+            dx1 =
+              aiTargetWidth *
+              (
+                b -
+                aiElement.start
+              ) /
+              span;
+          }
+
+          const aiGapPad =
+            Math.max(
+              0.9,
+              Math.min(
+                1.8,
+                aiSize * 0.16
+              )
+            );
+
+          const coversStart =
+            a <=
+            aiElement.start;
+
+          const coversEnd =
+            b >=
+            aiElement.end;
+
+          const start =
+            aiX +
+            dx0 -
+            (
+              coversStart
+                ? aiGapPad
+                : 0
+            );
+
+          const end =
+            aiX +
+            dx1 +
+            (
+              coversEnd
+                ? aiGapPad
+                : 0
+            );
+
+          if (
+            end - start <
+            0.01
+          ) {
+            continue;
+          }
+
+          /*
+            Include approximate height in the
+            visual-line key so text of materially
+            different sizes is not accidentally
+            merged.
+          */
+          const lineKey =
+            String(
+              Math.round(
+                aiY * 2
+              )
+            ) +
+            ":" +
+            String(
+              Math.round(
+                aiHeight * 2
+              )
+            );
+
+          let line =
+            aiLineSpans.get(
+              lineKey
+            );
+
+          if (!line) {
+            line = {
+              y:
+                aiY - 1.1,
+
+              height:
+                Math.max(
+                  7,
+                  aiHeight + 1.9
+                ),
+
+              spans: []
+            };
+
+            aiLineSpans.set(
+              lineKey,
+              line
+            );
+          } else {
+            line.y =
+              Math.min(
+                line.y,
+                aiY - 1.1
+              );
+
+            line.height =
+              Math.max(
+                line.height,
+                Math.max(
+                  7,
+                  aiHeight + 1.9
+                )
+              );
+          }
+
+          line.spans.push({
+            start,
+            end,
+
+            /*
+              Keep the provider range identity
+              while bridging normal word spaces.
+
+              We do NOT bridge two unrelated
+              detected AI ranges merely because
+              they happen to be close together.
+            */
+            rangeKey:
+              String(
+                aiRange.start
+              ) +
+              ":" +
+              String(
+                aiRange.end
+              ),
+
+            bridgeGap:
+              Math.max(
+                3.0,
+                Math.min(
+                  7.5,
+                  aiSize * 0.65
+                )
+              )
+          });
+        }
+      }
+
+      /*
+        Merge each provider AI range separately
+        first. This fills normal inter-word space
+        while respecting the actual detected ranges.
+      */
+      for (
+        const line of
+          aiLineSpans.values()
+      ) {
+        const byRange =
+          new Map();
+
+        for (
+          const span of
+            line.spans
+        ) {
+          if (
+            !byRange.has(
+              span.rangeKey
+            )
+          ) {
+            byRange.set(
+              span.rangeKey,
+              []
+            );
+          }
+
+          byRange
+            .get(
+              span.rangeKey
+            )
+            .push(
+              span
+            );
+        }
+
+        const rangeMerged = [];
+
+        for (
+          const [
+            rangeKey,
+            spans
+          ] of
+            byRange.entries()
+        ) {
+          const rangeParts =
+            String(
+              rangeKey || ""
+            ).split(":");
+
+          const providerRangeStart =
+            Number(
+              rangeParts[0]
+            );
+
+          const providerRangeEnd =
+            Number(
+              rangeParts[1]
+            );
+
+          spans.sort(
+            (left, right) =>
+              left.start -
+              right.start
+          );
+
+          let current = null;
+
+          for (
+            const span of
+              spans
+          ) {
+            if (!current) {
+              current = {
+                start:
+                  span.start,
+
+                end:
+                  span.end,
+
+                bridgeGap:
+                  span.bridgeGap,
+
+                rangeStart:
+                  providerRangeStart,
+
+                rangeEnd:
+                  providerRangeEnd
+              };
+
+              continue;
+            }
+
+            const allowedGap =
+              Math.max(
+                current.bridgeGap,
+                span.bridgeGap
+              );
+
+            if (
+              span.start <=
+              current.end +
+                allowedGap
+            ) {
+              current.end =
+                Math.max(
+                  current.end,
+                  span.end
+                );
+
+              current.bridgeGap =
+                Math.max(
+                  current.bridgeGap,
+                  span.bridgeGap
+                );
+            } else {
+              rangeMerged.push(
+                current
+              );
+
+              current = {
+                start:
+                  span.start,
+
+                end:
+                  span.end,
+
+                bridgeGap:
+                  span.bridgeGap,
+
+                rangeStart:
+                  providerRangeStart,
+
+                rangeEnd:
+                  providerRangeEnd
+              };
+            }
+          }
+
+          if (current) {
+            rangeMerged.push(
+              current
+            );
+          }
+        }
+
+        /*
+          Different provider ranges may overlap.
+          Union only genuine overlap/touching here.
+
+          Do NOT apply word-gap bridging between
+          unrelated ranges.
+        */
+        // JK_AI_ADJACENT_RANGE_BRIDGE_V6
+        //
+        // Determine whether the source-position
+        // gap between two detected AI ranges
+        // contains any real non-whitespace text.
+        //
+        // Missing layout elements in the gap are
+        // treated as formatting/whitespace, which
+        // is correct for normal inter-word spaces.
+        const aiSourceGapIsWhitespaceOnly =
+          (
+            leftEnd,
+            rightStart
+          ) => {
+            if (
+              !Number.isFinite(
+                leftEnd
+              ) ||
+              !Number.isFinite(
+                rightStart
+              )
+            ) {
+              return false;
+            }
+
+            if (
+              rightStart <=
+              leftEnd
+            ) {
+              return true;
+            }
+
+            for (
+              const sourceElement of
+                original.elements
+            ) {
+              if (
+                !Number.isFinite(
+                  sourceElement.start
+                ) ||
+                !Number.isFinite(
+                  sourceElement.end
+                )
+              ) {
+                continue;
+              }
+
+              const gapStart =
+                Math.max(
+                  leftEnd,
+                  sourceElement.start
+                );
+
+              const gapEnd =
+                Math.min(
+                  rightStart,
+                  sourceElement.end
+                );
+
+              if (
+                gapEnd <=
+                gapStart
+              ) {
+                continue;
+              }
+
+              const sourceI0 =
+                localTextIndex(
+                  sourceElement,
+                  gapStart
+                );
+
+              const sourceI1 =
+                localTextIndex(
+                  sourceElement,
+                  gapEnd
+                );
+
+              const betweenText =
+                s(
+                  sourceElement.text
+                ).slice(
+                  sourceI0,
+                  sourceI1
+                );
+
+              if (
+                /\S/u.test(
+                  betweenText
+                )
+              ) {
+                return false;
+              }
+            }
+
+            return true;
+          };
+
+        rangeMerged.sort(
+          (left, right) =>
+            left.start -
+            right.start
+        );
+
+        const finalSpans = [];
+
+        let current = null;
+
+        for (
+          const span of
+            rangeMerged
+        ) {
+          if (!current) {
+            current = {
+              start:
+                span.start,
+
+              end:
+                span.end,
+
+              bridgeGap:
+                span.bridgeGap,
+
+              rangeStart:
+                span.rangeStart,
+
+              rangeEnd:
+                span.rangeEnd
+            };
+
+            continue;
+          }
+
+          const visualGap =
+            span.start -
+            current.end;
+
+          const allowedVisualGap =
+            Math.max(
+              Number(
+                current.bridgeGap ||
+                0
+              ),
+              Number(
+                span.bridgeGap ||
+                0
+              )
+            );
+
+          const overlapsOrTouches =
+            span.start <=
+            current.end +
+              0.05;
+
+          const sourceGapIsWhitespace =
+            aiSourceGapIsWhitespaceOnly(
+              current.rangeEnd,
+              span.rangeStart
+            );
+
+          const normalVisualSpace =
+            visualGap >=
+              -0.05 &&
+            visualGap <=
+              allowedVisualGap;
+
+          /*
+            Merge if they physically overlap,
+            OR if the only thing separating two
+            provider AI ranges is whitespace and
+            a normal-sized rendered space.
+
+            This is the sentence-boundary fix.
+          */
+          if (
+            overlapsOrTouches ||
+            (
+              normalVisualSpace &&
+              sourceGapIsWhitespace
+            )
+          ) {
+            current.end =
+              Math.max(
+                current.end,
+                span.end
+              );
+
+            current.bridgeGap =
+              Math.max(
+                Number(
+                  current.bridgeGap ||
+                  0
+                ),
+                Number(
+                  span.bridgeGap ||
+                  0
+                )
+              );
+
+            if (
+              Number.isFinite(
+                span.rangeStart
+              )
+            ) {
+              current.rangeStart =
+                Number.isFinite(
+                  current.rangeStart
+                )
+                  ? Math.min(
+                      current.rangeStart,
+                      span.rangeStart
+                    )
+                  : span.rangeStart;
+            }
+
+            if (
+              Number.isFinite(
+                span.rangeEnd
+              )
+            ) {
+              current.rangeEnd =
+                Number.isFinite(
+                  current.rangeEnd
+                )
+                  ? Math.max(
+                      current.rangeEnd,
+                      span.rangeEnd
+                    )
+                  : span.rangeEnd;
+            }
+          } else {
+            finalSpans.push(
+              current
+            );
+
+            current = {
+              start:
+                span.start,
+
+              end:
+                span.end,
+
+              bridgeGap:
+                span.bridgeGap,
+
+              rangeStart:
+                span.rangeStart,
+
+              rangeEnd:
+                span.rangeEnd
+            };
+          }
+        }
+
+        if (current) {
+          finalSpans.push(
+            current
+          );
+        }
+
+        /*
+          ONE rectangle per final continuous
+          AI-highlight section.
+
+          Same colour, opacity and Multiply mode
+          as before.
+        */
+        for (
+          const span of
+            finalSpans
+        ) {
+          if (
+            span.end -
+              span.start <
+            0.01
+          ) {
+            continue;
+          }
+
+          page.drawRectangle({
+            x:
+              span.start,
+
+            y:
+              line.y,
+
+            width:
+              span.end -
+              span.start,
+
+            height:
+              line.height,
+
+            color:
+              hex(
+                C.ai
+              ),
+
+            opacity:
+              0.40,
+
+            blendMode:
+              BlendMode.Multiply
+          });
+        }
+      }
+    }
+
+
+    // JK_SIMILARITY_CONTINUITY_V1
+    //
+    // Similarity highlights should visually cover
+    // normal whitespace inside one continuous match,
+    // including whitespace between separate PDF text
+    // elements.
+    //
+    // Never bridge:
+    // - different sources
+    // - different match groups
+    // - different visual lines
+    // - source gaps containing real unmatched text
+    const similarityBridgeState =
+      new Map();
+
+    const similaritySourceGapIsWhitespaceOnly =
+      (
+        leftEnd,
+        rightStart
+      ) => {
+        if (
+          !Number.isFinite(
+            leftEnd
+          ) ||
+          !Number.isFinite(
+            rightStart
+          )
+        ) {
+          return false;
+        }
+
+        if (
+          rightStart <=
+          leftEnd
+        ) {
+          return true;
+        }
+
+        for (
+          const sourceElement of
+            original.elements
+        ) {
+          if (
+            !Number.isFinite(
+              sourceElement.start
+            ) ||
+            !Number.isFinite(
+              sourceElement.end
+            )
+          ) {
+            continue;
+          }
+
+          const gapStart =
+            Math.max(
+              leftEnd,
+              sourceElement.start
+            );
+
+          const gapEnd =
+            Math.min(
+              rightStart,
+              sourceElement.end
+            );
+
+          if (
+            gapEnd <=
+            gapStart
+          ) {
+            continue;
+          }
+
+          const sourceI0 =
+            localTextIndex(
+              sourceElement,
+              gapStart
+            );
+
+          const sourceI1 =
+            localTextIndex(
+              sourceElement,
+              gapEnd
+            );
+
+          const betweenText =
+            s(
+              sourceElement.text
+            ).slice(
+              sourceI0,
+              sourceI1
+            );
+
+          if (
+            /\S/u.test(
+              betweenText
+            )
+          ) {
+            return false;
+          }
+        }
+
+        return true;
+      };
 
     for (const element of original.elements) {
       const x =
@@ -3199,6 +4950,9 @@ async function drawOriginalPages(
       const font = elementFont(originalFontCache, element);
 
       const relevant =
+        !isSourcePageNumberElement(
+          element
+        ) &&
         Number.isFinite(element.start) &&
         Number.isFinite(element.end)
           ? ranges.filter((range) =>
@@ -3271,21 +5025,366 @@ async function drawOriginalPages(
         */
         const highlightKey =
           kind === "AI"
-            ? "AI"
+            ? (
+                "AI:" +
+                String(
+                  Math.round(
+                    y * 2
+                  )
+                )
+              )
             : String(
                 range.group || ""
               );
 
-        const highlightStart =
-          x + dx0;
+        // JK_AI_LINE_MERGE_V5
+        // AI was already painted once during
+        // the visual-line pre-pass above.
+        //
+        // Skip the old per-element AI rectangles.
+        // Similarity rendering continues unchanged.
+        if (
+          kind === "AI"
+        ) {
+          continue;
+        }
 
-        const highlightEnd =
-          x + dx1;
+        const highlightSpanMap =
+          kind === "AI"
+            ? paintedAiHighlightSpansByLine
+            : paintedHighlightSpans;
+
+        // JK_AI_INTERWORD_GAP_FILL_V1
+        const aiGapPad =
+          kind === "AI"
+            ? Math.max(
+                0.9,
+                Math.min(
+                  1.8,
+                  size * 0.16
+                )
+              )
+            : 0;
+
+        const coversElementStart =
+          a <=
+          element.start;
+
+        const coversElementEnd =
+          b >=
+          element.end;
+
+        let highlightStart =
+          x +
+          dx0 -
+          (
+            kind === "AI" &&
+            coversElementStart
+              ? aiGapPad
+              : 0
+          );
+
+        let highlightEnd =
+          x +
+          dx1 +
+          (
+            kind === "AI" &&
+            coversElementEnd
+              ? aiGapPad
+              : 0
+          );
 
         const alreadyPainted =
-          paintedHighlightSpans.get(
+          highlightSpanMap.get(
             highlightKey
           ) || [];
+
+        // JK_AI_SMALL_GAP_BRIDGE_V4
+        //
+        // Connect normal inter-word gaps between
+        // neighbouring AI highlight rectangles.
+        //
+        // The existing pending-span subtraction
+        // still prevents any area from being
+        // painted twice.
+        if (
+          kind === "AI" &&
+          alreadyPainted.length
+        ) {
+          const bridgeGap =
+            Math.max(
+              3.0,
+              Math.min(
+                7.5,
+                size * 0.65
+              )
+            );
+
+          for (
+            const painted of
+              alreadyPainted
+          ) {
+            const paintedStart =
+              Number(
+                painted[0]
+              );
+
+            const paintedEnd =
+              Number(
+                painted[1]
+              );
+
+            if (
+              !Number.isFinite(
+                paintedStart
+              ) ||
+              !Number.isFinite(
+                paintedEnd
+              )
+            ) {
+              continue;
+            }
+
+            /*
+              Current rectangle is immediately
+              to the right of an existing one.
+            */
+            const leftGap =
+              highlightStart -
+              paintedEnd;
+
+            if (
+              leftGap >= 0 &&
+              leftGap <=
+                bridgeGap
+            ) {
+              highlightStart =
+                paintedEnd;
+            }
+
+            /*
+              Current rectangle is immediately
+              to the left of an existing one.
+
+              This makes the logic independent
+              of element ordering.
+            */
+            const rightGap =
+              paintedStart -
+              highlightEnd;
+
+            if (
+              rightGap >= 0 &&
+              rightGap <=
+                bridgeGap
+            ) {
+              highlightEnd =
+                paintedStart;
+            }
+          }
+        }
+
+
+        /*
+          JK_SIMILARITY_CONTINUITY_V1
+
+          Bridge normal visual whitespace for the
+          same source/group when the canonical gap
+          contains no non-whitespace text.
+
+          This operates before pending-span
+          subtraction, so the existing overlap
+          protection remains authoritative.
+        */
+        if (
+          kind ===
+          "SIMILARITY"
+        ) {
+          // JK_SIMILARITY_CONTINUITY_RANGE_ID_V2
+          const similarityBridgeKey =
+            [
+              Number(
+                range.start
+              ),
+
+              Number(
+                range.end
+              ),
+              s(
+                range.sourceId ||
+                ""
+              ).trim(),
+
+              String(
+                range.sourceNumber ??
+                ""
+              ),
+
+              s(
+                range.group ||
+                ""
+              ).trim()
+            ].join(
+              "|"
+            );
+
+          const previous =
+            similarityBridgeState.get(
+              similarityBridgeKey
+            );
+
+          const allowedVisualGap =
+            Math.max(
+              3.0,
+              Math.min(
+                7.5,
+                size * 0.65
+              )
+            );
+
+          const lineTolerance =
+            Math.max(
+              1.5,
+              Math.min(
+                3.5,
+                height * 0.30
+              )
+            );
+
+          let joinedPrevious =
+            false;
+
+          if (
+            previous &&
+            Math.abs(
+              previous.y -
+              y
+            ) <=
+              lineTolerance
+          ) {
+            /*
+              Current highlight lies to the right
+              of the preceding source/group span.
+            */
+            const rightGap =
+              highlightStart -
+              previous.end;
+
+            const rightSourceGapIsWhitespace =
+              similaritySourceGapIsWhitespaceOnly(
+                previous.canonicalEnd,
+                a
+              );
+
+            if (
+              rightGap >=
+                -0.05 &&
+              rightGap <=
+                allowedVisualGap &&
+              rightSourceGapIsWhitespace
+            ) {
+              highlightStart =
+                Math.min(
+                  highlightStart,
+                  previous.end
+                );
+
+              joinedPrevious =
+                true;
+            }
+
+            /*
+              Handle unusual PDF element ordering
+              where the current item is encountered
+              to the left of the previous item.
+            */
+            if (
+              !joinedPrevious
+            ) {
+              const leftGap =
+                previous.start -
+                highlightEnd;
+
+              const leftSourceGapIsWhitespace =
+                similaritySourceGapIsWhitespaceOnly(
+                  b,
+                  previous.canonicalStart
+                );
+
+              if (
+                leftGap >=
+                  -0.05 &&
+                leftGap <=
+                  allowedVisualGap &&
+                leftSourceGapIsWhitespace
+              ) {
+                highlightEnd =
+                  Math.max(
+                    highlightEnd,
+                    previous.start
+                  );
+
+                joinedPrevious =
+                  true;
+              }
+            }
+          }
+
+          if (
+            previous &&
+            joinedPrevious
+          ) {
+            similarityBridgeState.set(
+              similarityBridgeKey,
+              {
+                y,
+
+                start:
+                  Math.min(
+                    previous.start,
+                    highlightStart
+                  ),
+
+                end:
+                  Math.max(
+                    previous.end,
+                    highlightEnd
+                  ),
+
+                canonicalStart:
+                  Math.min(
+                    previous.canonicalStart,
+                    a
+                  ),
+
+                canonicalEnd:
+                  Math.max(
+                    previous.canonicalEnd,
+                    b
+                  )
+              }
+            );
+          } else {
+            similarityBridgeState.set(
+              similarityBridgeKey,
+              {
+                y,
+
+                start:
+                  highlightStart,
+
+                end:
+                  highlightEnd,
+
+                canonicalStart:
+                  a,
+
+                canonicalEnd:
+                  b
+              }
+            );
+          }
+        }
 
         let pendingSpans = [
           [
@@ -3403,7 +5502,7 @@ async function drawOriginalPages(
           highlightEnd
         ]);
 
-        paintedHighlightSpans.set(
+        highlightSpanMap.set(
           highlightKey,
           alreadyPainted
         );
@@ -3482,6 +5581,234 @@ async function drawOriginalPages(
       }
     }
 
+    // JK_SOURCE_RUNNING_HEADER_SUPPRESS_V9
+    //
+    // A Word/PDF source can contain its own
+    // running header very close to the top edge.
+    //
+    // Turnitin's own report chrome occupies this
+    // same narrow band. Official comparison files
+    // show that a standalone source page number
+    // may remain there, but ordinary source
+    // running-header text should not visually
+    // merge into the Turnitin header.
+    //
+    // IMPORTANT:
+    // - do NOT move the page;
+    // - do NOT rescale the page;
+    // - do NOT alter the body margins;
+    // - do NOT remove source page numbers;
+    // - do NOT change AI/similarity coordinates.
+    //
+    // We therefore cover ONLY non-numeric source
+    // text that lies in the extreme top band.
+    //
+    // The right-most source-page area is protected
+    // so a page number remains visible even when
+    // the PDF extractor represents header text and
+    // its tabbed page number in one wide element.
+    if (
+      original.preserveSourcePage &&
+      Array.isArray(
+        original.elements
+      )
+    ) {
+      const sourcePageRight =
+        sourceX +
+        sourceWidth *
+          sourceScale;
+
+      /*
+        Preserve the right-most 84 points.
+
+        In the PBL source this contains the Word
+        page number, while the textual running
+        header is on the left.
+      */
+      const protectedNumberZoneLeft =
+        sourcePageRight -
+        84;
+
+      for (
+        const headerElement of
+          original.elements
+      ) {
+        const headerText =
+          s(
+            headerElement?.text
+          ).trim();
+
+        if (
+          !headerText
+        ) {
+          continue;
+        }
+
+        /*
+          Pure page-number elements are always
+          preserved.
+        */
+        const isPurePageNumber =
+          /^\d{1,4}$/.test(
+            headerText
+          ) ||
+          /^[ivxlcdm]{1,8}$/i.test(
+            headerText
+          );
+
+        if (
+          isPurePageNumber
+        ) {
+          continue;
+        }
+
+        /*
+          Require actual alphabetic content.
+          This avoids treating punctuation or
+          document artefacts as a running header.
+        */
+        if (
+          !/[A-Za-z]/.test(
+            headerText
+          )
+        ) {
+          continue;
+        }
+
+        const rawBottom =
+          Number(
+            headerElement
+              ?.style
+              ?.bottom ||
+            0
+          );
+
+        const rawHeight =
+          Math.max(
+            1,
+            Number(
+              headerElement
+                ?.style
+                ?.height ||
+              headerElement
+                ?.size ||
+              11
+            )
+          );
+
+        const topFromSource =
+          sourceHeight -
+          (
+            rawBottom +
+            rawHeight
+          );
+
+        /*
+          The measured PBL running header begins
+          at about 36.8 pt from the top.
+
+          Normal PBL body text begins around
+          73 pt, matching the reference reports.
+
+          Therefore only the extreme top strip
+          is considered source running-header
+          territory.
+        */
+        if (
+          topFromSource >= 55
+        ) {
+          continue;
+        }
+
+        const maskX =
+          sourceX +
+          Number(
+            headerElement
+              ?.style
+              ?.left ||
+            0
+          ) *
+          sourceScale;
+
+        const maskY =
+          sourceY +
+          rawBottom *
+          sourceScale;
+
+        const rawWidth =
+          Math.max(
+            1,
+            Number(
+              headerElement
+                ?.style
+                ?.width ||
+              0
+            )
+          );
+
+        const naturalRight =
+          maskX +
+          rawWidth *
+            sourceScale;
+
+        /*
+          Never paint into the protected
+          page-number zone.
+        */
+        const maskRight =
+          Math.min(
+            naturalRight + 1.2,
+            protectedNumberZoneLeft
+          );
+
+        const maskLeft =
+          Math.max(
+            sourceX,
+            maskX - 1.2
+          );
+
+        const maskWidth =
+          maskRight -
+          maskLeft;
+
+        if (
+          maskWidth <= 0
+        ) {
+          continue;
+        }
+
+        const maskHeight =
+          Math.max(
+            1,
+            rawHeight *
+              sourceScale
+          ) +
+          1.6;
+
+        page.drawRectangle({
+          x:
+            maskLeft,
+
+          y:
+            Math.max(
+              sourceY,
+              maskY - 0.8
+            ),
+
+          width:
+            maskWidth,
+
+          height:
+            maskHeight,
+
+          color:
+            hex(
+              C.white
+            )
+        });
+      }
+    }
+
     shell(
       page,
       f,
@@ -3499,137 +5826,131 @@ async function drawOriginalPages(
   return pageNo;
 }
 
-async function renderSimilarity(bundle, outputPath) {
+async function renderSimilarity(
+  bundle,
+  outputPath
+) {
   const fullText =
-    s(
+    providerText(
       bundle
-        ?.crawled
-        ?.text
-        ?.value
     );
 
-  const doc = await PDFDocument.create();
-
-  doc.setTitle("turnitin Similarity Report");
-  doc.setSubject("turnitin Similarity Report");
-
-  const f = await loadBrandFonts(doc);
-  const icons = await loadReportIcons(doc);
-
-  const html =
-    s(
+  const score =
+    providerSimilarityScore(
       bundle
-        ?.crawled
-        ?.html
-        ?.value
     );
 
-  const text =
-    s(
-      bundle
-        ?.crawled
-        ?.text
-        ?.value
+  if(
+    !fullText
+  ){
+    throw new Error(
+      "Canonical document text is missing."
     );
+  }
 
-  let preservedOriginal = null;
-
-  try {
-    preservedOriginal =
-      await prepareOriginalLayout(
-        bundle
-      );
-  } catch (err) {
-    console.warn(
-      "Preserved original layout unavailable; using Copyleaks HTML fallback:",
-      err?.message || err
+  if(
+    score === null
+  ){
+    throw new Error(
+      "Similarity detection returned an invalid percentage."
     );
   }
 
   const originalPages =
-    preservedOriginal?.pages?.length
-      ? preservedOriginal.pages
-      : parseOriginalPages(html);
-
-  const parsedTextElements =
-    originalPages.reduce(
-      (n, p) =>
-        n +
-        p.elements.length,
-      0
+    providerPages(
+      bundle
     );
 
-  if (
+  if(
     !originalPages.length ||
-    !parsedTextElements
-  ) {
+    !originalPages.some(
+      (p) =>
+        p.elements.length
+    )
+  ){
     throw new Error(
-      `Document parsing produced no content (pages=${originalPages.length}, elements=${parsedTextElements}).`
+      "Canonical document page geometry is missing."
     );
   }
 
-  mapElementsToText(
-    originalPages,
-    text
+  const pdfPath =
+    providerPdfPath(
+      bundle
+    );
+
+  if(
+    !pdfPath
+  ){
+    throw new Error(
+      "Canonical source PDF is missing."
+    );
+  }
+
+  const doc =
+    await PDFDocument.create();
+
+  doc.setTitle(
+    "JK Similarity Report"
   );
+
+  doc.setSubject(
+    "Independent similarity report"
+  );
+
+  const f =
+    await loadBrandFonts(
+      doc
+    );
+
+  const icons =
+    await loadReportIcons(
+      doc
+    );
+
+  const originalFonts = {
+    __fallback:
+      f.noto
+  };
 
   bundle.__originalPageCount =
     originalPages.length;
 
-  if (
-    preservedOriginal?.pdfPath &&
-    originalPages.length
-  ) {
-    const sourcePdfBytes =
+  const embeddedPages =
+    await doc.embedPdf(
       fs.readFileSync(
-        preservedOriginal.pdfPath
-      );
+        pdfPath
+      ),
+      originalPages.map(
+        (
+          _,
+          i
+        ) =>
+          i
+      )
+    );
 
-    const embeddedPages =
-      await doc.embedPdf(
-        sourcePdfBytes,
-        originalPages.map(
-          (_, index) =>
-            index
-        )
-      );
+  originalPages.forEach(
+    (
+      p,
+      i
+    ) => {
+      p.embeddedPage =
+        embeddedPages[i];
 
-    for (
-      let index = 0;
-      index < originalPages.length;
-      index += 1
-    ) {
-      originalPages[index].embeddedPage =
-        embeddedPages[index];
-      originalPages[index].preserveSourcePage =
+      p.preserveSourcePage =
         true;
     }
+  );
 
-    console.log(
-      "Using preserved original document layout:",
-      originalPages.length,
-      "page(s)."
-    );
-  }
-
-  const originalFonts =
-    await embedOriginalFonts(
-      doc,
-      html,
-      f
-    );
+  console.log(
+    "Using canonical original document layout:",
+    originalPages.length,
+    "page(s)."
+  );
 
   const sources =
-    sourceList(bundle);
-
-  const score =
-    Number(
+    sourceList(
       bundle
-        ?.completion
-        ?.results
-        ?.score
-        ?.aggregatedScore ||
-      0
     );
 
   const ranges =
@@ -3639,7 +5960,7 @@ async function renderSimilarity(bundle, outputPath) {
       fullText
     );
 
-  const sourceAudit =
+  const audit =
     validateSimilaritySourceMapping(
       bundle,
       sources,
@@ -3647,17 +5968,21 @@ async function renderSimilarity(bundle, outputPath) {
       fullText
     );
 
-  const sourceAuditPath =
+  const auditPath =
     path.join(
-      path.dirname(outputPath),
-      path.parse(outputPath).name +
+      path.dirname(
+        outputPath
+      ),
+      path.parse(
+        outputPath
+      ).name +
         ".source-audit.json"
     );
 
   fs.writeFileSync(
-    sourceAuditPath,
+    auditPath,
     JSON.stringify(
-      sourceAudit,
+      audit,
       null,
       2
     ),
@@ -3666,8 +5991,10 @@ async function renderSimilarity(bundle, outputPath) {
 
   console.log(
     "Similarity source audit passed:",
-    sourceAudit.sourceCount + " source(s),",
-    sourceAudit.matchRangeCount + " mapped range(s),",
+    audit.sourceCount +
+      " source(s),",
+    audit.matchRangeCount +
+      " mapped range(s),",
     "0 unresolved."
   );
 
@@ -3689,13 +6016,15 @@ async function renderSimilarity(bundle, outputPath) {
     );
 
   const totalPages =
-    1 +
-    1 +
+    2 +
     sourcePages +
     originalPages.length;
 
   drawCover(
-    doc.addPage([PAGE_W, PAGE_H]),
+    doc.addPage([
+      PAGE_W,
+      PAGE_H
+    ]),
     f,
     icons,
     bundle,
@@ -3704,7 +6033,10 @@ async function renderSimilarity(bundle, outputPath) {
   );
 
   similarityOverviewPage(
-    doc.addPage([PAGE_W, PAGE_H]),
+    doc.addPage([
+      PAGE_W,
+      PAGE_H
+    ]),
     f,
     icons,
     bundle,
@@ -3746,139 +6078,138 @@ async function renderSimilarity(bundle, outputPath) {
   );
 
   return {
-    path: outputPath,
+    path:
+      outputPath,
+
     score,
-    sourceCount: sources.length
+
+    sourceCount:
+      sources.length
   };
 }
 
-async function renderAi(bundle, outputPath) {
-  const ai = aiInfo(bundle);
 
-  if (!ai.available) {
+async function renderAi(
+  bundle,
+  outputPath
+) {
+  const ai =
+    aiInfo(
+      bundle
+    );
+
+  if(
+    !ai.available
+  ){
     return {
-      path: null,
+      path:
+        null,
+
       ai
     };
   }
 
-  const doc = await PDFDocument.create();
-
-  doc.setTitle("turnitin AI Writing Report");
-  doc.setSubject("turnitin AI Writing Report");
-
-  const f = await loadBrandFonts(doc);
-  const icons = await loadReportIcons(doc);
-
-  const html =
-    s(
-      bundle
-        ?.crawled
-        ?.html
-        ?.value
-    );
-
-  const text =
-    s(
-      bundle
-        ?.crawled
-        ?.text
-        ?.value
-    );
-
-  let preservedOriginal = null;
-
-  try {
-    preservedOriginal =
-      await prepareOriginalLayout(
-        bundle
-      );
-  } catch (err) {
-    console.warn(
-      "Preserved original layout unavailable; using Copyleaks HTML fallback:",
-      err?.message || err
-    );
-  }
-
   const originalPages =
-    preservedOriginal?.pages?.length
-      ? preservedOriginal.pages
-      : parseOriginalPages(html);
-
-  const parsedTextElements =
-    originalPages.reduce(
-      (n, p) =>
-        n +
-        p.elements.length,
-      0
+    providerPages(
+      bundle
     );
 
-  if (
+  if(
     !originalPages.length ||
-    !parsedTextElements
-  ) {
+    !originalPages.some(
+      (p) =>
+        p.elements.length
+    )
+  ){
     throw new Error(
-      `Document parsing produced no content (pages=${originalPages.length}, elements=${parsedTextElements}).`
+      "Canonical document page geometry is missing."
     );
   }
 
-  mapElementsToText(
-    originalPages,
-    text
+  const pdfPath =
+    providerPdfPath(
+      bundle
+    );
+
+  if(
+    !pdfPath
+  ){
+    throw new Error(
+      "Canonical source PDF is missing."
+    );
+  }
+
+  const doc =
+    await PDFDocument.create();
+
+  doc.setTitle(
+    "JK AI Writing Report"
   );
+
+  doc.setSubject(
+    "Independent AI writing assessment"
+  );
+
+  const f =
+    await loadBrandFonts(
+      doc
+    );
+
+  const icons =
+    await loadReportIcons(
+      doc
+    );
+
+  const originalFonts = {
+    __fallback:
+      f.noto
+  };
 
   bundle.__originalPageCount =
     originalPages.length;
 
-  if (
-    preservedOriginal?.pdfPath &&
-    originalPages.length
-  ) {
-    const sourcePdfBytes =
+  const embeddedPages =
+    await doc.embedPdf(
       fs.readFileSync(
-        preservedOriginal.pdfPath
-      );
+        pdfPath
+      ),
+      originalPages.map(
+        (
+          _,
+          i
+        ) =>
+          i
+      )
+    );
 
-    const embeddedPages =
-      await doc.embedPdf(
-        sourcePdfBytes,
-        originalPages.map(
-          (_, index) =>
-            index
-        )
-      );
+  originalPages.forEach(
+    (
+      p,
+      i
+    ) => {
+      p.embeddedPage =
+        embeddedPages[i];
 
-    for (
-      let index = 0;
-      index < originalPages.length;
-      index += 1
-    ) {
-      originalPages[index].embeddedPage =
-        embeddedPages[index];
-      originalPages[index].preserveSourcePage =
+      p.preserveSourcePage =
         true;
     }
+  );
 
-    console.log(
-      "Using preserved original document layout:",
-      originalPages.length,
-      "page(s)."
-    );
-  }
-
-  const originalFonts =
-    await embedOriginalFonts(
-      doc,
-      html,
-      f
-    );
+  console.log(
+    "Using canonical original document layout:",
+    originalPages.length,
+    "page(s)."
+  );
 
   const totalPages =
     2 +
     originalPages.length;
 
   drawCover(
-    doc.addPage([PAGE_W, PAGE_H]),
+    doc.addPage([
+      PAGE_W,
+      PAGE_H
+    ]),
     f,
     icons,
     bundle,
@@ -3887,7 +6218,10 @@ async function renderAi(bundle, outputPath) {
   );
 
   aiOverviewPage(
-    doc.addPage([PAGE_W, PAGE_H]),
+    doc.addPage([
+      PAGE_W,
+      PAGE_H
+    ]),
     f,
     icons,
     bundle,
@@ -3917,10 +6251,13 @@ async function renderAi(bundle, outputPath) {
   );
 
   return {
-    path: outputPath,
+    path:
+      outputPath,
+
     ai
   };
 }
+
 
 async function renderJkReports({
   bundlePath = "bundle.json",
@@ -3960,6 +6297,10 @@ async function renderJkReports({
 
   bundle.__bundlePath =
     bundlePath;
+
+  ensureProviderIdentity(
+    bundle
+  );
 
   const base =
     fileBase(
@@ -4082,7 +6423,7 @@ if (require.main === module) {
   })
     .then((r) => {
       console.log(
-        "turnitin reports generated successfully."
+        "JK reports generated successfully."
       );
 
       console.log(
@@ -4098,7 +6439,7 @@ if (require.main === module) {
     })
     .catch((err) => {
       console.error(
-        "turnitin rendering failed:",
+        "JK rendering failed:",
         err?.stack ||
         err
       );
