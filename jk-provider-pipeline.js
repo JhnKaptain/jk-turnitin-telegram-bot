@@ -171,7 +171,7 @@ function fileTitle(
 
   JKW product rule:
   300–30,000 qualifying words AFTER
-  quote/reference filtering.
+  reference filtering while quoted text is retained.
   --------------------------------------------------
 */
 
@@ -638,7 +638,7 @@ function normalizeSaplingResult(
 
     excluded: {
       quotes:
-        true,
+        false,
 
       references:
         true,

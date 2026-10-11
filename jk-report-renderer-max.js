@@ -246,6 +246,131 @@ function fileBase(name) {
   return (s(name || "report").replace(/[\\/:*?"<>|]+/g, "_").trim() || "report").replace(/\.[^.]+$/, "") || "report";
 }
 
+// JK_STRICT_RENDER_IDENTITY_V1
+const STRICT_REPORT_NAMES =
+  Object.freeze([
+    "Fadhili Masha",
+    "William Nzaka",
+    "Bornvince Moses"
+  ]);
+
+const STRICT_REPORT_INSTITUTIONS =
+  Object.freeze([
+    "University of Embu",
+    "Technical University of Mombasa"
+  ]);
+
+function validateStrictReportIdentity(
+  bundle
+) {
+  const id =
+    bundle
+      ?.reportIdentity;
+
+  if (
+    !id ||
+    typeof id !== "object"
+  ) {
+    throw new Error(
+      "Report identity is missing. No report was generated."
+    );
+  }
+
+  const submissionId =
+    s(
+      id.jkSubmissionId
+    ).trim();
+
+  const reportName =
+    s(
+      id.reportName
+    ).trim();
+
+  const institution =
+    s(
+      id.institution
+    ).trim();
+
+  const similarityFilter =
+    s(
+      id.similarityFilter
+    )
+      .trim()
+      .toUpperCase();
+
+  const serviceType =
+    s(
+      id.serviceType
+    )
+      .trim()
+      .toUpperCase();
+
+  if (
+    !/^trn:oid:::1:[1-9]\d{9}$/.test(
+      submissionId
+    )
+  ) {
+    throw new Error(
+      "Renderer rejected invalid Submission ID: " +
+      submissionId
+    );
+  }
+
+  if (
+    !STRICT_REPORT_NAMES.includes(
+      reportName
+    )
+  ) {
+    throw new Error(
+      "Renderer rejected unapproved report name: " +
+      reportName
+    );
+  }
+
+  if (
+    !STRICT_REPORT_INSTITUTIONS.includes(
+      institution
+    )
+  ) {
+    throw new Error(
+      "Renderer rejected unapproved institution: " +
+      institution
+    );
+  }
+
+  if (
+    ![
+      "FILTERED",
+      "UNFILTERED"
+    ].includes(
+      similarityFilter
+    )
+  ) {
+    throw new Error(
+      "Renderer rejected invalid similarity filter: " +
+      similarityFilter
+    );
+  }
+
+  if (
+    ![
+      "CHECK",
+      "RECHECK",
+      "SIMILARITY",
+      "RESALE"
+    ].includes(
+      serviceType
+    )
+  ) {
+    throw new Error(
+      "Renderer rejected invalid service type: " +
+      serviceType
+    );
+  }
+
+  return id;
+}
+
 // JK_PROVIDER_NEUTRAL_RENDERER_V2
 function providerDocument(bundle){
   const d =
@@ -309,18 +434,19 @@ function providerSimilarityScore(bundle){
     : null;
 }
 
-function providerSimilarityFiltered(bundle){
-  return s(
-    bundle
-      ?.preparation
-      ?.similarityMode ||
-    bundle
-      ?.reportIdentity
-      ?.similarityFilter ||
-    ""
-  )
-    .toUpperCase() ===
-    "FILTERED";
+function providerSimilarityFiltered(
+  bundle
+) {
+  return (
+    s(
+      bundle
+        ?.reportIdentity
+        ?.similarityFilter
+    )
+      .trim()
+      .toUpperCase() ===
+    "FILTERED"
+  );
 }
 
 // JK_METADATA_AI_GAP_V2
@@ -346,24 +472,24 @@ function firstIdentityText(
   return "";
 }
 
-function ensureProviderIdentity(bundle){
-  if(
-    !bundle.reportIdentity ||
-    typeof bundle.reportIdentity !==
-      "object"
-  ){
-    bundle.reportIdentity =
-      {};
-  }
-
+function ensureProviderIdentity(
+  bundle
+) {
   const id =
-    bundle.reportIdentity;
+    validateStrictReportIdentity(
+      bundle
+    );
 
   const d =
     providerDocument(
       bundle
     );
 
+  /*
+    Technical source-file recovery only.
+    These values do not alter report identity,
+    similarity policy or service policy.
+  */
   id.filename =
     firstIdentityText(
       id.filename,
@@ -418,104 +544,41 @@ function ensureProviderIdentity(bundle){
     ) ||
     null;
 
+  /*
+    STRICT VALUES:
+    reportIdentity is the sole source.
+  */
   id.jkSubmissionId =
-    firstIdentityText(
-      id.jkSubmissionId,
-
-      bundle
-        ?.jkSubmissionId,
-
-      bundle
-        ?.file
-        ?.jkSubmissionId,
-
-      bundle
-        ?.job
-        ?.jkSubmissionId,
-
-      bundle
-        ?.metadata
-        ?.jkSubmissionId
-    ) ||
-    null;
+    s(
+      id.jkSubmissionId
+    ).trim();
 
   id.reportName =
-    firstIdentityText(
-      id.reportName,
-
-      bundle
-        ?.reportName,
-
-      bundle
-        ?.file
-        ?.reportName,
-
-      bundle
-        ?.job
-        ?.reportName,
-
-      bundle
-        ?.job
-        ?.name,
-
-      bundle
-        ?.metadata
-        ?.reportName
-    ) ||
-    null;
+    s(
+      id.reportName
+    ).trim();
 
   id.institution =
-    firstIdentityText(
-      id.institution,
-
-      bundle
-        ?.reportInstitution,
-
-      bundle
-        ?.file
-        ?.reportInstitution,
-
-      bundle
-        ?.job
-        ?.reportInstitution,
-
-      bundle
-        ?.metadata
-        ?.institution
-    ) ||
-    null;
+    s(
+      id.institution
+    ).trim();
 
   id.similarityFilter =
-    firstIdentityText(
-      id.similarityFilter,
-
-      bundle
-        ?.preparation
-        ?.similarityMode,
-
-      bundle
-        ?.file
-        ?.similarityFilter
-    ) ||
-    "FILTERED";
+    s(
+      id.similarityFilter
+    )
+      .trim()
+      .toUpperCase();
 
   id.serviceType =
-    firstIdentityText(
-      id.serviceType,
-
-      bundle
-        ?.file
-        ?.type,
-
-      bundle
-        ?.job
-        ?.serviceType
-    ) ||
-    "CHECK";
+    s(
+      id.serviceType
+    )
+      .trim()
+      .toUpperCase();
 
   return id;
 }
-
 
 function providerPageCount(bundle){
   const d =
@@ -1261,7 +1324,7 @@ function shell(page, f, identity, pageNo, totalPages, label) {
 
     drawTextTop(
       page,
-      identity.jkSubmissionId || "",
+      identity.jkSubmissionId,
       submissionValueX,
       textTop,
       6,
@@ -1443,8 +1506,7 @@ function drawCover(
   */
   drawTextTop(
     page,
-    id.reportName ||
-      "N/A",
+    id.reportName,
     36,
     304,
     20,
@@ -1556,8 +1618,7 @@ function drawCover(
 
   drawTextTop(
     page,
-    id.institution ||
-      "N/A",
+    id.institution,
     56,
     quickTop +
       32.448,
@@ -1589,8 +1650,7 @@ function drawCover(
   const details = [
     [
       "Submission ID",
-      id.jkSubmissionId ||
-        "N/A"
+      id.jkSubmissionId
     ],
     [
       "Submission Date",
@@ -6295,10 +6355,23 @@ async function renderJkReports({
       )
     );
 
+  /*
+    JK_RENDER_VALIDATE_BEFORE_OUTPUT_V1
+    Validate required identity and policy
+    before filenames, pages or PDFs are created.
+  */
+  ensureProviderIdentity(
+    bundle
+  );
+
   bundle.__bundlePath =
     bundlePath;
 
   ensureProviderIdentity(
+    bundle
+  );
+
+  validateStrictReportIdentity(
     bundle
   );
 
@@ -6338,8 +6411,7 @@ async function renderJkReports({
     s(
       bundle
         ?.reportIdentity
-        ?.serviceType ||
-      "CHECK"
+        ?.serviceType
     )
       .toUpperCase() !==
     "SIMILARITY"

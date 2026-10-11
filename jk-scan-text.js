@@ -18,7 +18,7 @@
        - preserve complete canonical text
 
   4. AI:
-       - always exclude quoted text
+       - retain quoted text
        - always exclude references/bibliography
        - keep inline citations
 
@@ -88,7 +88,7 @@ function findBibliographyStart(
     );
 
   const headingRe =
-    /(^|\n)[ \t]*(references|bibliography|works cited|reference list)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
+    /(^|\n)[ \t]*(reference list|references?|bibliography|works cited)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
 
   const matches = [];
 
@@ -530,16 +530,73 @@ function buildSimilarityInput(
   AI filtering is intentionally independent
   from similarity filtering.
 
-  AI ALWAYS receives filtered text.
+  AI retains quotes but excludes the bibliography/reference section.
   --------------------------------------------------
 */
 
+// JK_AI_QUOTES_INCLUDED_REFERENCES_EXCLUDED_V1
 function buildAiInput(
   rawText
 ) {
-  return buildFilteredInput(
-    rawText
-  );
+  const source =
+    safeText(
+      rawText
+    );
+
+  const bibliographyStart =
+    findBibliographyStart(
+      source
+    );
+
+  const limit =
+    bibliographyStart >= 0
+      ? bibliographyStart
+      : source.length;
+
+  const text =
+    source.slice(
+      0,
+      limit
+    );
+
+  const map =
+    Array.from(
+      {
+        length:
+          text.length
+      },
+      (
+        _,
+        index
+      ) => index
+    );
+
+  return {
+    text,
+    map,
+
+    filtered:
+      true,
+
+    bibliographyStart:
+      bibliographyStart >= 0
+        ? bibliographyStart
+        : null,
+
+    /*
+      AI retains quotation text.
+    */
+    removedQuoteRanges:
+      [],
+
+    originalLength:
+      source.length,
+
+    wordCount:
+      countWords(
+        text
+      )
+  };
 }
 
 /*

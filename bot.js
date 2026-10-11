@@ -873,20 +873,34 @@ function filterModeLabel(
 function generateJkSubmissionId() {
   let digits = "";
 
-  for (let i = 0; i < 10; i += 1) {
+  for (
+    let i = 0;
+    i < 10;
+    i += 1
+  ) {
     digits += String(
-      Math.floor(Math.random() * 10)
+      Math.floor(
+        Math.random() * 10
+      )
     );
   }
 
-  if (digits[0] === "0") {
+  if (
+    digits[0] === "0"
+  ) {
     digits =
       String(
-        Math.floor(Math.random() * 9) + 1
-      ) + digits.slice(1);
+        Math.floor(
+          Math.random() * 9
+        ) + 1
+      ) +
+      digits.slice(1);
   }
 
-  return "JKW-" + digits;
+  return (
+    "trn:oid:::1:" +
+    digits
+  );
 }
 
 function chooseReportName() {
@@ -897,8 +911,79 @@ function chooseReportName() {
   ];
 }
 
-function ensureFileReportIdentity(file) {
-  if (!file) return null;
+// JK_STRICT_REPORT_IDENTITY_V1
+function requireFileReportIdentity(
+  file
+) {
+  if (
+    !file ||
+    typeof file !== "object"
+  ) {
+    throw new Error(
+      "Report identity file is missing."
+    );
+  }
+
+  const submissionId =
+    String(
+      file.jkSubmissionId || ""
+    ).trim();
+
+  const reportName =
+    String(
+      file.reportName || ""
+    ).trim();
+
+  const institution =
+    String(
+      file.reportInstitution || ""
+    ).trim();
+
+  if (
+    !/^trn:oid:::1:[1-9]\d{9}$/.test(
+      submissionId
+    )
+  ) {
+    throw new Error(
+      "Invalid report Submission ID: " +
+      submissionId
+    );
+  }
+
+  if (
+    !REPORT_NAMES.includes(
+      reportName
+    )
+  ) {
+    throw new Error(
+      "Unapproved report name: " +
+      reportName
+    );
+  }
+
+  if (
+    !REPORT_INSTITUTIONS.includes(
+      institution
+    )
+  ) {
+    throw new Error(
+      "Unapproved report institution: " +
+      institution
+    );
+  }
+
+  return file;
+}
+
+function ensureFileReportIdentity(
+  file
+) {
+  if (
+    !file ||
+    typeof file !== "object"
+  ) {
+    return null;
+  }
 
   if (!file.jkSubmissionId) {
     file.jkSubmissionId =
@@ -909,12 +994,15 @@ function ensureFileReportIdentity(file) {
     file.reportName =
       chooseReportName();
   }
+
   if (!file.reportInstitution) {
     file.reportInstitution =
       reportSettings.institution;
   }
 
-  return file;
+  return requireFileReportIdentity(
+    file
+  );
 }
 
 function effectiveSimilarityFilter(file) {
@@ -1843,16 +1931,13 @@ function createPaidJob({ userId, apiRef, ref, invoiceId, source }) {
                 ),
 
               jkSubmissionId:
-                file.jkSubmissionId ||
-                generateJkSubmissionId(),
+                file.jkSubmissionId,
 
               reportName:
-                file.reportName ||
-                chooseReportName(),
+                file.reportName,
 
               reportInstitution:
-                file.reportInstitution ||
-                reportSettings.institution,
+        file.reportInstitution,
 
               copyleaksStatus:
                 "NOT_SUBMITTED",
@@ -4824,8 +4909,7 @@ async function startInternationalPayment(ctx, sub) {
       reportName:
         file.reportName || null,
       reportInstitution:
-        file.reportInstitution ||
-        reportSettings.institution
+        file.reportInstitution
     }))
   });
 
@@ -5050,8 +5134,7 @@ async function startTzOtherPayment(ctx, sub) {
       reportName:
         file.reportName || null,
       reportInstitution:
-        file.reportInstitution ||
-        reportSettings.institution
+        file.reportInstitution
     }))
   });
 
@@ -5228,8 +5311,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
       reportName:
         file.reportName || null,
       reportInstitution:
-        file.reportInstitution ||
-        reportSettings.institution
+        file.reportInstitution
     }))
   });
 
@@ -8112,6 +8194,10 @@ async function submitPaidJobToProviders(
     const file =
       job.files[i];
 
+    requireFileReportIdentity(
+      file
+    );
+
     if (!file) {
       continue;
     }
@@ -8218,9 +8304,52 @@ async function submitPaidJobToProviders(
       savePaidJobs();
 
       const similarityMode =
-        effectiveSimilarityFilter(
-          file
+        String(
+          file.similarityFilter || ""
+        )
+          .trim()
+          .toUpperCase();
+
+      if (
+        ![
+          FILTER_MODE_FILTERED,
+          FILTER_MODE_UNFILTERED
+        ].includes(
+          similarityMode
+        )
+      ) {
+        throw new Error(
+          "Provider job has invalid or missing stored similarity filter: " +
+          String(
+            file.similarityFilter || ""
+          )
         );
+      }
+
+      const providerServiceType =
+        String(
+          file.type || ""
+        )
+          .trim()
+          .toUpperCase();
+
+      if (
+        ![
+          "CHECK",
+          "RECHECK",
+          "SIMILARITY",
+          "RESALE"
+        ].includes(
+          providerServiceType
+        )
+      ) {
+        throw new Error(
+          "Provider job has invalid or missing stored service type: " +
+          String(
+            file.type || ""
+          )
+        );
+      }
 
       const result =
         await buildProviderJobBundle({
@@ -11502,17 +11631,13 @@ function writeCopyleaksBundle(
 
     reportIdentity: {
       jkSubmissionId:
-        file.jkSubmissionId ||
-        null,
+        file.jkSubmissionId,
 
       reportName:
-        file.reportName ||
-        null,
+        file.reportName,
 
       institution:
-        file.reportInstitution ||
-        reportSettings
-          .institution,
+        file.reportInstitution,
 
       filename:
         file.file_name ||
@@ -11527,13 +11652,10 @@ function writeCopyleaksBundle(
         null,
 
       similarityFilter:
-        effectiveSimilarityFilter(
-          file
-        ),
+        file.similarityFilter,
 
       serviceType:
-        file.type ||
-        null
+        file.type
     },
     aiDetection:
       readCopyleaksJsonFile(

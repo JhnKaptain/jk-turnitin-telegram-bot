@@ -89,6 +89,131 @@ async function buildProviderJobBundle({
     }
   );
 
+  // JK_STRICT_PROVIDER_IDENTITY_V1
+  const submissionId =
+    text(
+      file.jkSubmissionId
+    );
+
+  const reportName =
+    text(
+      file.reportName
+    );
+
+  const institution =
+    text(
+      file.reportInstitution
+    );
+
+  const serviceType =
+    text(
+      file.type
+    )
+      .trim()
+      .toUpperCase();
+
+  const identitySimilarityMode =
+    text(
+      file.similarityFilter
+    )
+      .trim()
+      .toUpperCase();
+
+  const requestedSimilarityMode =
+    text(
+      similarityMode
+    )
+      .trim()
+      .toUpperCase();
+
+  const approvedReportNames =
+    [
+      "Fadhili Masha",
+      "William Nzaka",
+      "Bornvince Moses"
+    ];
+
+  const approvedInstitutions =
+    [
+      "University of Embu",
+      "Technical University of Mombasa"
+    ];
+
+  if (
+    !/^trn:oid:::1:[1-9]\d{9}$/.test(
+      submissionId
+    )
+  ) {
+    throw new Error(
+      "Provider bundle rejected invalid Submission ID: " +
+      submissionId
+    );
+  }
+
+  if (
+    !approvedReportNames.includes(
+      reportName
+    )
+  ) {
+    throw new Error(
+      "Provider bundle rejected report name: " +
+      reportName
+    );
+  }
+
+  if (
+    !approvedInstitutions.includes(
+      institution
+    )
+  ) {
+    throw new Error(
+      "Provider bundle rejected institution: " +
+      institution
+    );
+  }
+
+  if (
+    ![
+      "FILTERED",
+      "UNFILTERED"
+    ].includes(
+      identitySimilarityMode
+    )
+  ) {
+    throw new Error(
+      "Provider bundle rejected similarity filter: " +
+      identitySimilarityMode
+    );
+  }
+
+  if (
+    requestedSimilarityMode !==
+    identitySimilarityMode
+  ) {
+    throw new Error(
+      "Provider bundle similarity policy mismatch: file=" +
+      identitySimilarityMode +
+      ", requested=" +
+      requestedSimilarityMode
+    );
+  }
+
+  if (
+    ![
+      "CHECK",
+      "RECHECK",
+      "SIMILARITY",
+      "RESALE"
+    ].includes(
+      serviceType
+    )
+  ) {
+    throw new Error(
+      "Provider bundle rejected service type: " +
+      serviceType
+    );
+  }
+
   const result =
     await runProviderPipeline({
       sourcePath,
@@ -111,26 +236,7 @@ async function buildProviderJobBundle({
     Prefer real identity attached to the job
     instead of any historical/generated fallback.
   */
-  const reportName =
-    text(
-      file.studentName
-    ) ||
-    text(
-      job.name
-    ) ||
-    text(
-      file.reportName
-    ) ||
-    null;
 
-  const institution =
-    text(
-      file.reportInstitution
-    ) ||
-    text(
-      reportSettings.institution
-    ) ||
-    null;
 
   const submittedAt =
     numberOrNull(
@@ -172,10 +278,7 @@ async function buildProviderJobBundle({
       Existing visible submission ID.
     */
     jkSubmissionId:
-      text(
-        file.jkSubmissionId
-      ) ||
-      null,
+      submissionId,
 
     /*
       Existing report/student name used by
@@ -188,9 +291,6 @@ async function buildProviderJobBundle({
       renderer/UI use as well.
     */
     studentName:
-      text(
-        file.studentName
-      ) ||
       reportName,
 
     institution,
@@ -217,15 +317,10 @@ async function buildProviderJobBundle({
       sourcePath,
 
     similarityFilter:
-      text(
-        similarityMode
-      ).toUpperCase(),
+      identitySimilarityMode,
 
     serviceType:
-      text(
-        file.type
-      ).toUpperCase() ||
-      "CHECK",
+      serviceType,
 
     submittedAt,
 
@@ -248,6 +343,26 @@ async function buildProviderJobBundle({
       ) ||
       null
   };
+
+  // JK_STRICT_BUNDLE_IDENTITY_V1
+  result.reportIdentity.jkSubmissionId =
+    submissionId;
+
+  result.reportIdentity.reportName =
+    reportName;
+
+  result.reportIdentity.studentName =
+    reportName;
+
+  result.reportIdentity.institution =
+    institution;
+
+  result.reportIdentity.similarityFilter =
+    identitySimilarityMode;
+
+  result.reportIdentity.serviceType =
+    serviceType;
+
 
   /*
     Rewrite the output because runProviderPipeline()
