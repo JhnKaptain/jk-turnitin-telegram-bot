@@ -547,7 +547,20 @@ let dailySalesSummary = {};
 let dailySalesLedger = {};
 let botUsers = {};
 let broadcastMeta = {};
+// JK_SCHEDULER_RELIABILITY_V1
 let lastAppliedBotNameMode = null;
+
+let botNameRetryNotBefore = 0;
+let botNameLastVerifiedAt = 0;
+let botNameSyncInFlight = false;
+
+let dailySalesSummarySendInFlight = false;
+
+const BOT_NAME_VERIFY_INTERVAL_MS =
+  15 * 60 * 1000;
+
+const DAILY_SALES_SUMMARY_CHECK_MS =
+  60 * 1000;
 
 const DATA_DIR = String(process.env.DATA_DIR || __dirname).trim();
 
@@ -1778,50 +1791,185 @@ function buildDailySalesSummary(dateKey) {
   return counts;
 }
 
-async function sendDailySalesSummaryForPreviousEatDay() {
-  const dateKey = moment().utcOffset(180).subtract(1, "day").format("YYYY-MM-DD");
+async function sendDailySalesSummaryForDate(
+  dateKey,
+  reason = "scheduled"
+) {
+  const normalizedDateKey =
+    String(
+      dateKey ||
+      ""
+    ).trim();
 
-  if (dailySalesSummary.lastSentDateKey === dateKey) {
-    return;
+  if (!normalizedDateKey) {
+    throw new Error(
+      "Daily summary date key is missing."
+    );
   }
 
-  const summary = buildDailySalesSummary(dateKey);
+  if (
+    dailySalesSummary.lastSentDateKey ===
+    normalizedDateKey
+  ) {
+    return {
+      sent: false,
+      skipped: true,
+      dateKey:
+        normalizedDateKey
+    };
+  }
+
+  const summary =
+    buildDailySalesSummary(
+      normalizedDateKey
+    );
 
   const text =
     `📊 Daily Payment Summary\n\n` +
-    `Date: ${dateKey}\n` +
+    `Date: ${normalizedDateKey}\n` +
     `Successful payments: ${summary.payments}\n` +
-    `Total collected: ${(summary.total * 0.75).toLocaleString("en-KE", { maximumFractionDigits: 2 })} KES\n\n` +
+    `Total collected: ${(summary.total * 0.75).toLocaleString(
+      "en-KE",
+      {
+        maximumFractionDigits: 2
+      }
+    )} KES\n\n` +
     `CHECK: ${summary.checks}\n` +
     `RECHECK: ${summary.rechecks}\n` +
     `SIMILARITY ONLY: ${summary.similarities}\n` +
     `${RESALE_LABEL}: ${summary.resales}`;
 
-  await sendAdminMessage(text, { parse_mode: "Markdown" });
+  /*
+    JK_DAILY_SUMMARY_DELIVERY_ACK_V1
 
-  dailySalesSummary.lastSentDateKey = dateKey;
-  dailySalesSummary.lastSentAt = Date.now();
+    requireDelivery means sendAdminMessage throws if
+    Telegram delivery really failed.
+
+    Therefore lastSentDateKey cannot advance after a
+    failed delivery.
+  */
+  await sendAdminMessage(
+    text,
+    {
+      parse_mode:
+        "Markdown",
+
+      requireDelivery:
+        true
+    }
+  );
+
+  dailySalesSummary.lastSentDateKey =
+    normalizedDateKey;
+
+  dailySalesSummary.lastSentAt =
+    Date.now();
+
+  dailySalesSummary.lastSentReason =
+    String(
+      reason ||
+      "scheduled"
+    );
+
   saveDailySalesSummary();
+
+  console.log(
+    `Daily sales summary sent for ${normalizedDateKey} (${reason}).`
+  );
+
+  return {
+    sent: true,
+    skipped: false,
+    dateKey:
+      normalizedDateKey,
+    summary
+  };
 }
 
-function msUntilNextEatMidnight() {
-  const nowEat = moment().utcOffset(180);
-  const nextEatMidnight = nowEat.clone().add(1, "day").startOf("day");
-  return Math.max(1000, nextEatMidnight.valueOf() - Date.now());
+
+async function sendDailySalesSummaryForPreviousEatDay(
+  reason = "scheduled"
+) {
+  const dateKey =
+    moment()
+      .utcOffset(180)
+      .subtract(
+        1,
+        "day"
+      )
+      .format(
+        "YYYY-MM-DD"
+      );
+
+  return sendDailySalesSummaryForDate(
+    dateKey,
+    reason
+  );
 }
+
+
+async function checkDailySalesSummary(
+  reason
+) {
+  if (
+    dailySalesSummarySendInFlight
+  ) {
+    return;
+  }
+
+  dailySalesSummarySendInFlight =
+    true;
+
+  try {
+    await sendDailySalesSummaryForPreviousEatDay(
+      reason
+    );
+  } catch (e) {
+    console.error(
+      "Daily sales summary failed:",
+      e?.description ||
+      e?.message ||
+      e
+    );
+  } finally {
+    dailySalesSummarySendInFlight =
+      false;
+  }
+}
+
 
 function startDailySalesSummaryScheduler() {
-  const delay = msUntilNextEatMidnight();
+  /*
+    Startup catch-up.
 
-  setTimeout(async () => {
-    try {
-      await sendDailySalesSummaryForPreviousEatDay();
-    } catch (e) {
-      console.error("Daily sales summary failed:", e?.message || e);
-    } finally {
-      startDailySalesSummaryScheduler();
-    }
-  }, delay);
+    If the service was asleep/restarting at midnight,
+    the previous EAT day's summary is recovered after
+    the process comes back.
+  */
+  setTimeout(
+    () => {
+      checkDailySalesSummary(
+        "startup-catchup"
+      );
+    },
+    5000
+  );
+
+  /*
+    Minute watchdog.
+
+    This avoids depending on one fragile midnight
+    setTimeout. It is cheap because already-sent days
+    return immediately.
+  */
+  setInterval(
+    () => {
+      checkDailySalesSummary(
+        "scheduler-watchdog"
+      );
+    },
+    DAILY_SALES_SUMMARY_CHECK_MS
+  );
 }
 
 loadDailySalesSummary();
@@ -3279,27 +3427,77 @@ function adminActionKeyboard(userId, variant) {
 }
 
 async function sendAdminMessage(text, extra = {}) {
-  const userIdForButtons = extractAdminActionUserId(text);
-  const adminButtons = extra.adminButtons;
-  const finalExtra = { ...extra };
+  const userIdForButtons =
+    extractAdminActionUserId(text);
+
+  const adminButtons =
+    extra.adminButtons;
+
+  const requireDelivery =
+    Boolean(
+      extra.requireDelivery
+    );
+
+  const finalExtra = {
+    ...extra
+  };
 
   delete finalExtra.adminButtons;
+  delete finalExtra.requireDelivery;
 
-  if (!finalExtra.parse_mode) finalExtra.parse_mode = "Markdown";
+  if (!finalExtra.parse_mode) {
+    finalExtra.parse_mode =
+      "Markdown";
+  }
 
-  if (userIdForButtons && adminButtons && !finalExtra.reply_markup) {
-    finalExtra.reply_markup = adminActionKeyboard(userIdForButtons, adminButtons).reply_markup;
+  if (
+    userIdForButtons &&
+    adminButtons &&
+    !finalExtra.reply_markup
+  ) {
+    finalExtra.reply_markup =
+      adminActionKeyboard(
+        userIdForButtons,
+        adminButtons
+      ).reply_markup;
   }
 
   try {
-    await bot.telegram.sendMessage(ADMIN_ID, text, finalExtra);
-  } catch {
+    await bot.telegram.sendMessage(
+      ADMIN_ID,
+      text,
+      finalExtra
+    );
+
+    return true;
+  } catch (firstErr) {
     try {
-      const fallbackExtra = { ...finalExtra };
+      const fallbackExtra = {
+        ...finalExtra
+      };
+
       delete fallbackExtra.parse_mode;
-      await bot.telegram.sendMessage(ADMIN_ID, text, fallbackExtra);
+
+      await bot.telegram.sendMessage(
+        ADMIN_ID,
+        text,
+        fallbackExtra
+      );
+
+      return true;
     } catch (e2) {
-      console.error("Admin message failed:", e2?.message || e2);
+      console.error(
+        "Admin message failed:",
+        e2?.description ||
+        e2?.message ||
+        e2
+      );
+
+      if (requireDelivery) {
+        throw e2;
+      }
+
+      return false;
     }
   }
 }
@@ -3394,28 +3592,242 @@ function discountPublicModeText() {
 // =====================
 // BOT DISPLAY NAME STATUS
 // =====================
-async function syncBotDisplayName(force = false) {
-  const inactive = isBotInactivePeriod();
-  const mode = inactive ? "OFFLINE" : "ONLINE";
-  const desiredName = inactive ? BOT_OFFLINE_NAME : BOT_ONLINE_NAME;
+function telegramRetryAfterSeconds(
+  err
+) {
+  const candidates = [
+    err?.parameters?.retry_after,
+    err?.response?.parameters?.retry_after,
+    err?.response?.body?.parameters?.retry_after,
+    err?.payload?.parameters?.retry_after
+  ];
 
-  if (!force && lastAppliedBotNameMode === mode) return;
+  for (
+    const value of
+    candidates
+  ) {
+    const n =
+      Number(value);
+
+    if (
+      Number.isFinite(n) &&
+      n > 0
+    ) {
+      return Math.ceil(n);
+    }
+  }
+
+  return 0;
+}
+
+
+async function getTelegramBotDisplayName() {
+  const result =
+    await bot.telegram.callApi(
+      "getMyName",
+      {}
+    );
+
+  return String(
+    result?.name ||
+    ""
+  ).trim();
+}
+
+
+async function syncBotDisplayName(
+  force = false
+) {
+  const inactive =
+    isBotInactivePeriod();
+
+  const mode =
+    inactive
+      ? "OFFLINE"
+      : "ONLINE";
+
+  const desiredName =
+    inactive
+      ? BOT_OFFLINE_NAME
+      : BOT_ONLINE_NAME;
+
+  const now =
+    Date.now();
+
+  if (
+    botNameSyncInFlight
+  ) {
+    return false;
+  }
+
+  /*
+    Important:
+    even a forced /syncname must respect Telegram's
+    retry_after. Otherwise repeated manual retries make
+    the rate limit worse.
+  */
+  if (
+    now <
+    botNameRetryNotBefore
+  ) {
+    const waitSeconds =
+      Math.max(
+        1,
+        Math.ceil(
+          (
+            botNameRetryNotBefore -
+            now
+          ) /
+          1000
+        )
+      );
+
+    if (force) {
+      console.warn(
+        `Bot display-name sync deferred for ${waitSeconds}s due to Telegram retry_after.`
+      );
+    }
+
+    return false;
+  }
+
+  if (
+    !force &&
+    lastAppliedBotNameMode ===
+      mode &&
+    now -
+      botNameLastVerifiedAt <
+      BOT_NAME_VERIFY_INTERVAL_MS
+  ) {
+    return true;
+  }
+
+  botNameSyncInFlight =
+    true;
 
   try {
-    await bot.telegram.callApi("setMyName", { name: desiredName });
-    lastAppliedBotNameMode = mode;
-    console.log(`Bot display name synced: ${desiredName}`);
+    /*
+      Read Telegram first.
+
+      This prevents needless setMyName calls on every
+      deployment when the name is already correct.
+    */
+    const actualName =
+      await getTelegramBotDisplayName();
+
+    botNameLastVerifiedAt =
+      Date.now();
+
+    if (
+      actualName ===
+      BOT_ONLINE_NAME
+    ) {
+      lastAppliedBotNameMode =
+        "ONLINE";
+    } else if (
+      actualName ===
+      BOT_OFFLINE_NAME
+    ) {
+      lastAppliedBotNameMode =
+        "OFFLINE";
+    }
+
+    if (
+      actualName ===
+      desiredName
+    ) {
+      lastAppliedBotNameMode =
+        mode;
+
+      botNameRetryNotBefore =
+        0;
+
+      return true;
+    }
+
+    await bot.telegram.callApi(
+      "setMyName",
+      {
+        name:
+          desiredName
+      }
+    );
+
+    lastAppliedBotNameMode =
+      mode;
+
+    botNameLastVerifiedAt =
+      Date.now();
+
+    botNameRetryNotBefore =
+      0;
+
+    console.log(
+      `Bot display name synced: ${desiredName}`
+    );
+
+    return true;
   } catch (err) {
-    console.error("Failed to sync bot display name:", err?.description || err?.message || err);
+    const retryAfter =
+      telegramRetryAfterSeconds(
+        err
+      );
+
+    if (
+      retryAfter > 0
+    ) {
+      /*
+        Small safety buffer prevents retrying exactly
+        on Telegram's boundary.
+      */
+      botNameRetryNotBefore =
+        Date.now() +
+        (
+          retryAfter +
+          5
+        ) *
+        1000;
+
+      console.error(
+        `Failed to sync bot display name: Telegram rate limit. Retry after ${retryAfter}s.`
+      );
+    } else {
+      console.error(
+        "Failed to sync bot display name:",
+        err?.description ||
+        err?.message ||
+        err
+      );
+    }
+
+    return false;
+  } finally {
+    botNameSyncInFlight =
+      false;
   }
 }
 
-function startBotDisplayNameScheduler() {
-  syncBotDisplayName(true);
 
-  setInterval(() => {
-    syncBotDisplayName(false);
-  }, 60 * 1000);
+function startBotDisplayNameScheduler() {
+  /*
+    Startup verification.
+
+    This first performs getMyName. setMyName is called
+    only when Telegram's real name differs from the
+    desired ONLINE/OFFLINE state.
+  */
+  syncBotDisplayName(
+    true
+  );
+
+  setInterval(
+    () => {
+      syncBotDisplayName(
+        false
+      );
+    },
+    60 * 1000
+  );
 }
 
 async function notifyInactivePeriod(ctx) {
@@ -13066,6 +13478,24 @@ app.get("/health", (req, res) => {
     broadcastInProgress,
     lastBroadcastAt: broadcastMeta.lastBroadcastAt || null,
     botDisplayNameMode: lastAppliedBotNameMode,
+
+    botDisplayNameRetryNotBefore:
+      botNameRetryNotBefore || null,
+
+    botDisplayNameRetryInSeconds:
+      botNameRetryNotBefore > Date.now()
+        ? Math.ceil(
+            (
+              botNameRetryNotBefore -
+              Date.now()
+            ) /
+            1000
+          )
+        : 0,
+
+    botDisplayNameLastVerifiedAt:
+      botNameLastVerifiedAt || null,
+
     botOnlineName: BOT_ONLINE_NAME,
     botOfflineName: BOT_OFFLINE_NAME,
     statusPollIntervalSeconds: STATUS_POLL_INTERVAL_MS / 1000,
@@ -13284,7 +13714,9 @@ app.listen(port, async () => {
   console.log(`Inactive period UTC: ${INACTIVE_START_UTC} to ${INACTIVE_END_UTC}`);
   console.log(`Inactive end display: ${INACTIVE_END_EAT_DISPLAY} EAT`);
   console.log(`Bot names: ${BOT_ONLINE_NAME} / ${BOT_OFFLINE_NAME}`);
-  console.log(`Daily payment summary: enabled at 00:00 EAT`);
+  console.log(
+    "Daily payment summary: 00:00 EAT with restart-safe catch-up"
+  );
   console.log(`Daily sales ledger payments loaded: ${Object.keys(dailySalesLedger.payments || {}).length}`);
 
   const webhookUrl = `${PUBLIC_BASE_URL}/webhook`;
