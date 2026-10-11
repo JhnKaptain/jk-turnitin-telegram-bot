@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 const fs = require("fs");
 const path = require("path");
@@ -251,23 +251,14 @@ const STRICT_REPORT_NAMES =
   Object.freeze([
     "Lencho Kelil",
     "Ayat Obaidah",
-    "Jabbar Mutlaq",
-
-    // Legacy jobs created before identity cutover
-    "Fadhili Masha",
-    "William Nzaka",
-    "Bornvince Moses"
+    "Jabbar Mutlaq"
   ]);
 
 const STRICT_REPORT_INSTITUTIONS =
   Object.freeze([
     "Arsi University",
     "University of Anbar",
-    "Oromia State University",
-
-    // Legacy jobs created before identity cutover
-    "University of Embu",
-    "Technical University of Mombasa"
+    "Oromia State University"
   ]);
 
 function validateStrictReportIdentity(
@@ -2257,6 +2248,91 @@ function parseParagraphFallbackPages(
   return pages;
 }
 
+// JK_LAYOUT_FIDELITY_V10C
+function parseBackgroundImageMatch(chunk) {
+  const tags =
+    String(chunk || "")
+      .match(/<img\b[^>]*>/gi) || [];
+
+  const tag =
+    tags.find((candidate) => {
+      const match =
+        candidate.match(
+          /\balt\s*=\s*(["'])(.*?)\1/i
+        );
+
+      return (
+        String(match?.[2] || "")
+          .trim()
+          .toLowerCase() ===
+        "background image"
+      );
+    });
+
+  if (!tag) {
+    return null;
+  }
+
+  const attr = (name) => {
+    const re = new RegExp(
+      "\\b" + name +
+      "\\s*=\\s*([\"'])" +
+      "(.*?)\\1",
+      "i"
+    );
+
+    return tag.match(re)?.[2] || "";
+  };
+
+  const src = attr("src");
+
+  const data = src.match(
+    /^data:image\/(png|jpe?g);base64,([\s\S]+)$/i
+  );
+
+  if (!data) {
+    return null;
+  }
+
+  const style =
+    parseStyle(
+      attr("style")
+    );
+
+  const width =
+    Number(attr("width")) ||
+    Number(style.width) ||
+    PAGE_W;
+
+  const height =
+    Number(attr("height")) ||
+    Number(style.height) ||
+    PAGE_H;
+
+  const rawType =
+    data[1].toLowerCase();
+
+  const type =
+    rawType === "jpg"
+      ? "jpeg"
+      : rawType;
+
+  /*
+    Preserve the old array contract:
+      [1] width
+      [2] height
+      [3] type
+      [4] base64 data
+  */
+  return [
+    tag,
+    String(width),
+    String(height),
+    type,
+    data[2]
+  ];
+}
+
 function parseOriginalPages(html) {
   const classes =
     parseCssFontClasses(
@@ -2278,9 +2354,10 @@ function parseOriginalPages(html) {
     return chunks.map(
       (chunk) => {
         const bg =
-          chunk.match(
-            /<img\s+width="(\d+)"\s+height="(\d+)"\s+src="data:image\/(png|jpeg);base64,([^"]+)"[^>]*alt="background image"/i
+          parseBackgroundImageMatch(
+            chunk
           );
+
 
         const elements =
           [];
@@ -3863,6 +3940,110 @@ async function drawOriginalPages(
   const id = bundle.reportIdentity || {};
   let pageNo = startPageNo;
 
+  // JK_SIMILARITY_DETACHED_PUNCTUATION_V10D
+  //
+  // Provider matches can occasionally begin with
+  // sentence-ending punctuation from the previous
+  // line, followed immediately by a newline.
+  //
+  // Example:
+  //   ".\nThe initial laboratory..."
+  //
+  // Painting that isolated period creates a tiny
+  // detached vertical/sliver highlight at the end
+  // of the previous line.
+  //
+  // IMPORTANT:
+  // - provider ranges are NOT modified;
+  // - source audit ranges are NOT modified;
+  // - similarity percentage is NOT modified;
+  // - only the visual paint start is normalized.
+  const canonicalPaintText =
+    providerText(
+      bundle
+    );
+
+  const visualRanges =
+    kind === "SIMILARITY"
+      ? (
+          Array.isArray(ranges)
+            ? ranges
+            : []
+        ).map(
+          (range) => {
+            const rangeStart =
+              Number(
+                range?.start
+              );
+
+            const rangeEnd =
+              Number(
+                range?.end
+              );
+
+            if (
+              !Number.isFinite(
+                rangeStart
+              ) ||
+              !Number.isFinite(
+                rangeEnd
+              ) ||
+              rangeEnd <=
+                rangeStart
+            ) {
+              return range;
+            }
+
+            const head =
+              canonicalPaintText.slice(
+                rangeStart,
+                Math.min(
+                  rangeEnd,
+                  rangeStart + 24
+                )
+              );
+
+            /*
+              Narrow rule:
+
+              Only remove ONE leading punctuation
+              character when it is immediately
+              followed by optional horizontal
+              whitespace and then a line break.
+
+              This prevents detached punctuation
+              slivers without trimming normal
+              punctuation inside matched prose.
+            */
+            const detached =
+              head.match(
+                /^[.!?;:,][ \t]*\r?\n[ \t]*/
+              );
+
+            if (!detached) {
+              return range;
+            }
+
+            const visualStart =
+              rangeStart +
+              detached[0].length;
+
+            if (
+              visualStart >=
+              rangeEnd
+            ) {
+              return range;
+            }
+
+            return {
+              ...range,
+              start:
+                visualStart
+            };
+          }
+        )
+      : ranges;
+
   for (const original of originalPages) {
     const sourceWidth =
       Number(
@@ -3944,8 +4125,10 @@ async function drawOriginalPages(
 
     // JK_PAGE_NUMBER_HIGHLIGHT_PROTECT_V7C
     //
-    // Preserve source page numbers, but keep them
-    // out of AI/similarity highlighting.
+    // Preserve source page numbers.
+    // AI keeps them out of highlighting.
+    // Similarity may highlight them when
+    // a provider match actually overlaps.
     //
     // This version is intentionally more robust than
     // V7B: it considers text, page-edge band,
@@ -4122,7 +4305,7 @@ async function drawOriginalPages(
         }
 
         const aiRelevant =
-          ranges.filter(
+          visualRanges.filter(
             (range) =>
               overlaps(
                 aiElement.start,
@@ -5017,23 +5200,43 @@ async function drawOriginalPages(
           11
         ) *
         sourceScale;
-      const font = elementFont(originalFontCache, element);
+      const font =
+              elementFont(
+                originalFontCache,
+                element
+              );
+
+            // JK_UNMAPPED_GRAPHIC_GLYPH_GUARD_V1
+            const unmappedGraphicGlyph =
+              !Number.isFinite(element.start) &&
+              !Number.isFinite(element.end) &&
+              s(element.text).trim().length <= 3 &&
+              /^[\-_ |]+$/.test(
+                s(element.text).trim()
+              );
+
+            if (unmappedGraphicGlyph) {
+              continue;
+            }
 
       const relevant =
-        !isSourcePageNumberElement(
-          element
-        ) &&
-        Number.isFinite(element.start) &&
-        Number.isFinite(element.end)
-          ? ranges.filter((range) =>
-              overlaps(
-                element.start,
-                element.end,
-                range.start,
-                range.end
-              )
-            )
-          : [];
+              (
+                kind !== "AI" ||
+                !isSourcePageNumberElement(
+                  element
+                )
+              ) &&
+              Number.isFinite(element.start) &&
+              Number.isFinite(element.end)
+                ? visualRanges.filter((range) =>
+                    overlaps(
+                      element.start,
+                      element.end,
+                      range.start,
+                      range.end
+                    )
+                  )
+                : [];
 
       const sx = fittedScale(
         font,

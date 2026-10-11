@@ -603,33 +603,6 @@ const REPORT_INSTITUTIONS = [
   "Oromia State University"
 ];
 
-/*
-  Legacy identities are accepted only so
-  already-uploaded / already-paid jobs
-  created before this cutover can finish.
-  They are NEVER assigned to new files.
-*/
-const LEGACY_REPORT_NAMES = [
-  "Fadhili Masha",
-  "William Nzaka",
-  "Bornvince Moses"
-];
-
-const LEGACY_REPORT_INSTITUTIONS = [
-  "University of Embu",
-  "Technical University of Mombasa"
-];
-
-const APPROVED_REPORT_NAMES = [
-  ...REPORT_NAMES,
-  ...LEGACY_REPORT_NAMES
-];
-
-const APPROVED_REPORT_INSTITUTIONS = [
-  ...REPORT_INSTITUTIONS,
-  ...LEGACY_REPORT_INSTITUTIONS
-];
-
 const COPYLEAKS_ENABLED = readBoolEnv(
   "COPYLEAKS_ENABLED",
   false
@@ -786,7 +759,7 @@ let reportSettings = {
     ? String(
         process.env.REPORT_INSTITUTION
       ).trim()
-    : "University of Embu",
+    : REPORT_INSTITUTIONS[0],
 
   updatedAt: Date.now()
 };
@@ -988,7 +961,7 @@ function requireFileReportIdentity(
   }
 
   if (
-    !APPROVED_REPORT_NAMES.includes(
+    !REPORT_NAMES.includes(
       reportName
     )
   ) {
@@ -999,7 +972,7 @@ function requireFileReportIdentity(
   }
 
   if (
-    !APPROVED_REPORT_INSTITUTIONS.includes(
+    !REPORT_INSTITUTIONS.includes(
       institution
     )
   ) {
