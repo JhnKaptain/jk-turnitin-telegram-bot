@@ -25,7 +25,8 @@ const C = {
   ink: "#191919",
   muted: "#636363",
   iconDark: "#2D2D2D",
-  softBlue: "#D1E9FA",
+  // JK_OVERVIEW_FIDELITY_V10E
+  softBlue: "#D0E8F9",
   rule: "#CDCDCD",
   brandBlue: "#0096FF",
   coral: "#F86371",
@@ -185,6 +186,80 @@ function drawRoundedPill(page, x, top, width, height, fill) {
   page.drawRectangle({ x: x + r, y, width: Math.max(0, width - 2 * r), height, color: hex(fill) });
   page.drawCircle({ x: x + r, y: y + r, size: r, color: hex(fill) });
   page.drawCircle({ x: x + width - r, y: y + r, size: r, color: hex(fill) });
+}
+
+
+function drawRoundedRectTop(
+  page,
+  x,
+  top,
+  width,
+  height,
+  radius,
+  fill
+) {
+  const y =
+    PAGE_H -
+    top -
+    height;
+
+  const r =
+    Math.max(
+      0,
+      Math.min(
+        Number(radius || 0),
+        width / 2,
+        height / 2
+      )
+    );
+
+  page.drawRectangle({
+    x:
+      x + r,
+    y,
+    width:
+      Math.max(
+        0,
+        width - 2 * r
+      ),
+    height,
+    color:
+      hex(fill)
+  });
+
+  page.drawRectangle({
+    x,
+    y:
+      y + r,
+    width,
+    height:
+      Math.max(
+        0,
+        height - 2 * r
+      ),
+    color:
+      hex(fill)
+  });
+
+  for (
+    const [
+      cx,
+      cy
+    ] of [
+      [x + r, y + r],
+      [x + width - r, y + r],
+      [x + r, y + height - r],
+      [x + width - r, y + height - r]
+    ]
+  ) {
+    page.drawCircle({
+      x: cx,
+      y: cy,
+      size: r,
+      color:
+        hex(fill)
+    });
+  }
 }
 
 function paleSourceColour(number) {
@@ -3459,6 +3534,8 @@ function similarityOverviewPage(page, f, icons, bundle, groups, cats, pageNo, to
   const id = bundle.reportIdentity || {};
   shell(page, f, id, pageNo, totalPages, "Integrity Overview");
 
+  // JK_OVERVIEW_FIDELITY_V10E5_SIMILARITY_PARITY
+
   const score = providerSimilarityScore(bundle);
 
   drawTextTop(page, `${fmtPct(score)} Overall Similarity`, 36, 55, 17, f.lexMed, C.ink);
@@ -3477,27 +3554,49 @@ function similarityOverviewPage(page, f, icons, bundle, groups, cats, pageNo, to
   if (providerSimilarityFiltered(bundle)) {
     drawTextTop(page, "Filtered from the Report", 36, 100.81, 10, f.notoSemi, C.ink);
     drawPngTop(page, icons.filterBullet, 39, 125.5, 2, 3);
-    drawTextTop(page, "Quoted Text", 48, 122.017, 7, f.noto, C.ink);
+    drawTextTop(page, "Bibliography", 48, 122.017, 7, f.noto, C.ink);
     drawPngTop(page, icons.filterBullet, 39, 139.5, 2, 3);
-    drawTextTop(page, "Bibliography", 48, 136.017, 7, f.noto, C.ink);
+    drawTextTop(page, "Quoted Text", 48, 136.017, 7, f.noto, C.ink);
     summaryTop = 175.81;
   }
 
-  drawSimilaritySummaryBlock(page, f, icons, groups, cats, summaryTop);
+  // V10E separator above Match Groups / Top Sources
+  drawRule(
+    page,
+    summaryTop - 15.81
+  );
 
-  const integrityTop = summaryTop + 140;
+  drawSimilaritySummaryBlock(
+    page,
+    f,
+    icons,
+    groups,
+    cats,
+    summaryTop
+  );
+
+  const integrityTop =
+    summaryTop + 140;
+
+  // V10E separator above Integrity Flags
+  drawRule(
+    page,
+    integrityTop - 13.81
+  );
 
   drawTextTop(page, "Integrity Flags", 36, integrityTop, 10, f.notoSemi, C.ink);
   drawTextTop(page, "0 Integrity Flags for Review", 36, integrityTop + 18.21, 7, f.notoSemi, C.ink);
   drawTextTop(page, "No suspicious text manipulations found.", 36, integrityTop + 33.21, 7, f.noto, C.muted);
 
-  page.drawRectangle({
-    x: 301,
-    y: PAGE_H - (integrityTop + 80.69),
-    width: 266,
-    height: 64,
-    color: hex(C.softBlue)
-  });
+  drawRoundedRectTop(
+    page,
+    301,
+    integrityTop + 16.69,
+    266,
+    64,
+    8,
+    C.softBlue
+  );
 
   drawTextTop(
     page,
@@ -3661,6 +3760,9 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
 
   shell(page, f, id, pageNo, totalPages, "AI Writing Overview");
 
+  // V10E header/content separator
+  drawRule(page, 60);
+
   const value = Number(ai?.percent || 0);
   const low = ai.available && value > 0 && value < 20;
 
@@ -3682,13 +3784,15 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
 
   drawWrappedTop(page, description, 36, 100.517, 256, 7, f.noto, C.ink, 3, low ? 4 : 3);
 
-  page.drawRectangle({
-    x: 306,
-    y: PAGE_H - 132,
-    width: 273,
-    height: 56,
-    color: hex(C.softBlue)
-  });
+  drawRoundedRectTop(
+    page,
+    306,
+    76,
+    273,
+    56,
+    8,
+    C.softBlue
+  );
 
   drawTextTop(page, "Caution: Review required.", 318, 85.586, 6, f.notoSemi, C.ink);
   drawTextTop(
@@ -3719,12 +3823,46 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
     C.ink
   );
 
+  // V10E separator below percentage/caution block
+  drawRule(page, 148);
+
   if (!low && ai.available) {
     const count = value >= 20 ? Math.max(1, ai.ranges.length) : 0;
 
     drawPngTop(page, icons.aiRobot, 36, 168, 12, 12);
-    drawTextTop(page, String(count), 52, 166.517, 7, f.noto, C.ink);
-    drawTextTop(page, `AI-generated  ${fmtPct(value)}`, count >= 10 ? 61 : 60, 166.517, 7, f.noto, C.ink);
+    const countText =
+      String(count);
+
+    const countX =
+      52;
+
+    drawTextTop(
+      page,
+      countText,
+      countX,
+      166.517,
+      7,
+      f.noto,
+      C.ink
+    );
+
+    const aiLabelX =
+      countX +
+      f.noto.widthOfTextAtSize(
+        countText,
+        7
+      ) +
+      3;
+
+    drawTextTop(
+      page,
+      `AI-generated ${fmtPct(value)}`,
+      aiLabelX,
+      166.517,
+      7,
+      f.noto,
+      C.ink
+    );
     drawTextTop(
       page,
       "Likely generated or likely generated and revised by AI.",
@@ -3736,7 +3874,14 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
     );
   }
 
-  const disclaimerTop = low ? 165.586 : 217.586;
+  if (!low && ai.available) {
+    drawRule(page, 200);
+  }
+
+  const disclaimerTop =
+    low
+      ? 165.586
+      : 217.586;
 
   drawTextTop(page, "Disclaimer", 36, disclaimerTop, 6, f.notoSemi, C.muted);
 
@@ -3768,6 +3913,12 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
     6,
     f.noto,
     C.muted
+  );
+
+  // V10E bottom edge of Disclaimer block
+  drawRule(
+    page,
+    disclaimerTop + 46.414
   );
 }
 
