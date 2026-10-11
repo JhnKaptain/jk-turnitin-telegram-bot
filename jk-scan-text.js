@@ -87,17 +87,38 @@ function findBibliographyStart(
       text
     );
 
-  const headingRe =
-    /(^|\n)[ \t]*(reference list|references?|bibliography|works cited)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
-
   const matches = [];
+
+  /*
+    JK_FLATTENED_BIBLIOGRAPHY_HEADING_V1
+
+    Normal extraction usually preserves a
+    bibliography heading on its own line.
+
+    Some PDFs flatten:
+
+      References
+      Smith, J. (2025)...
+
+    into:
+
+      References Smith, J. (2025)...
+
+    Preserve the strict standalone-heading rule
+    first, then use a conservative fallback for
+    flattened headings near the later portion of
+    the document.
+  */
+
+  const standaloneHeadingRe =
+    /(^|\n)[ \t]*(reference list|references?|bibliography|works cited)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
 
   let match;
 
   while (
     (
       match =
-        headingRe.exec(
+        standaloneHeadingRe.exec(
           value
         )
     )
@@ -116,29 +137,89 @@ function findBibliographyStart(
   }
 
   /*
-    Ignore early occurrences when possible.
+    PDF text extraction can remove the line break
+    after the heading.
 
-    Example:
-      Table of Contents
-      References ........ 12
+    Require:
+      1. sentence/document boundary before heading,
+      2. exact approved heading,
+      3. reference-like content immediately after it.
 
-    We want the actual references section
-    near the end instead.
+    This prevents ordinary prose such as
+    "the article references Smith" from becoming
+    a bibliography boundary.
+  */
+  const flattenedHeadingRe =
+    /(^|[.!?][ \t]+)(reference list|references?|bibliography|works cited)[ \t]*:?[ \t]+/gim;
+
+  while (
+    (
+      match =
+        flattenedHeadingRe.exec(
+          value
+        )
+    )
+  ) {
+    const start =
+      match.index +
+      (
+        match[1]
+          ? match[1].length
+          : 0
+      );
+
+    const evidenceStart =
+      flattenedHeadingRe
+        .lastIndex;
+
+    const evidence =
+      value.slice(
+        evidenceStart,
+        Math.min(
+          value.length,
+          evidenceStart + 180
+        )
+      );
+
+    const looksLikeReference =
+      /(?:^(?:\[\d+\][ \t]*|[A-Z][A-Za-z'’.-]{1,50},[ \t]*[A-Z])|\((?:19|20)\d{2}[a-z]?\)|\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|\bdoi\b)/i.test(
+        evidence
+      );
+
+    if (
+      looksLikeReference
+    ) {
+      matches.push(
+        start
+      );
+    }
+  }
+
+  /*
+    Ignore early occurrences such as a table of
+    contents entry.
+
+    Choose the last eligible occurrence so the
+    actual bibliography near the end wins.
   */
   const eligible =
-    matches.filter(
-      (start) =>
-        start >=
-        value.length *
-          0.30
-    );
+    matches
+      .filter(
+        (start) =>
+          start >=
+          value.length *
+            0.30
+      )
+      .sort(
+        (a, b) =>
+          a - b
+      );
 
   if (
     eligible.length
   ) {
     return eligible[
-      eligible.length -
-        1
+      eligible.length - 1
     ];
   }
 

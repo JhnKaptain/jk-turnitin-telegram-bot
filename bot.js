@@ -978,28 +978,6 @@ function requireFileReportIdentity(
 function ensureFileReportIdentity(
   file
 ) {
-  if (
-    !file ||
-    typeof file !== "object"
-  ) {
-    return null;
-  }
-
-  if (!file.jkSubmissionId) {
-    file.jkSubmissionId =
-      generateJkSubmissionId();
-  }
-
-  if (!file.reportName) {
-    file.reportName =
-      chooseReportName();
-  }
-
-  if (!file.reportInstitution) {
-    file.reportInstitution =
-      reportSettings.institution;
-  }
-
   return requireFileReportIdentity(
     file
   );
