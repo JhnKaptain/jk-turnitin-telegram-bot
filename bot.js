@@ -2578,6 +2578,66 @@ function mainKeyboard() {
   };
 }
 
+// JK_ADMIN_FREE_SCAN_V1
+let adminFreeScanSession = null;
+
+function adminFreeScanServiceKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        "✅ FULL CHECK",
+        "ADMIN_FREE_SCAN_CHECK"
+      )
+    ],
+    [
+      Markup.button.callback(
+        "📊 SIMILARITY ONLY",
+        "ADMIN_FREE_SCAN_SIMILARITY"
+      )
+    ],
+    [
+      Markup.button.callback(
+        "❌ Cancel",
+        "ADMIN_FREE_SCAN_CANCEL"
+      )
+    ]
+  ]);
+}
+
+function adminFreeScanFilterKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        "✅ FILTER QUOTES + BIBLIOGRAPHY",
+        "ADMIN_FREE_SCAN_FILTERED"
+      )
+    ],
+    [
+      Markup.button.callback(
+        "📄 DO NOT FILTER",
+        "ADMIN_FREE_SCAN_UNFILTERED"
+      )
+    ],
+    [
+      Markup.button.callback(
+        "❌ Cancel",
+        "ADMIN_FREE_SCAN_CANCEL"
+      )
+    ]
+  ]);
+}
+
+function adminFreeScanWaitingKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        "❌ Cancel Admin Scan",
+        "ADMIN_FREE_SCAN_CANCEL"
+      )
+    ]
+  ]);
+}
+
 function adminDashboardKeyboard() {
   return Markup.inlineKeyboard([
     [
@@ -2628,6 +2688,12 @@ function adminDashboardKeyboard() {
       Markup.button.callback(
         "💳 Payments",
         "ADMIN_DASH_PAYMENTS"
+      )
+    ],
+    [
+      Markup.button.callback(
+        "🧪 Admin Free Scan",
+        "ADMIN_DASH_FREE_SCAN"
       )
     ],
     [
@@ -6043,6 +6109,258 @@ bot.action("ADMIN_DASH_PAYMENTS", async (ctx) => {
   );
 });
 
+// JK_ADMIN_FREE_SCAN_ACTIONS_V1
+bot.action(
+  "ADMIN_DASH_FREE_SCAN",
+  async (ctx) => {
+    if (
+      ctx.from.id !== ADMIN_ID
+    ) {
+      return ctx.answerCbQuery(
+        "Admin only."
+      );
+    }
+
+    adminFreeScanSession = null;
+
+    /*
+      Prevent an old manual filebatch target
+      from receiving a personal admin document.
+    */
+    delete pendingFileTargets[
+      ADMIN_ID
+    ];
+
+    await ctx.answerCbQuery();
+
+    await showAdminScreen(
+      ctx,
+      [
+        "🧪 ADMIN FREE SCAN",
+        "",
+        "No customer payment will be created.",
+        "The finished report is delivered only to your admin account.",
+        "",
+        "Quetext/Sapling API usage still applies.",
+        "",
+        "Choose the report type."
+      ].join("\n"),
+      adminFreeScanServiceKeyboard(),
+      true
+    );
+  }
+);
+
+bot.action(
+  "ADMIN_FREE_SCAN_CHECK",
+  async (ctx) => {
+    if (
+      ctx.from.id !== ADMIN_ID
+    ) {
+      return ctx.answerCbQuery(
+        "Admin only."
+      );
+    }
+
+    adminFreeScanSession = {
+      type: "CHECK",
+      similarityFilter: null,
+      stage: "WAIT_FILTER",
+      startedAt: Date.now()
+    };
+
+    await ctx.answerCbQuery(
+      "Full check selected"
+    );
+
+    await showAdminScreen(
+      ctx,
+      [
+        "🧪 ADMIN FREE SCAN",
+        "",
+        "Service: CHECK - FULL REPORT",
+        "",
+        "Choose similarity filtering."
+      ].join("\n"),
+      adminFreeScanFilterKeyboard(),
+      true
+    );
+  }
+);
+
+bot.action(
+  "ADMIN_FREE_SCAN_SIMILARITY",
+  async (ctx) => {
+    if (
+      ctx.from.id !== ADMIN_ID
+    ) {
+      return ctx.answerCbQuery(
+        "Admin only."
+      );
+    }
+
+    adminFreeScanSession = {
+      type: "SIMILARITY",
+      similarityFilter: null,
+      stage: "WAIT_FILTER",
+      startedAt: Date.now()
+    };
+
+    await ctx.answerCbQuery(
+      "Similarity only selected"
+    );
+
+    await showAdminScreen(
+      ctx,
+      [
+        "🧪 ADMIN FREE SCAN",
+        "",
+        "Service: SIMILARITY ONLY",
+        "",
+        "Choose similarity filtering."
+      ].join("\n"),
+      adminFreeScanFilterKeyboard(),
+      true
+    );
+  }
+);
+
+bot.action(
+  "ADMIN_FREE_SCAN_FILTERED",
+  async (ctx) => {
+    if (
+      ctx.from.id !== ADMIN_ID
+    ) {
+      return ctx.answerCbQuery(
+        "Admin only."
+      );
+    }
+
+    if (
+      !adminFreeScanSession ||
+      adminFreeScanSession.stage !==
+        "WAIT_FILTER"
+    ) {
+      return ctx.answerCbQuery(
+        "Start Admin Free Scan first.",
+        {
+          show_alert: true
+        }
+      );
+    }
+
+    adminFreeScanSession
+      .similarityFilter =
+      FILTER_MODE_FILTERED;
+
+    adminFreeScanSession.stage =
+      "WAIT_DOCUMENT";
+
+    await ctx.answerCbQuery(
+      "Filtered selected"
+    );
+
+    await showAdminScreen(
+      ctx,
+      [
+        "🧪 ADMIN FREE SCAN READY",
+        "",
+        "Service: " +
+          adminReportTypeLabel(
+            adminFreeScanSession.type
+          ),
+        "Filter: Quotes + Bibliography",
+        "",
+        "Send ONE PDF or DOCX document now.",
+        "",
+        "No bot payment will be requested."
+      ].join("\n"),
+      adminFreeScanWaitingKeyboard(),
+      true
+    );
+  }
+);
+
+bot.action(
+  "ADMIN_FREE_SCAN_UNFILTERED",
+  async (ctx) => {
+    if (
+      ctx.from.id !== ADMIN_ID
+    ) {
+      return ctx.answerCbQuery(
+        "Admin only."
+      );
+    }
+
+    if (
+      !adminFreeScanSession ||
+      adminFreeScanSession.stage !==
+        "WAIT_FILTER"
+    ) {
+      return ctx.answerCbQuery(
+        "Start Admin Free Scan first.",
+        {
+          show_alert: true
+        }
+      );
+    }
+
+    adminFreeScanSession
+      .similarityFilter =
+      FILTER_MODE_UNFILTERED;
+
+    adminFreeScanSession.stage =
+      "WAIT_DOCUMENT";
+
+    await ctx.answerCbQuery(
+      "Unfiltered selected"
+    );
+
+    await showAdminScreen(
+      ctx,
+      [
+        "🧪 ADMIN FREE SCAN READY",
+        "",
+        "Service: " +
+          adminReportTypeLabel(
+            adminFreeScanSession.type
+          ),
+        "Filter: Unfiltered",
+        "",
+        "Send ONE PDF or DOCX document now.",
+        "",
+        "No bot payment will be requested."
+      ].join("\n"),
+      adminFreeScanWaitingKeyboard(),
+      true
+    );
+  }
+);
+
+bot.action(
+  "ADMIN_FREE_SCAN_CANCEL",
+  async (ctx) => {
+    if (
+      ctx.from.id !== ADMIN_ID
+    ) {
+      return ctx.answerCbQuery(
+        "Admin only."
+      );
+    }
+
+    adminFreeScanSession = null;
+
+    await ctx.answerCbQuery(
+      "Admin free scan cancelled"
+    );
+
+    await showAdminDashboard(
+      ctx,
+      true
+    );
+  }
+);
+
 bot.action(
   "ADMIN_DASH_REPORTS",
   async (ctx) => {
@@ -7093,6 +7411,196 @@ bot.action(/^BATCH_COUNT_(\d{1,2})$/, async (ctx) => {
 // =====================
 bot.on("document", async (ctx) => {
   const user = ctx.from;
+
+  // JK_ADMIN_FREE_SCAN_DOCUMENT_V1
+  if (
+    user.id === ADMIN_ID &&
+    adminFreeScanSession?.stage ===
+      "WAIT_DOCUMENT"
+  ) {
+    const session = {
+      ...adminFreeScanSession
+    };
+
+    adminFreeScanSession = null;
+
+    const doc =
+      ctx.message.document;
+
+    const storedFile =
+      createStoredFileFromDocument(
+        ADMIN_ID,
+        doc
+      );
+
+    storedFile.type =
+      session.type;
+
+    storedFile.price = 0;
+
+    storedFile.similarityFilter =
+      session.similarityFilter;
+
+    storedFile.pendingType =
+      null;
+
+    storedFile.adminFreeScan =
+      true;
+
+    storedFile.sourceChatId =
+      ctx.chat.id;
+
+    storedFile.sourceMessageId =
+      ctx.message.message_id;
+
+    storedFile.sourceUsername =
+      user.username || "N/A";
+
+    storedFile.sourceFirstName =
+      user.first_name || "";
+
+    storedFile.sourceLastName =
+      user.last_name || "";
+
+    /*
+      Validation only.
+      Identity was created once by
+      createStoredFileFromDocument().
+    */
+    requireFileReportIdentity(
+      storedFile
+    );
+
+    const now =
+      Date.now();
+
+    const batchId =
+      "JK_ADMIN_FREE_" +
+      ADMIN_ID +
+      "_" +
+      now;
+
+    const apiRef =
+      "ADMINFREE_" +
+      now;
+
+    const job =
+      createPaidJob({
+        userId:
+          ADMIN_ID,
+
+        apiRef,
+
+        ref: {
+          batchId,
+
+          amount: 0,
+
+          kind:
+            "ADMIN_FREE_SCAN",
+
+          summary:
+            "Admin Free Scan",
+
+          name:
+            getUserFullName(
+              user
+            ),
+
+          username:
+            safeText(
+              user.username ||
+              "N/A"
+            ),
+
+          phone:
+            null,
+
+          files: [
+            storedFile
+          ]
+        },
+
+        invoiceId:
+          null,
+
+        source:
+          "admin-free-scan"
+      });
+
+    /*
+      Always use the provider-neutral route.
+      No customer payment record or daily sale
+      is created by this path.
+    */
+    job.reportPipeline =
+      PROVIDER_NEUTRAL_PIPELINE;
+
+    job.adminFreeScan =
+      true;
+
+    job.amount = 0;
+
+    job.reportModeSnapshot =
+      REPORT_MODE_AUTO;
+
+    job.route =
+      "PENDING";
+
+    job.status =
+      "PROCESSING";
+
+    savePaidJobs();
+
+    await ctx.reply(
+      [
+        "🧪 ADMIN FREE SCAN STARTED",
+        "",
+        "File: " +
+          safeText(
+            storedFile.file_name
+          ),
+        "Service: " +
+          adminReportTypeLabel(
+            storedFile.type
+          ),
+        "Filter: " +
+          similarityFilterLabel(
+            storedFile
+              .similarityFilter
+          ),
+        "",
+        "Payment: BYPASSED (ADMIN)",
+        "Provider API usage: LIVE"
+      ].join("\n")
+    );
+
+    setImmediate(
+      async () => {
+        try {
+          await submitPaidJobToActiveProvider(
+            job.jobId
+          );
+        } catch (err) {
+          await sendAdminMessage(
+            "❌ ADMIN FREE SCAN FAILED\n" +
+            "File: " +
+            safeText(
+              storedFile.file_name ||
+              "N/A"
+            ) +
+            "\nError: " +
+            safeText(
+              err?.message ||
+              err
+            )
+          );
+        }
+      }
+    );
+
+    return;
+  }
 
   if (user.id === ADMIN_ID) {
     const target = pendingFileTargets[ADMIN_ID];
@@ -8431,10 +8939,58 @@ async function submitPaidJobToProviders(
           similarityPercent
         )
       ) {
+        const similarityReason =
+          safeText(
+            result
+              ?.similarityDetection
+              ?.error ||
+            result
+              ?.similarityDetection
+              ?.reason ||
+            "No usable similarity score"
+          );
+
         throw new Error(
-          "Similarity provider did not return a usable result."
+          "Similarity provider did not return a usable result. " +
+          similarityReason
         );
       }
+
+      // JK_SIMILARITY_FINAL_STATUS_V1
+      if (
+        !file
+          .apiSimilarityFinalStatusSentAt
+      ) {
+        await sendAdminMessage(
+          "✅ SIMILARITY CHECK COMPLETE\n" +
+          "File: " +
+          safeText(
+            file.file_name ||
+            "N/A"
+          ) +
+          "\nSimilarity: " +
+          Math.round(
+            similarityPercent
+          ) +
+          "%"
+        );
+
+        file
+          .apiSimilarityFinalStatusSentAt =
+          Date.now();
+
+        savePaidJobs();
+      }
+
+      /*
+        A later successful attempt clears
+        stale failure information.
+      */
+      file.providerError =
+        null;
+
+      file.providerFailedAt =
+        null;
 
       file.providerStatus =
         "COMPLETE";
@@ -8487,7 +9043,7 @@ async function submitPaidJobToProviders(
       savePaidJobs();
 
       await sendAdminMessage(
-        "PROVIDER PROCESSING FAILED\n" +
+        "⚠️ PROVIDER ATTEMPT FAILED\n" +
         "File: " +
         safeText(
           file.file_name ||
@@ -11029,9 +11585,14 @@ async function renderAndDeliverApiReports(
       file.apiDeliveryReadyAt =
         Date.now();
 
+      const deliveryHoldMinutes =
+        job?.adminFreeScan
+          ? 0
+          : API_DELIVERY_HOLD_MINUTES;
+
       file.apiDeliveryNotBeforeAt =
         file.apiDeliveryReadyAt +
-        API_DELIVERY_HOLD_MINUTES *
+        deliveryHoldMinutes *
           60 *
           1000;
 
