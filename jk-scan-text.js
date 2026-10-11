@@ -150,7 +150,7 @@ function findBibliographyStart(
     a bibliography boundary.
   */
   const flattenedHeadingRe =
-    /(^|[.!?][ \t]+)(reference list|references?|bibliography|works cited)[ \t]*:?[ \t]+/gim;
+    /(^|[.!?][ \t]+)(reference list|references?|bibliography|works cited)[ \t]*:?[ \t]*(?:\r?\n[ \t]*|[ \t]+)/gim;
 
   while (
     (
