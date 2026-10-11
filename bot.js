@@ -592,14 +592,42 @@ const FILTER_MODE_FILTERED = "FILTERED";
 const FILTER_MODE_UNFILTERED = "UNFILTERED";
 
 const REPORT_NAMES = [
+  "Lencho Kelil",
+  "Ayat Obaidah",
+  "Jabbar Mutlaq"
+];
+
+const REPORT_INSTITUTIONS = [
+  "Arsi University",
+  "University of Anbar",
+  "Oromia State University"
+];
+
+/*
+  Legacy identities are accepted only so
+  already-uploaded / already-paid jobs
+  created before this cutover can finish.
+  They are NEVER assigned to new files.
+*/
+const LEGACY_REPORT_NAMES = [
   "Fadhili Masha",
   "William Nzaka",
   "Bornvince Moses"
 ];
 
-const REPORT_INSTITUTIONS = [
+const LEGACY_REPORT_INSTITUTIONS = [
   "University of Embu",
   "Technical University of Mombasa"
+];
+
+const APPROVED_REPORT_NAMES = [
+  ...REPORT_NAMES,
+  ...LEGACY_REPORT_NAMES
+];
+
+const APPROVED_REPORT_INSTITUTIONS = [
+  ...REPORT_INSTITUTIONS,
+  ...LEGACY_REPORT_INSTITUTIONS
 ];
 
 const COPYLEAKS_ENABLED = readBoolEnv(
@@ -911,6 +939,15 @@ function chooseReportName() {
   ];
 }
 
+// JK_AUTO_REPORT_IDENTITY_V2
+function chooseReportInstitution() {
+  return REPORT_INSTITUTIONS[
+    Math.floor(
+      Math.random() * REPORT_INSTITUTIONS.length
+    )
+  ];
+}
+
 // JK_STRICT_REPORT_IDENTITY_V1
 function requireFileReportIdentity(
   file
@@ -951,7 +988,7 @@ function requireFileReportIdentity(
   }
 
   if (
-    !REPORT_NAMES.includes(
+    !APPROVED_REPORT_NAMES.includes(
       reportName
     )
   ) {
@@ -962,7 +999,7 @@ function requireFileReportIdentity(
   }
 
   if (
-    !REPORT_INSTITUTIONS.includes(
+    !APPROVED_REPORT_INSTITUTIONS.includes(
       institution
     )
   ) {
@@ -2682,7 +2719,7 @@ function adminDashboardKeyboard() {
     ],
     [
       Markup.button.callback(
-        "🏫 Institution",
+        "🎲 Identity Pool",
         "ADMIN_DASH_INSTITUTION"
       ),
       Markup.button.callback(
@@ -2801,20 +2838,7 @@ function similarityFilterModeKeyboard() {
 }
 
 function institutionKeyboard() {
-  return adminBackKeyboard([
-    [
-      Markup.button.callback(
-        "University of Embu",
-        "INSTITUTION_EMBU"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "Technical University of Mombasa",
-        "INSTITUTION_TUM"
-      )
-    ]
-  ]);
+  return adminBackKeyboard();
 }
 
 function clientSimilarityFilterKeyboard() {
@@ -2851,7 +2875,7 @@ function adminDashboardText() {
     "🤖 Bot mode: " + (inactive ? "OFFLINE WINDOW" : "ONLINE"),
     "⚡ Reports: " + reportModeLabel(),
     "🔎 Similarity: " + filterModeLabel(),
-    "🏫 Institution: " + reportSettings.institution,
+    "🎲 Identity: Random per document",
     "🏷️ Discount: " + (discountActive ? "OPEN • " + RESALE_PRICE_KES + " KES" : "CLOSED"),
     "👥 Broadcast users: " + stats.active + " active",
     "",
@@ -2942,7 +2966,7 @@ function adminAllCommandsText() {
     "Report generation",
     "/reportmode - Manual / Admin Approval / Automatic API",
     "/filtermode - Client choice / Always filtered / Always unfiltered",
-    "/institution - Select report institution",
+    "/institution - View automatic identity pool",
     "/copyleaksstatus - Show Copyleaks configuration status",
     "",
     "Support",
@@ -2991,7 +3015,7 @@ async function syncAdminCommandMenu() {
     { command: "syncname", description: "Sync bot display name" },
     { command: "reportmode", description: "Set report generation mode" },
     { command: "filtermode", description: "Set similarity filtering mode" },
-    { command: "institution", description: "Set report institution" },
+    { command: "institution", description: "View automatic identity pool" },
     { command: "copyleaksstatus", description: "Check Copyleaks API status" },
     { command: "reply", description: "Reply to a user" },
     { command: "filebatch", description: "Open report delivery batch" },
@@ -3605,7 +3629,7 @@ function createStoredFileFromDocument(userId, doc) {
     pendingType: null,
     jkSubmissionId: generateJkSubmissionId(),
     reportName: chooseReportName(),
-    reportInstitution: reportSettings.institution
+    reportInstitution: chooseReportInstitution()
   };
 }
 
@@ -5879,9 +5903,7 @@ bot.command(
     }
 
     await ctx.reply(
-      "🏫 REPORT INSTITUTION\n\n" +
-      "Current: " +
-      reportSettings.institution,
+      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Lencho Kelil", "• Ayat Obaidah", "• Jabbar Mutlaq", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
       {
         reply_markup:
           institutionKeyboard()
@@ -6424,9 +6446,7 @@ bot.action(
 
     await showAdminScreen(
       ctx,
-      "🏫 REPORT INSTITUTION\n\n" +
-        "Current: " +
-        reportSettings.institution,
+      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Lencho Kelil", "• Ayat Obaidah", "• Jabbar Mutlaq", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
       institutionKeyboard(),
       true
     );
@@ -6712,20 +6732,16 @@ bot.action(
       );
     }
 
-    reportSettings.institution =
-      "University of Embu";
-
-    saveReportSettings();
+    // Legacy cached button.
+    // Automatic identity mode remains active.
 
     await ctx.answerCbQuery(
-      "Institution updated"
+      "Automatic identity mode is enabled"
     );
 
     await showAdminScreen(
       ctx,
-      "🏫 REPORT INSTITUTION\n\n" +
-        "Current: " +
-        reportSettings.institution,
+      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Lencho Kelil", "• Ayat Obaidah", "• Jabbar Mutlaq", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
       institutionKeyboard(),
       true
     );
@@ -6743,20 +6759,16 @@ bot.action(
       );
     }
 
-    reportSettings.institution =
-      "Technical University of Mombasa";
-
-    saveReportSettings();
+    // Legacy cached button.
+    // Automatic identity mode remains active.
 
     await ctx.answerCbQuery(
-      "Institution updated"
+      "Automatic identity mode is enabled"
     );
 
     await showAdminScreen(
       ctx,
-      "🏫 REPORT INSTITUTION\n\n" +
-        "Current: " +
-        reportSettings.institution,
+      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Lencho Kelil", "• Ayat Obaidah", "• Jabbar Mutlaq", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
       institutionKeyboard(),
       true
     );

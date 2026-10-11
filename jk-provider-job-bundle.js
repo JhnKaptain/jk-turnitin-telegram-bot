@@ -128,6 +128,11 @@ async function buildProviderJobBundle({
 
   const approvedReportNames =
     [
+      "Lencho Kelil",
+      "Ayat Obaidah",
+      "Jabbar Mutlaq",
+
+      // Legacy jobs created before identity cutover
       "Fadhili Masha",
       "William Nzaka",
       "Bornvince Moses"
@@ -135,6 +140,11 @@ async function buildProviderJobBundle({
 
   const approvedInstitutions =
     [
+      "Arsi University",
+      "University of Anbar",
+      "Oromia State University",
+
+      // Legacy jobs created before identity cutover
       "University of Embu",
       "Technical University of Mombasa"
     ];

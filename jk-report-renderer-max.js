@@ -249,6 +249,11 @@ function fileBase(name) {
 // JK_STRICT_RENDER_IDENTITY_V1
 const STRICT_REPORT_NAMES =
   Object.freeze([
+    "Lencho Kelil",
+    "Ayat Obaidah",
+    "Jabbar Mutlaq",
+
+    // Legacy jobs created before identity cutover
     "Fadhili Masha",
     "William Nzaka",
     "Bornvince Moses"
@@ -256,6 +261,11 @@ const STRICT_REPORT_NAMES =
 
 const STRICT_REPORT_INSTITUTIONS =
   Object.freeze([
+    "Arsi University",
+    "University of Anbar",
+    "Oromia State University",
+
+    // Legacy jobs created before identity cutover
     "University of Embu",
     "Technical University of Mombasa"
   ]);
