@@ -1197,7 +1197,7 @@ async function loadBrandFonts(doc) {
     path.join(
       __dirname,
       "assets",
-      "logo.jpg"
+      "logo-reference.png"
     );
 
   if (!fs.existsSync(brandLogoPath)) {
@@ -1208,7 +1208,7 @@ async function loadBrandFonts(doc) {
   }
 
   const brandLogo =
-    await doc.embedJpg(
+    await doc.embedPng(
       fs.readFileSync(
         brandLogoPath
       )
@@ -1270,57 +1270,18 @@ const BRAND_MARK = Object.freeze({
 });
 
 function drawBrandMark(page, f, top) {
-  const image =
-    f?.brandLogo;
-
+  const image = f?.brandLogo;
   if (!image) {
-    throw new Error(
-      "Report logo was not loaded."
-    );
+    throw new Error("Report logo was not loaded.");
   }
 
-  const maxWidth =
-    BRAND_MARK.width;
-
-  const maxHeight =
-    BRAND_MARK.height;
-
-  const scale =
-    Math.min(
-      maxWidth / image.width,
-      maxHeight / image.height
-    );
-
-  const width =
-    image.width * scale;
-
-  const height =
-    image.height * scale;
-
-  const x =
-    BRAND_MARK.x;
-
-  const imageTop =
-    top +
-    (
-      BRAND_MARK.height -
-      height
-    ) / 2;
-
-  const y =
-    page.getHeight() -
-    imageTop -
-    height;
-
-  page.drawImage(
-    image,
-    {
-      x,
-      y,
-      width,
-      height
-    }
-  );
+  // Exact reference image with its original transparency.
+  page.drawImage(image, {
+    x: BRAND_MARK.x,
+    y: page.getHeight() - top - BRAND_MARK.height,
+    width: BRAND_MARK.width,
+    height: BRAND_MARK.height
+  });
 }
 
 function shell(page, f, identity, pageNo, totalPages, label) {
@@ -6005,234 +5966,10 @@ async function drawOriginalPages(
       }
     }
 
-    // JK_SOURCE_RUNNING_HEADER_SUPPRESS_V9
-    //
-    // A Word/PDF source can contain its own
-    // running header very close to the top edge.
-    //
-    // Turnitin's own report chrome occupies this
-    // same narrow band. Official comparison files
-    // show that a standalone source page number
-    // may remain there, but ordinary source
-    // running-header text should not visually
-    // merge into the Turnitin header.
-    //
-    // IMPORTANT:
-    // - do NOT move the page;
-    // - do NOT rescale the page;
-    // - do NOT alter the body margins;
-    // - do NOT remove source page numbers;
-    // - do NOT change AI/similarity coordinates.
-    //
-    // We therefore cover ONLY non-numeric source
-    // text that lies in the extreme top band.
-    //
-    // The right-most source-page area is protected
-    // so a page number remains visible even when
-    // the PDF extractor represents header text and
-    // its tabbed page number in one wide element.
-    if (
-      original.preserveSourcePage &&
-      Array.isArray(
-        original.elements
-      )
-    ) {
-      const sourcePageRight =
-        sourceX +
-        sourceWidth *
-          sourceScale;
-
-      /*
-        Preserve the right-most 84 points.
-
-        In the PBL source this contains the Word
-        page number, while the textual running
-        header is on the left.
-      */
-      const protectedNumberZoneLeft =
-        sourcePageRight -
-        84;
-
-      for (
-        const headerElement of
-          original.elements
-      ) {
-        const headerText =
-          s(
-            headerElement?.text
-          ).trim();
-
-        if (
-          !headerText
-        ) {
-          continue;
-        }
-
-        /*
-          Pure page-number elements are always
-          preserved.
-        */
-        const isPurePageNumber =
-          /^\d{1,4}$/.test(
-            headerText
-          ) ||
-          /^[ivxlcdm]{1,8}$/i.test(
-            headerText
-          );
-
-        if (
-          isPurePageNumber
-        ) {
-          continue;
-        }
-
-        /*
-          Require actual alphabetic content.
-          This avoids treating punctuation or
-          document artefacts as a running header.
-        */
-        if (
-          !/[A-Za-z]/.test(
-            headerText
-          )
-        ) {
-          continue;
-        }
-
-        const rawBottom =
-          Number(
-            headerElement
-              ?.style
-              ?.bottom ||
-            0
-          );
-
-        const rawHeight =
-          Math.max(
-            1,
-            Number(
-              headerElement
-                ?.style
-                ?.height ||
-              headerElement
-                ?.size ||
-              11
-            )
-          );
-
-        const topFromSource =
-          sourceHeight -
-          (
-            rawBottom +
-            rawHeight
-          );
-
-        /*
-          The measured PBL running header begins
-          at about 36.8 pt from the top.
-
-          Normal PBL body text begins around
-          73 pt, matching the reference reports.
-
-          Therefore only the extreme top strip
-          is considered source running-header
-          territory.
-        */
-        if (
-          topFromSource >= 55
-        ) {
-          continue;
-        }
-
-        const maskX =
-          sourceX +
-          Number(
-            headerElement
-              ?.style
-              ?.left ||
-            0
-          ) *
-          sourceScale;
-
-        const maskY =
-          sourceY +
-          rawBottom *
-          sourceScale;
-
-        const rawWidth =
-          Math.max(
-            1,
-            Number(
-              headerElement
-                ?.style
-                ?.width ||
-              0
-            )
-          );
-
-        const naturalRight =
-          maskX +
-          rawWidth *
-            sourceScale;
-
-        /*
-          Never paint into the protected
-          page-number zone.
-        */
-        const maskRight =
-          Math.min(
-            naturalRight + 1.2,
-            protectedNumberZoneLeft
-          );
-
-        const maskLeft =
-          Math.max(
-            sourceX,
-            maskX - 1.2
-          );
-
-        const maskWidth =
-          maskRight -
-          maskLeft;
-
-        if (
-          maskWidth <= 0
-        ) {
-          continue;
-        }
-
-        const maskHeight =
-          Math.max(
-            1,
-            rawHeight *
-              sourceScale
-          ) +
-          1.6;
-
-        page.drawRectangle({
-          x:
-            maskLeft,
-
-          y:
-            Math.max(
-              sourceY,
-              maskY - 0.8
-            ),
-
-          width:
-            maskWidth,
-
-          height:
-            maskHeight,
-
-          color:
-            hex(
-              C.white
-            )
-        });
-      }
-    }
-
+    // JK_SOURCE_HEADER_PRESERVE_V10
+    // Keep the original document header visible.
+    // AI page-number protection remains separate.
+    // Draw the report shell using its existing placement.
     shell(
       page,
       f,
