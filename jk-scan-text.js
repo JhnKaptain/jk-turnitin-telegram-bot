@@ -616,7 +616,7 @@ function buildSimilarityInput(
 */
 
 // JK_AI_QUOTES_INCLUDED_REFERENCES_EXCLUDED_V1
-function buildAiInput(
+function buildAiInputWithoutRunningMetadata(
   rawText
 ) {
   const source =
@@ -1114,6 +1114,13 @@ function summarizePreparedInput(
   Exports
   --------------------------------------------------
 */
+
+// JK_AI_RUNNING_METADATA_EXCLUSION_V1
+function buildAiInput(rawText, document) {
+  const prepared = buildAiInputWithoutRunningMetadata(rawText);
+  return require("./jk-ai-running-metadata.js")
+    .excludeAiRunningMetadata(prepared, document);
+}
 
 module.exports = {
   FILTER_MODE_FILTERED,

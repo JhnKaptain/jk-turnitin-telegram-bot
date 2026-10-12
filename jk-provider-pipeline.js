@@ -709,9 +709,7 @@ async function runProviderPipeline({
     );
 
   const aiPrepared =
-    buildAiInput(
-      document.text
-    );
+    buildAiInput(document.text, document);
 
   const eligibility =
     aiEligibility(

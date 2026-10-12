@@ -1,4 +1,8 @@
 "use strict";
+const {
+  classifyAiRunningMetadata,
+  countAiPositiveSentences
+} = require("./jk-ai-running-metadata.js");
 
 const fs = require("fs");
 const path = require("path");
@@ -3788,7 +3792,7 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
   drawRule(page, 148);
 
   if (!low && ai.available) {
-    const count = value >= 20 ? Math.max(1, ai.ranges.length) : 0;
+    const count = value >= 20 ? countAiPositiveSentences(bundle, ai) : 0;
 
     drawPngTop(page, icons.aiRobot, 36, 168, 12, 12);
     const countText =
@@ -4049,6 +4053,10 @@ async function drawOriginalPages(
   startPageNo,
   totalPages
 ) {
+  const aiProtectedElements = new Set(
+    classifyAiRunningMetadata(originalPages).map(entry => entry.item)
+  );
+
   const id = bundle.reportIdentity || {};
   let pageNo = startPageNo;
 
@@ -4368,6 +4376,10 @@ async function drawOriginalPages(
         );
       };
 
+    const isSourceAiProtectedElement = element =>
+      aiProtectedElements.has(element) ||
+      isSourcePageNumberElement(element);
+
     const markerPlaced = new Set();
 
     // JK_AI_UNIFORM_GAP_PAINT_V3
@@ -4398,7 +4410,7 @@ async function drawOriginalPages(
           original.elements
       ) {
         if (
-          isSourcePageNumberElement(
+          isSourceAiProtectedElement(
             aiElement
           )
         ) {
@@ -5334,7 +5346,7 @@ async function drawOriginalPages(
       const relevant =
               (
                 kind !== "AI" ||
-                !isSourcePageNumberElement(
+                !isSourceAiProtectedElement(
                   element
                 )
               ) &&
