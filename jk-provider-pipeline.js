@@ -265,11 +265,11 @@ function normalizeQuetextResult(
   prepared
 ) {
   const matches =
-    Array.isArray(
-      result?.matches
-    )
-      ? result.matches
-      : [];
+    (Array.isArray(result?.matches) ? result.matches : [])
+      .map(match =>
+        require("./jk-match-offsets.js")
+          .alignQuetextMatch(prepared.text, match)
+      );
 
   const mappedRanges =
     [];
