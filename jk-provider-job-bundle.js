@@ -128,8 +128,8 @@ async function buildProviderJobBundle({
 
   const approvedReportNames =
     [
-      "Lencho Kelil",
-      "Ayat Obaidah",
+      "Author Author",
+      "User User",
       "Jabbar Mutlaq"
     ];
 

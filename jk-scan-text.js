@@ -579,7 +579,7 @@ function buildFilteredInput(
   --------------------------------------------------
 */
 
-function buildSimilarityInput(
+function buildSimilarityInputBeforeReferenceSections(
   rawText,
   mode
 ) {
@@ -616,7 +616,7 @@ function buildSimilarityInput(
 */
 
 // JK_AI_QUOTES_INCLUDED_REFERENCES_EXCLUDED_V1
-function buildAiInputWithoutRunningMetadata(
+function buildAiInputBeforeReferenceSections(
   rawText
 ) {
   const source =
@@ -1120,6 +1120,31 @@ function buildAiInput(rawText, document) {
   const prepared = buildAiInputWithoutRunningMetadata(rawText);
   return require("./jk-ai-running-metadata.js")
     .excludeAiRunningMetadata(prepared, document);
+}
+
+// JK_COMPLETE_REFERENCE_SECTIONS_V1
+function buildSimilarityInput(rawText, mode) {
+  const normalized = safeText(mode).trim().toUpperCase();
+
+  if (normalized !== FILTER_MODE_FILTERED) {
+    return buildSimilarityInputBeforeReferenceSections(rawText, mode);
+  }
+
+  return require("./jk-reference-sections.js")
+    .prepareWithoutReferences(
+      rawText,
+      text => buildSimilarityInputBeforeReferenceSections(text, mode),
+      findBibliographyStart(safeText(rawText))
+    );
+}
+
+function buildAiInputWithoutRunningMetadata(rawText) {
+  return require("./jk-reference-sections.js")
+    .prepareWithoutReferences(
+      rawText,
+      text => buildAiInputBeforeReferenceSections(text),
+      findBibliographyStart(safeText(rawText))
+    );
 }
 
 module.exports = {

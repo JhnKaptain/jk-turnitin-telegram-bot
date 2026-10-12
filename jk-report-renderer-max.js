@@ -328,8 +328,8 @@ function fileBase(name) {
 // JK_STRICT_RENDER_IDENTITY_V1
 const STRICT_REPORT_NAMES =
   Object.freeze([
-    "Lencho Kelil",
-    "Ayat Obaidah",
+    "Author Author",
+    "User User",
     "Jabbar Mutlaq"
   ]);
 
