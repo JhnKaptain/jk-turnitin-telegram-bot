@@ -9067,6 +9067,7 @@ async function submitPaidJobToProviders(
   let failedCount = 0;
 
   const errors = [];
+  let manualCount = 0; // JK_API_WORD_LIMIT_MANUAL_ROUTE_V1
 
   for (
     let i = 0;
@@ -9082,6 +9083,11 @@ async function submitPaidJobToProviders(
     );
 
     if (!file) {
+      continue;
+    }
+
+    if (String(file.providerStatus || "").toUpperCase() === "MANUAL_REQUIRED") {
+      manualCount += 1;
       continue;
     }
 
@@ -9410,6 +9416,65 @@ async function submitPaidJobToProviders(
         bundlePath
       );
     } catch (err) {
+      if (err?.code === "API_MANUAL_REVIEW_REQUIRED") {
+        manualCount += 1;
+
+        file.providerStatus = "MANUAL_REQUIRED";
+        file.manualReviewRequired = true;
+        file.manualReviewRequestedAt = Date.now();
+        file.manualReviewReason = String(
+          err.message || "Word limit exceeded"
+        );
+
+        file.apiWordCount =
+          Number.isFinite(Number(err.wordCount))
+            ? Number(err.wordCount)
+            : null;
+
+        file.apiWordCounts =
+          Array.isArray(err.apiWordCounts)
+            ? err.apiWordCounts
+            : [];
+
+        file.providerError = null;
+
+        savePaidJobs();
+
+        try {
+          await sendAdminMessage(
+            "MANUAL REVIEW REQUIRED - API BLOCKED\n" +
+            "User ID: " + job.userId + "\n" +
+            "File: " + safeText(file.file_name || "N/A") + "\n" +
+            "Words: " + String(file.apiWordCount ?? "Unverified") + "\n" +
+            "Reason: " + file.manualReviewReason + "\n" +
+            "Quetext and Sapling were NOT called for this file.\n" +
+            "Manual delivery: /filebatch " + job.userId
+          );
+        } catch (notifyError) {
+          console.error(
+            "Admin manual-review alert failed:",
+            notifyError
+          );
+        }
+
+        if (Number(job.userId) !== Number(ADMIN_ID)) {
+          try {
+            await bot.telegram.sendMessage(
+              job.userId,
+              "Your document requires manual checking. " +
+              "Our team has been notified and will handle the report."
+            );
+          } catch (notifyError) {
+            console.error(
+              "Customer manual-review alert failed:",
+              notifyError
+            );
+          }
+        }
+
+        continue;
+      }
+
       failedCount += 1;
 
       file.providerStatus =
@@ -9458,10 +9523,13 @@ async function submitPaidJobToProviders(
   if (
     !JK_PROVIDER_LIVE
   ) {
-    job.status =
-      failedCount
-        ? "PROVIDER_DRY_RUN_PARTIAL"
-        : "PROVIDER_DRY_RUN_READY";
+    job.status = manualCount
+      ? (completedCount ? "PROVIDER_DRY_RUN_PARTIAL_MANUAL" : "MANUAL_REQUIRED")
+      : (failedCount ? "PROVIDER_DRY_RUN_PARTIAL" : "PROVIDER_DRY_RUN_READY");
+  } else if (manualCount) {
+    job.status = (completedCount || failedCount)
+      ? "API_PARTIAL_MANUAL"
+      : "MANUAL_REQUIRED";
   } else if (
     failedCount
   ) {
@@ -9486,6 +9554,7 @@ async function submitPaidJobToProviders(
     completedCount,
 
     failedCount,
+    manualCount,
 
     errors
   };

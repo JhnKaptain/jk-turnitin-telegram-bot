@@ -718,6 +718,95 @@ async function runProviderPipeline({
       aiPrepared
     );
 
+  // JK_SHARED_API_WORD_GUARD_V1
+  // Block BOTH providers before any paid API request.
+
+  const API_WORD_LIMIT_EXCLUSIVE = 4800;
+
+  function countApiInputWords(value) {
+    const content = String(value ?? "")
+      .normalize("NFKC")
+      .trim();
+
+    if (!content) return 0;
+
+    const whitespaceWords =
+      (content.match(/\S+/gu) || []).length;
+
+    const lexicalWords =
+      (content.match(/[\p{L}\p{N}]+/gu) || []).length;
+
+    return Math.max(
+      whitespaceWords,
+      lexicalWords
+    );
+  }
+
+  const apiTextChecks = [
+    {
+      name: "Original document",
+      content: document.text
+    }
+  ];
+
+  if (runSimilarity) {
+    apiTextChecks.push({
+      name: "Quetext",
+      content: similarityPrepared.text
+    });
+  }
+
+  if (runAi) {
+    apiTextChecks.push({
+      name: "Sapling",
+      content: aiPrepared.text
+    });
+  }
+
+  const apiWordCounts = apiTextChecks.map(
+    item => ({
+      name: item.name,
+      words: countApiInputWords(item.content)
+    })
+  );
+
+  const extractorWordCount =
+    Number(document.wordCount);
+
+  const largestWordCount = Math.max(
+    ...apiWordCounts.map(item => item.words),
+    Number.isFinite(extractorWordCount)
+      ? extractorWordCount
+      : 0
+  );
+
+  const emptyInput = apiWordCounts.find(
+    item => item.words === 0 &&
+    item.name !== "Sapling"
+  );
+
+  if (
+    largestWordCount >= API_WORD_LIMIT_EXCLUSIVE ||
+    emptyInput
+  ) {
+    const reason = emptyInput
+      ? "Document text could not be verified."
+      : "Document exceeds automatic API word limit.";
+
+    const error = new Error(
+      reason +
+      " Count: " + largestWordCount +
+      " words. API requires fewer than 4800."
+    );
+
+    error.code = "API_MANUAL_REVIEW_REQUIRED";
+    error.wordCount = largestWordCount;
+    error.apiWordCounts = apiWordCounts;
+    error.apiBlocked = true;
+
+    throw error;
+  }
+
   const result = {
     generatedAt:
       new Date()
