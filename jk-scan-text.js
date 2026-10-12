@@ -1118,8 +1118,11 @@ function summarizePreparedInput(
 // JK_AI_RUNNING_METADATA_EXCLUSION_V1
 function buildAiInput(rawText, document) {
   const prepared = buildAiInputWithoutRunningMetadata(rawText);
-  return require("./jk-ai-running-metadata.js")
+  const excluded = require("./jk-ai-running-metadata.js")
     .excludeAiRunningMetadata(prepared, document);
+
+  return require("./jk-ai-line-wraps.js")
+    .joinAiVisualLineWraps(excluded, document);
 }
 
 // JK_COMPLETE_REFERENCE_SECTIONS_V1
