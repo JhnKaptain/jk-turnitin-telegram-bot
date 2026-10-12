@@ -587,20 +587,19 @@ function normalizeSaplingResult(
     only AI-positive sentence ranges in
     result.ranges.
 
-    Sapling offsets are Unicode code points.
+    Returned sentence text is verified before UTF-16 source mapping.
   */
   const providerRanges =
-    Array.isArray(
-      result?.ranges
-    )
-      ? result.ranges
-      : [];
+    (Array.isArray(result?.ranges) ? result.ranges : [])
+      .map(range =>
+        require("./jk-ai-match-offsets.js")
+          .alignSaplingRange(prepared.text, range)
+      );
 
   const mappedRanges =
     mapProviderRangesToSource(
       prepared,
-      providerRanges,
-      "codepoint"
+      providerRanges, "utf16"
     );
 
   return {
