@@ -9498,20 +9498,7 @@ async function submitPaidJobToProviders(
           );
         }
 
-        if (Number(job.userId) !== Number(ADMIN_ID)) {
-          try {
-            await bot.telegram.sendMessage(
-              job.userId,
-              "Your document requires manual checking. " +
-              "Our team has been notified and will handle the report."
-            );
-          } catch (notifyError) {
-            console.error(
-              "Customer manual-review alert failed:",
-              notifyError
-            );
-          }
-        }
+        // Manual-review notifications are admin-only.
 
         continue;
       }
