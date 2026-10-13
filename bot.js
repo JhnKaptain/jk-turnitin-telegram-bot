@@ -13867,6 +13867,21 @@ app.listen(port, async () => {
     5000
   );
 
+  // JK_FILE_RETENTION_48H_V1
+  require("./jk-file-retention.js").startFileCleanup({
+    dataDir: DATA_DIR,
+    getPaidJobs: () => paidJobs,
+    persist: () => {
+      const temporaryPath = PAID_JOBS_FILE + ".cleanup.tmp";
+      fs.writeFileSync(
+        temporaryPath,
+        JSON.stringify(paidJobs, null, 2),
+        "utf8"
+      );
+      fs.renameSync(temporaryPath, PAID_JOBS_FILE);
+    }
+  });
+
   startApiDeliveryRecoveryScheduler();
 });
 
