@@ -9086,6 +9086,25 @@ async function submitPaidJobToProviders(
       continue;
     }
 
+    if (
+      file.providerAutoResubmitBlocked ||
+      (
+        String(file.providerStatus || "").toUpperCase() === "FAILED" &&
+        /Quetext match cannot be aligned safely|Sapling offset has ambiguous interpretations/.test(
+          String(file.providerError || "")
+        )
+      )
+    ) {
+      manualCount += 1;
+      file.providerStatus = "MANUAL_REQUIRED";
+      file.providerAutoResubmitBlocked = true;
+      file.manualReviewRequired = true;
+      file.manualReviewReason = file.manualReviewReason ||
+        "Previous alignment failure. Do not resubmit; review stored results or use manual reports.";
+      savePaidJobs();
+      continue;
+    }
+
     if (String(file.providerStatus || "").toUpperCase() === "MANUAL_REQUIRED") {
       manualCount += 1;
       continue;
@@ -9416,6 +9435,39 @@ async function submitPaidJobToProviders(
         bundlePath
       );
     } catch (err) {
+      // JK_PROVIDER_RESULTS_MANUAL_REVIEW_V1
+      if (err?.code === "PROVIDER_RESULTS_REVIEW_REQUIRED") {
+        manualCount += 1;
+        file.providerStatus = "MANUAL_REQUIRED";
+        file.manualReviewRequired = true;
+        file.manualReviewRequestedAt = Date.now();
+        file.manualReviewReason = String(
+          err.message || "Provider alignment needs review"
+        );
+        file.providerResultsFile = err.providerResultsPath || null;
+        file.providerError = file.manualReviewReason;
+        file.providerAutoResubmitBlocked = true;
+        savePaidJobs();
+
+        try {
+          await sendAdminMessage(
+            "PROVIDER RESULTS REQUIRE REVIEW - DO NOT RESUBMIT\n" +
+            "File: " + safeText(file.file_name || "N/A") + "\n" +
+            "Reason: " + file.manualReviewReason + "\n" +
+            "Saved results: " +
+            safeText(file.providerResultsFile || "N/A") + "\n" +
+            "Use stored results for recovery. Another provider attempt is blocked."
+          );
+        } catch (notifyError) {
+          console.error(
+            "Provider review alert failed:",
+            notifyError?.message || notifyError
+          );
+        }
+
+        continue;
+      }
+
       if (err?.code === "API_MANUAL_REVIEW_REQUIRED") {
         manualCount += 1;
 

@@ -690,6 +690,21 @@ async function runProviderPipeline({
       sourcePath
     );
 
+  // JK_PROVIDER_RESULTS_CHECKPOINT_V1
+  const providerResultsPath = path.resolve(
+    (outputPath || sourcePath) + ".provider-results.json"
+  );
+
+  if (live && fs.existsSync(providerResultsPath)) {
+    const error = new Error(
+      "Stored provider results already exist. Review or rebuild them; do not resubmit."
+    );
+    error.code = "PROVIDER_RESULTS_REVIEW_REQUIRED";
+    error.providerResultsPath = providerResultsPath;
+    error.noProviderResubmission = true;
+    throw error;
+  }
+
   /*
     1. Canonical extraction.
   */
@@ -993,6 +1008,46 @@ async function runProviderPipeline({
       tasks
     );
 
+  const checkpoint = {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    sourcePath,
+    similarityMode,
+    runSimilarity,
+    runAi,
+    canonicalDocument: document,
+    preparedInputs: {
+      similarity: similarityPrepared,
+      ai: aiPrepared
+    },
+    providerResults: Object.fromEntries(
+      taskNames.map((name, i) => [
+        name,
+        settled[i].status === "fulfilled"
+          ? {
+              status: "fulfilled",
+              value: settled[i].value
+            }
+          : {
+              status: "rejected",
+              error: safeText(
+                settled[i].reason?.message || settled[i].reason
+              )
+            }
+      ])
+    )
+  };
+
+  fs.mkdirSync(path.dirname(providerResultsPath), { recursive: true });
+
+  fs.writeFileSync(
+    providerResultsPath,
+    JSON.stringify(checkpoint, null, 2),
+    { encoding: "utf8", flag: "wx" }
+  );
+
+  try {
+
   for (
     let i = 0;
     i <
@@ -1093,6 +1148,17 @@ async function runProviderPipeline({
         };
       }
     }
+  }
+
+  } catch (error) {
+    const review = new Error(
+      "Provider result processing requires review: " +
+      safeText(error?.message || error)
+    );
+    review.code = "PROVIDER_RESULTS_REVIEW_REQUIRED";
+    review.providerResultsPath = providerResultsPath;
+    review.noProviderResubmission = true;
+    throw review;
   }
 
   /*
