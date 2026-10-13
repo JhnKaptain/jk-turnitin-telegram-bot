@@ -1121,8 +1121,12 @@ function buildAiInput(rawText, document) {
   const excluded = require("./jk-ai-running-metadata.js")
     .excludeAiRunningMetadata(prepared, document);
 
+  // JK_AI_STRUCTURAL_HEADINGS_V1
+  const prose = require("./jk-ai-headings.js")
+    .excludeAiStructuralHeadings(excluded, document);
+
   return require("./jk-ai-line-wraps.js")
-    .joinAiVisualLineWraps(excluded, document);
+    .joinAiVisualLineWraps(prose, document);
 }
 
 // JK_COMPLETE_REFERENCE_SECTIONS_V1
