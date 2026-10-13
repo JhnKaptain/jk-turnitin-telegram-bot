@@ -48,6 +48,8 @@ async function buildProviderJobBundle({
   runAi = true,
 
   live = false
+,
+  onQuetextSubmitted = null
 } = {}) {
   if (!sourcePath) {
     throw new Error(
@@ -218,6 +220,7 @@ async function buildProviderJobBundle({
   const result =
     await runProviderPipeline({
       sourcePath,
+      onQuetextSubmitted,
 
       similarityMode,
 

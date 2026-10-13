@@ -9021,6 +9021,22 @@ function ensureProviderRunDir(
   return dir;
 }
 
+// JK_CONCISE_PROVIDER_ALERTS_V1
+async function updateProviderAdminStatus(job, file, stage, rendered, remainingMs, error) {
+  return require("./jk-provider-admin-status.js").updateAdminStatus({
+    telegram: bot.telegram,
+    adminId: ADMIN_ID,
+    job,
+    file,
+    stage,
+    rendered,
+    remainingMs,
+    error,
+    runAi: shouldRunAiForFile(file),
+    save: savePaidJobs
+  });
+}
+
 async function submitPaidJobToProviders(
   jobId
 ) {
@@ -9262,6 +9278,12 @@ async function submitPaidJobToProviders(
       const result =
         await buildProviderJobBundle({
           sourcePath,
+          onQuetextSubmitted: async ({ reportId }) => {
+            file.providerQuetextReportId = reportId;
+            file.providerSubmittedAt = Date.now();
+            savePaidJobs();
+            await updateProviderAdminStatus(job, file, "submitted");
+          },
 
           outputPath:
             bundlePath,
@@ -9378,32 +9400,6 @@ async function submitPaidJobToProviders(
         );
       }
 
-      // JK_SIMILARITY_FINAL_STATUS_V1
-      if (
-        !file
-          .apiSimilarityFinalStatusSentAt
-      ) {
-        await sendAdminMessage(
-          "✅ SIMILARITY CHECK COMPLETE\n" +
-          "File: " +
-          safeText(
-            file.file_name ||
-            "N/A"
-          ) +
-          "\nSimilarity: " +
-          Math.round(
-            similarityPercent
-          ) +
-          "%"
-        );
-
-        file
-          .apiSimilarityFinalStatusSentAt =
-          Date.now();
-
-        savePaidJobs();
-      }
-
       /*
         A later successful attempt clears
         stale failure information.
@@ -9450,14 +9446,7 @@ async function submitPaidJobToProviders(
         savePaidJobs();
 
         try {
-          await sendAdminMessage(
-            "PROVIDER RESULTS REQUIRE REVIEW - DO NOT RESUBMIT\n" +
-            "File: " + safeText(file.file_name || "N/A") + "\n" +
-            "Reason: " + file.manualReviewReason + "\n" +
-            "Saved results: " +
-            safeText(file.providerResultsFile || "N/A") + "\n" +
-            "Use stored results for recovery. Another provider attempt is blocked."
-          );
+          await updateProviderAdminStatus(job, file, "review");
         } catch (notifyError) {
           console.error(
             "Provider review alert failed:",
@@ -9556,19 +9545,7 @@ async function submitPaidJobToProviders(
 
       savePaidJobs();
 
-      await sendAdminMessage(
-        "⚠️ PROVIDER ATTEMPT FAILED\n" +
-        "File: " +
-        safeText(
-          file.file_name ||
-          "N/A"
-        ) +
-        "\nError: " +
-        safeText(
-          err?.message ||
-          err
-        )
-      );
+      await updateProviderAdminStatus(job, file, "failed", null, 0, err?.message || err);
     }
   }
 
@@ -12040,6 +12017,7 @@ async function renderAndDeliverApiReports(
       });
 
     if (
+      !neutralJob &&
       shouldRunAiForFile(file) &&
       !file.apiAiFinalStatusSentAt
     ) {
@@ -12130,11 +12108,17 @@ async function renderAndDeliverApiReports(
         Date.now()
       );
 
+    if (neutralJob) {
+      await updateProviderAdminStatus(
+        job, file, "ready", rendered, remainingDeliveryWaitMs
+      );
+    }
+
     if (
       remainingDeliveryWaitMs > 0
     ) {
       if (
-        !file.apiDeliveryHoldNotifiedAt
+        !neutralJob && !file.apiDeliveryHoldNotifiedAt
       ) {
         await sendAdminMessage(
           "⏳ REPORTS READY\n" +
@@ -12289,6 +12273,9 @@ async function renderAndDeliverApiReports(
 
     savePaidJobs();
 
+    if (neutralJob) {
+      await updateProviderAdminStatus(job, file, "delivered", rendered);
+    } else {
     await sendAdminMessage(
       "✅ API REPORTS DELIVERED\n" +
         "User: " +
@@ -12311,6 +12298,7 @@ async function renderAndDeliverApiReports(
             : "NO"
         )
     );
+    }
   } catch (err) {
     file.apiReportDeliveryStatus =
       "FAILED";
@@ -12327,6 +12315,11 @@ async function renderAndDeliverApiReports(
 
     savePaidJobs();
 
+    if (isProviderNeutralJob(job)) {
+      await updateProviderAdminStatus(
+        job, file, "failed", null, 0, err?.message || err
+      );
+    } else {
     await sendAdminMessage(
       "❌ API REPORT RENDER/DELIVERY FAILED\n" +
         "User: " +
@@ -12342,6 +12335,7 @@ async function renderAndDeliverApiReports(
           err
         )
     );
+    }
 
     throw err;
   } finally {

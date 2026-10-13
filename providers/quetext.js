@@ -723,13 +723,23 @@ async function checkPlagiarism({
   title,
   pollMs,
   timeoutMs,
-  onProgress
+  onProgress,
+  onSubmitted = null
 }) {
   const created =
     await createPlagiarismReport({
       text,
       title
     });
+
+  // JK_PROVIDER_SUBMITTED_NOTICE_V1
+  if (typeof onSubmitted === "function") {
+    try {
+      await onSubmitted({ provider: "quetext", reportId: created.reportId });
+    } catch (error) {
+      console.error("Submission notice failed:", error?.message || error);
+    }
+  }
 
   const raw =
     await waitForPlagiarismReport(

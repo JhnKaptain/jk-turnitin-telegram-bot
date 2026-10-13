@@ -684,6 +684,8 @@ async function runProviderPipeline({
 
   onQuetextProgress =
     null
+,
+  onQuetextSubmitted = null
 }) {
   sourcePath =
     path.resolve(
@@ -977,6 +979,8 @@ async function runProviderPipeline({
           fileTitle(
             sourcePath
           ),
+
+        onSubmitted: onQuetextSubmitted,
 
         onProgress:
           typeof onQuetextProgress ===

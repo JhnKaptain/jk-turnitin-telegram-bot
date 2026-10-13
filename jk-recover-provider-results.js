@@ -211,6 +211,12 @@ function parseArgs(args) {
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
 
+    if (flag === "--send-admin") {
+      options.sendAdmin = true;
+      options.rebuild = true;
+      continue;
+    }
+
     if (flag === "--rebuild") {
       options.rebuild = true;
       continue;
@@ -423,6 +429,15 @@ async function main() {
   }
 
   const options = parseArgs(process.argv.slice(2));
+
+  if (options.sendAdmin) {
+    assert.ok(process.env.BOT_TOKEN, "BOT_TOKEN is missing.");
+    const adminId = Number(process.env.ADMIN_ID || "6569201830");
+    assert.ok(
+      Number.isSafeInteger(adminId) && adminId > 0,
+      "Invalid ADMIN_ID."
+    );
+  }
   const checkpointPath = path.resolve(options.checkpoint);
   const checkpoint = JSON.parse(
     fs.readFileSync(checkpointPath, "utf8")
@@ -526,6 +541,34 @@ async function main() {
     "Similarity PDF not generated."
   );
 
+  // JK_RECOVERY_SEND_ADMIN_V1
+  if (options.sendAdmin) {
+    const { Telegraf } = require("telegraf");
+    const telegram = new Telegraf(process.env.BOT_TOKEN).telegram;
+    const adminId = Number(process.env.ADMIN_ID || "6569201830");
+
+    for (const filename of [
+      result.similarityPath,
+      result.aiPath
+    ].filter(Boolean)) {
+      assert.ok(fs.existsSync(filename), "Preview PDF missing.");
+
+      await telegram.sendDocument(
+        adminId,
+        {
+          source: fs.createReadStream(filename),
+          filename: path.basename(filename)
+        },
+        {
+          caption:
+            "Recovered preview for admin review. Client delivery has not been triggered."
+        }
+      );
+    }
+
+    console.log("Recovered PDFs sent only to admin chat.");
+  }
+
   console.log("Similarity PDF:", result.similarityPath);
   console.log(
     "AI PDF:",
@@ -534,7 +577,7 @@ async function main() {
 
   console.log(
     "Preview only. Original results and job store unchanged. " +
-    "No provider requests or Telegram messages."
+    "No provider requests. Client delivery was not triggered."
   );
 }
 
