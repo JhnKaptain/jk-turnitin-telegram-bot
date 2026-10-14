@@ -1289,7 +1289,7 @@ function drawBrandMark(page, f, top) {
 }
 
 function shell(page, f, identity, pageNo, totalPages, label) {
-  if (identity.__adminLowScoreReview) label = "Sapling low-score review";
+  if (identity.__adminLowScoreReview) label = "AI HIGHLIGHTS";
   const pageWidth =
     page.getWidth();
 
@@ -1533,8 +1533,8 @@ function drawCover(
     bundle.reportIdentity ||
     {};
   if (bundle.__adminLowScoreReview) {
-    shell(page, f, id, pageNo, totalPages, "Sapling low-score review");
-    drawTextTop(page, "Supplementary AI Review", 36, 100, 20, f.lexSemi, C.ink);
+    shell(page, f, id, pageNo, totalPages, "AI HIGHLIGHTS");
+    drawTextTop(page, "AI HIGHLIGHTS", 36, 100, 20, f.lexSemi, C.ink);
     drawTextTop(page, "Sapling - result below 20%", 36, 135, 12, f.notoSemi, C.ink);
     drawWrappedTop(page, String(id.filename || "Document"), 36, 175, 540, 12, f.noto, C.ink, 5, 5);
     drawTextTop(page, "Saved AI result: " + String(bundle.aiDetection.percent) + "%", 36, 260, 12, f.notoSemi, C.ink);
@@ -3748,7 +3748,7 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
     !ai.available
       ? "AI detection unavailable"
       : review
-        ? String(ai.percent) + "% - Sapling review"
+        ? String(ai.percent) + "% - AI HIGHLIGHTS"
       : low
         ? "*% detected as AI"
         : `${fmtPct(value)} detected as AI`;
@@ -6333,7 +6333,7 @@ async function renderAi(
     await PDFDocument.create();
 
   doc.setTitle(
-    bundle.__adminLowScoreReview ? "JK Sapling Low-Score AI Review" : "JK AI Writing Report"
+    bundle.__adminLowScoreReview ? "AI HIGHLIGHTS" : "JK AI Writing Report"
   );
 
   doc.setSubject(

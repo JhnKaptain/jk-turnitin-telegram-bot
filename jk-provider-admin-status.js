@@ -72,7 +72,7 @@ function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
     const escaped = Array.from(bundlePath, c =>
       [34, 36, 92, 96].includes(c.charCodeAt(0)) ? String.fromCharCode(92) + c : c
     ).join("");
-    lines.push("Low-score AI review (admin only, no rescan):");
+    lines.push("AI HIGHLIGHTS (admin only, no rescan):");
     lines.push('node jk-low-ai-review.cjs --bundle "' + escaped + '"');
   }
 

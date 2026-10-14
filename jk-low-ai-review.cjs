@@ -81,7 +81,7 @@ async function main() {
   const percent = validateBundle(bundle);
   // Read once and pass this exact in-memory copy to the renderer.
   const outputDir = fs.mkdtempSync(path.join(path.dirname(bundlePath), "admin-low-ai-review-"));
-  const outputPath = path.join(outputDir, "Sapling_Low_Score_AI_Review.pdf");
+  const outputPath = path.join(outputDir, "AI_HIGHLIGHTS.pdf");
   await require("./jk-report-renderer-max.js").renderAdminLowScoreAiReview({ bundle, bundlePath, outputPath });
   console.log("Review PDF:", outputPath);
   await sendAdmin(outputPath,
