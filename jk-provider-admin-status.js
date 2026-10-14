@@ -98,7 +98,10 @@ async function updateAdminStatus(options) {
   const { telegram, adminId, file, save } = options;
   const text = summary(options);
 
-  const replyMarkup = require("./jk-ai-highlights-button.cjs").replyMarkup(options);
+  const replyMarkup = { inline_keyboard: [
+    ...require("./jk-ai-highlights-button.cjs").replyMarkup(options).inline_keyboard,
+    ...require("./jk-provider-recovery-button.cjs").replyMarkup(options).inline_keyboard
+  ] };
   const markupKey = JSON.stringify(replyMarkup);
   if (file.providerAdminStatusText === text &&
       file.providerAdminStatusMarkup === markupKey) return true;

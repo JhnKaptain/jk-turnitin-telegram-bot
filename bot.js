@@ -9028,6 +9028,12 @@ require("./jk-ai-highlights-button.cjs").register(bot, {
   getJobs: () => paidJobs
 });
 
+// JK_ADMIN_RECOVERY_BUTTON_V1
+require("./jk-provider-recovery-button.cjs").register(bot, {
+  adminId: ADMIN_ID,
+  getJobs: () => paidJobs
+});
+
 async function updateProviderAdminStatus(job, file, stage, rendered, remainingMs, error) {
   return require("./jk-provider-admin-status.js").updateAdminStatus({
     telegram: bot.telegram,
@@ -12267,7 +12273,7 @@ async function renderAndDeliverApiReports(
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;") +
             (starred
-              ? "\n\n?? Your AI report displays *% because the result is below 20%. If you would like AI HIGHLIGHTS, they <b>MAY</b> be available on request through support."
+              ? "\n\nYour AI report displays *% because the result is below 20%. AI HIGHLIGHTS <b>MAY</b> be available on request through customer support."
               : "");
 
           await bot.telegram.sendMessage(
