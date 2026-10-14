@@ -8485,6 +8485,18 @@ bot.action("STK_RESEND", async (ctx) => {
 // =====================
 // TEXT HANDLER
 // =====================
+// JK_ADMIN_AI_HIGHLIGHTS_BUTTON_V1
+require("./jk-ai-highlights-button.cjs").register(bot, {
+  adminId: ADMIN_ID,
+  getJobs: () => paidJobs
+});
+
+// JK_ADMIN_RECOVERY_BUTTON_V1
+require("./jk-provider-recovery-button.cjs").register(bot, {
+  adminId: ADMIN_ID,
+  getJobs: () => paidJobs
+});
+
 bot.on("text", async (ctx) => {
   const user = ctx.from;
   const text = (ctx.message.text || "").trim();
@@ -9026,18 +9038,6 @@ function ensureProviderRunDir(
 }
 
 // JK_CONCISE_PROVIDER_ALERTS_V1
-// JK_ADMIN_AI_HIGHLIGHTS_BUTTON_V1
-require("./jk-ai-highlights-button.cjs").register(bot, {
-  adminId: ADMIN_ID,
-  getJobs: () => paidJobs
-});
-
-// JK_ADMIN_RECOVERY_BUTTON_V1
-require("./jk-provider-recovery-button.cjs").register(bot, {
-  adminId: ADMIN_ID,
-  getJobs: () => paidJobs
-});
-
 async function updateProviderAdminStatus(job, file, stage, rendered, remainingMs, error) {
   return require("./jk-provider-admin-status.js").updateAdminStatus({
     telegram: bot.telegram,
