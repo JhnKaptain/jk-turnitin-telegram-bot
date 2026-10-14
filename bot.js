@@ -12238,9 +12238,36 @@ async function renderAndDeliverApiReports(
         savePaidJobs();
 
         try {
+          // JK_STARRED_AI_CLIENT_NOTE_V1
+          const hasStarredAi = function hasStarredAi(files) {
+  return (files || []).some(file => {
+    const value = file.providerAiPercent;
+    const percent = Number(value);
+    return Boolean(
+      file.apiAiDeliveredAt &&
+      file.apiRenderedAiPath &&
+      value !== null &&
+      value !== undefined &&
+      value !== "" &&
+      Number.isFinite(percent) &&
+      percent > 0 &&
+      percent < 20
+    );
+  });
+};
+          const starred = hasStarredAi(job.files);
+          const message = String(API_REPORTS_DELIVERED_MESSAGE)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;") +
+            (starred
+              ? "\n\n?? Your AI report displays *% because the result is below 20%. If you would like AI HIGHLIGHTS, they <b>MAY</b> be available on request through support."
+              : "");
+
           await bot.telegram.sendMessage(
             job.userId,
-            API_REPORTS_DELIVERED_MESSAGE
+            message,
+            { parse_mode: "HTML" }
           );
 
           job.apiDeliveryMessageSentAt =
