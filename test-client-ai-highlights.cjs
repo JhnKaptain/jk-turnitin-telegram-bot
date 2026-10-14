@@ -6,7 +6,7 @@ async function settle() { for (let i = 0; i < 8; i++) await tick(); }
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jk-paid-ai-test-"));
-  const env = { AI_HIGHLIGHTS_PRICE_KES: "50" }, messages = [], documents = [];
+  const env = { AI_HIGHLIGHTS_PRICE_KES: "50" }, messages = [], documents = [], edits = [];
   let prepares = 0, charges = 0, failDelivery = false, time = 1000000000;
   const jobDirectory = path.join(directory, "provider-runs", "example"); fs.mkdirSync(jobDirectory, { recursive: true });
   const bundlePath = path.join(jobDirectory, "bundle.json");
@@ -19,7 +19,7 @@ async function settle() { for (let i = 0; i < 8; i++) await tick(); }
   const invoices = new Map();
   const deps = {
     dataDir: directory, adminId: 999, env, now: () => time, getJobs: () => jobs,
-    telegram: { sendMessage: async (...args) => { messages.push(args); return { message_id: messages.length }; },
+    telegram: { editMessageReplyMarkup: async (...args) => { edits.push(args); }, sendMessage: async (...args) => { messages.push(args); return { message_id: messages.length }; },
       sendDocument: async (recipient, document, options) => {
         assert.equal(options, undefined); assert.equal(recipient, 111); assert.equal(charges, 1);
         if (failDelivery) { failDelivery = false; throw new Error("Mock Telegram outage"); }
@@ -43,12 +43,24 @@ async function settle() { for (let i = 0; i < 8; i++) await tick(); }
     assert.equal(Object.keys(service.records).length, 0); assert.equal(charges, 0);
     await service.buy(ctx(111), "1234567890"); await settle();
     const r = Object.values(service.records)[0];
-    assert.equal(r.status, "WAIT_PHONE"); assert.equal(prepares, 1); assert.equal(charges, 0);
+    assert.equal(r.status, "READY_TO_PAY");
+    const ready = messages.at(-1);
+    assert.equal(ready[2].reply_markup.inline_keyboard[0][0].text, "PAY WITH M-PESA - KES 50");
+    assert(!JSON.stringify(ready).includes("CHECK PAYMENT"));
+    assert.equal(await service.handleText(ctx(111), "0712345678"), false);
+    await service.pay(ctx(222), r); assert.equal(r.status, "READY_TO_PAY");
+    await service.pay(ctx(111), r); await service.pay(ctx(111), r);
+    assert.equal(r.status, "WAIT_PHONE");
+    assert.equal(messages.at(-1)[1], "Enter your M-Pesa phone number (07XXXXXXXX or 01XXXXXXXX).");
+    assert.equal(messages.at(-1)[2].reply_markup.inline_keyboard.length, 1); assert.equal(prepares, 1); assert.equal(charges, 0);
     assert.equal(hasProtectedPurchase(directory, jobDirectory, time), true);
     env.AI_HIGHLIGHTS_PRICE_KES = "75";
     await service.handleText(ctx(111), "not a number"); assert.equal(charges, 0);
     await service.handleText(ctx(111), "0712345678");
     await service.handleText(ctx(111), "0712345678"); await settle();
+    assert(messages.some(m => m[1].startsWith("M-Pesa request sent") && m[2].reply_markup.inline_keyboard[0][0].text === "CHECK PAYMENT"));
+    assert(!messages.filter(m => m[1].startsWith("Sending an M-Pesa")).some(m => JSON.stringify(m).includes("CHECK PAYMENT")));
+    await service.pay(ctx(111), r); await settle(); assert.equal(charges, 1);
     assert.equal(charges, 1); assert.equal(r.attempts[0].amount, 50); assert.equal(documents.length, 0);
     await service.buy(ctx(111), "1234567890"); await settle(); assert.equal(charges, 1);
     // A forged COMPLETE callback cannot override the authoritative PENDING invoice.
@@ -64,6 +76,7 @@ async function settle() { for (let i = 0; i < 8; i++) await tick(); }
     service.stop(); service = createService(deps);
     await service.tick(); await settle();
     const delivered = Object.values(service.records)[0];
+    assert.equal(edits.at(-1)[3].inline_keyboard[0][0].text, "DOWNLOAD AGAIN");
     assert.equal(delivered.status, "DELIVERED"); assert.equal(documents.length, 1); assert.equal(charges, 1);
     assert.equal(hasProtectedPurchase(directory, jobDirectory, time), false);
     await service.handleWebhook({ api_ref: delivered.attempts[0].apiRef, state: "COMPLETE" }); await settle();
@@ -82,6 +95,7 @@ async function settle() { for (let i = 0; i < 8; i++) await tick(); }
     } };
     const bad = createService(badDeps);
     await bad.buy(ctx(111), "1234567890"); await settle();
+    await bad.pay(ctx(111), Object.values(bad.records)[0]);
     await bad.handleText(ctx(111), "0712345678"); await settle();
     assert.equal(Object.values(bad.records)[0].status, "REVIEW");
     assert.equal(documents.length, 2); bad.stop();
@@ -89,6 +103,7 @@ async function settle() { for (let i = 0; i < 8; i++) await tick(); }
     const unknown = createService({ ...deps, dataDir: path.join(directory, "uncertain"),
       sendStk: async () => { throw new Error("Mock response lost"); }, listInvoices: async () => ({ results: [] }) });
     await unknown.buy(ctx(111), "1234567890"); await settle();
+    await unknown.pay(ctx(111), Object.values(unknown.records)[0]);
     await unknown.handleText(ctx(111), "0712345678"); await settle();
     const u = Object.values(unknown.records)[0]; assert.equal(u.status, "UNCERTAIN");
     const attempts = u.attempts.length;
@@ -103,8 +118,28 @@ async function settle() { for (let i = 0; i < 8; i++) await tick(); }
     const expiry = createService({ ...deps, dataDir: path.join(directory, "expired-quote") });
     await expiry.buy(ctx(111), "1234567890"); await settle();
     time += 31 * 60 * 1000;
-    await expiry.handleText(ctx(111), "0712345678");
+    await expiry.pay(ctx(111), Object.values(expiry.records)[0]);
     assert.equal(charges, previousCharges); assert.equal(Object.values(expiry.records)[0].status, "OFFERED"); expiry.stop();
+    const navigation = createService({ ...deps, dataDir: path.join(directory, "navigation") });
+    const routes = []; navigation.register({ action: (pattern, handler) => routes.push({ pattern, handler }) });
+    async function press(data, user = 111) {
+      const route = routes.find(x => x.pattern.test(data)); assert(route);
+      const c = ctx(user); c.match = route.pattern.exec(data); await route.handler(c);
+    }
+    await navigation.buy(ctx(111), "1234567890"); await settle();
+    const nav = Object.values(navigation.records)[0];
+    assert.equal(hasProtectedPurchase(path.join(directory, "navigation"), jobDirectory, time), true);
+    await press("PAHP:" + nav.token, 222); assert.equal(nav.status, "READY_TO_PAY");
+    await press("PAHX:" + nav.token); assert.equal(nav.status, "OFFERED");
+    await press("PAHP:" + nav.token); assert.equal(nav.status, "OFFERED");
+    await navigation.buy(ctx(111), "1234567890"); await settle();
+    navigation.stop();
+    const restartedNav = createService({ ...deps, dataDir: path.join(directory, "navigation") });
+    const retained = Object.values(restartedNav.records)[0]; assert.equal(retained.status, "READY_TO_PAY");
+    await restartedNav.pay(ctx(111), retained); assert.equal(retained.status, "WAIT_PHONE");
+    assert.equal(charges, previousCharges);
+    restartedNav.stop();
+    console.log("PASS: explicit pay-button routing, short phone prompt, phase-specific buttons, owner checks, cancel, ready-offer restart and free DOWNLOAD AGAIN. No live payments.");
     // Exercise the real cleanup function, including payment-file protection.
     const retentionData = path.join(directory, "retention-check"), tracked = { test: { files: [] } };
     const records = {};

@@ -31,7 +31,7 @@ function hasProtectedPurchase(dataDir, directory, now = Date.now()) {
   const store = JSON.parse(fs.readFileSync(filename, "utf8"));
   return Object.values(store.records || {}).some(r => path.dirname(r.bundlePath || "") === directory && (
     ["SUBMITTING", "PENDING", "UNCERTAIN", "REVIEW", "PAID"].includes(r.status) ||
-    (["PREPARING", "WAIT_PHONE"].includes(r.status) && now < r.quoteExpires)
+    (["PREPARING", "READY_TO_PAY", "WAIT_PHONE"].includes(r.status) && now < r.quoteExpires)
   ));
 }
 function prepareChild(bundlePath, outputPath) {
@@ -77,10 +77,18 @@ function createService(deps) {
   const msg = (userId, text, extra) => deps.telegram.sendMessage(userId, text, extra);
   const recordFor = (userId, id) => Object.values(records).find(r => r.userId === Number(userId) && r.id === id);
   const owned = (ctx, r) => r && Number(ctx.from?.id) === r.userId && Number(ctx.chat?.id) === r.userId;
-  const buttons = r => ({ reply_markup: { inline_keyboard: [
-    [{ text: "Check payment / download", callback_data: "PAHC:" + r.token }],
-    [{ text: "Cancel", callback_data: "PAHX:" + r.token }]
-  ] } });
+  const buttons = r => {
+    const rows = [];
+    if (r.paidAt) rows.push([{ text: "DOWNLOAD AGAIN", callback_data: "PAHC:" + r.token }]);
+    else if (r.status === "READY_TO_PAY") rows.push([{ text: "PAY WITH M-PESA - KES " + r.amount, callback_data: "PAHP:" + r.token }]);
+    else if (["PENDING", "UNCERTAIN", "REVIEW"].includes(r.status)) rows.push([{ text: "CHECK PAYMENT", callback_data: "PAHC:" + r.token }]);
+    if (["READY_TO_PAY", "WAIT_PHONE", "OFFERED"].includes(r.status)) rows.push([{ text: "CANCEL", callback_data: "PAHX:" + r.token }]);
+    return { reply_markup: { inline_keyboard: rows } };
+  };
+  async function stateMessage(r, text) {
+    const sent = await msg(r.userId, text, buttons(r));
+    r.statusMessageId = sent?.message_id || r.statusMessageId; save();
+  }
   function source(userId, id) {
     const found = [];
     for (const job of Object.values(deps.getJobs() || {})) {
@@ -105,7 +113,7 @@ function createService(deps) {
       const id = idOf(file);
       if (!id || seen.has(id) || !source(job.userId, id)) continue;
       seen.add(id);
-      rows.push([{ text: "AI HIGHLIGHTS - KES " + getPrice() + " - " + String(file.file_name || "Document").slice(0, 45),
+      rows.push([{ text: "GET AI HIGHLIGHTS - KES " + getPrice() + " - " + String(file.file_name || "Document").slice(0, 45),
         callback_data: "PAHL:" + id }]);
     }
     return { text: rows.length ? "\n\nYour AI report displays *% because the result is below 20%. AI HIGHLIGHTS <b>MAY</b> be available for KES " + getPrice() + ". Select a document below to check availability." : "",
@@ -127,6 +135,10 @@ function createService(deps) {
     finally { if (typeof document === "object") document.source.destroy(); }
     r.fileId = sent.document?.file_id || r.fileId || null;
     r.status = "DELIVERED"; r.deliveredAt = r.deliveredAt || now(); r.lastDownloadAt = now(); r.deliveryError = null; save();
+    if (r.statusMessageId && deps.telegram.editMessageReplyMarkup) {
+      try { await deps.telegram.editMessageReplyMarkup(r.userId, r.statusMessageId, undefined, buttons(r).reply_markup); }
+      catch (error) { console.error("AI highlights download button update failed:", error.message); }
+    }
     if (!r.adminNotified) {
       try {
         await msg(deps.adminId, "AI HIGHLIGHTS paid and delivered\nUser: " + r.userId + "\nFile: " + r.name + "\nAmount: KES " + r.amount);
@@ -186,7 +198,7 @@ function createService(deps) {
       if (r.paidAt && r.status !== "REVIEW") { r.status = "PAID"; r.deliveryError = error.message; save(); }
       await msg(r.userId, r.paidAt
         ? "Your payment is confirmed. PDF delivery is being retried; no further payment is needed."
-        : "AI HIGHLIGHTS could not complete this step. Use Check payment or contact customer support.", buttons(r));
+        : "AI HIGHLIGHTS could not complete this step. Try the available button or contact customer support.", buttons(r));
     }).catch(error => console.error("AI highlights status message failed:", error.message));
   }
   function cancelPhone(userId) {
@@ -200,9 +212,8 @@ function createService(deps) {
       if (!pdfExists(r.outputPath)) await prepareLimited(r.bundlePath, r.outputPath);
       if (!pdfExists(r.outputPath)) throw new Error("Generated PDF is invalid.");
       cancelPhone(r.userId);
-      r.status = "WAIT_PHONE"; save();
-      await msg(r.userId, "AI HIGHLIGHTS\nFile: " + r.name + "\nPrice: KES " + r.amount +
-        "\n\nEnter your M-Pesa phone number (07XXXXXXXX or 01XXXXXXXX) to receive the payment request.", buttons(r));
+      r.status = "READY_TO_PAY"; save();
+      await stateMessage(r, "AI HIGHLIGHTS are available.\nFile: " + r.name + "\nPrice: KES " + r.amount + "\n\nTap PAY WITH M-PESA to continue.");
     } catch (error) {
       r.status = "OFFERED"; r.preparationError = error.message; save();
       await msg(r.userId, "AI HIGHLIGHTS are unavailable for this document right now. No payment request was sent. Contact customer support.");
@@ -232,25 +243,42 @@ function createService(deps) {
     await ctx.answerCbQuery("Checking availability and preparing your PDF.");
     background(r, () => preparePurchase(r));
   }
+  async function pay(ctx, r) {
+    if (!owned(ctx, r)) return ctx.answerCbQuery("This purchase belongs to another user.");
+    if (r.paidAt) { await ctx.answerCbQuery("Sending your purchased PDF."); background(r, () => deliver(r)); return; }
+    if (["SUBMITTING", "PENDING", "UNCERTAIN", "REVIEW"].includes(r.status)) {
+      await ctx.answerCbQuery("Checking your existing payment; no new request."); background(r, () => verify(r, true)); return;
+    }
+    if (busy.has(r.token)) return ctx.answerCbQuery("Please wait for the current step.");
+    if (!["READY_TO_PAY", "WAIT_PHONE"].includes(r.status)) return ctx.answerCbQuery("Click GET AI HIGHLIGHTS to check availability again.");
+    if (now() >= r.quoteExpires || !pdfExists(r.outputPath)) {
+      r.status = "OFFERED"; save(); return ctx.answerCbQuery("This offer has expired. Click GET AI HIGHLIGHTS again.");
+    }
+    if (deps.configured && !deps.configured()) return ctx.answerCbQuery("Payments are currently unavailable.");
+    if (deps.userBusy?.(r.userId)) return ctx.answerCbQuery("Finish or cancel your document submission first.");
+    cancelPhone(r.userId); r.status = "WAIT_PHONE"; save();
+    await ctx.answerCbQuery("Enter your M-Pesa phone number.");
+    await stateMessage(r, "Enter your M-Pesa phone number (07XXXXXXXX or 01XXXXXXXX).");
+  }
   async function handleText(ctx, text) {
     const r = Object.values(records).find(item => owned(ctx, item) && item.status === "WAIT_PHONE");
     if (!r) return false;
     if (busy.has(r.token)) { await msg(r.userId, "PDF preparation is finishing. Send your phone number again in a moment."); return true; }
     if (now() > r.quoteExpires) { r.status = "OFFERED"; save(); await msg(r.userId, "This price quote has expired. Click AI HIGHLIGHTS again to continue."); return true; }
     const number = phone(text);
-    if (!number) { await msg(r.userId, "Enter a valid M-Pesa phone number, such as 07XXXXXXXX or 01XXXXXXXX.", buttons(r)); return true; }
+    if (!number) { await stateMessage(r, "Enter your M-Pesa phone number (07XXXXXXXX or 01XXXXXXXX)."); return true; }
     if (!pdfExists(r.outputPath)) { r.status = "OFFERED"; save(); await msg(r.userId, "The prepared PDF is unavailable. No payment request was sent."); return true; }
     const attempt = { apiRef: "AIHL_" + token(), amount: r.amount, phone: number, createdAt: now(), invoiceId: null };
     r.attempts.push(attempt); r.status = "SUBMITTING"; save();
-    await msg(r.userId, "Sending an M-Pesa payment request for KES " + r.amount + ".", buttons(r));
+    await stateMessage(r, "Sending an M-Pesa payment request for KES " + r.amount + ".");
     background(r, async () => {
       try {
         const response = await timed(deps.sendStk({ amount: attempt.amount, phone_number: number, api_ref: attempt.apiRef }));
         const invoice = response?.invoice || response?.data?.invoice || response;
         attempt.invoiceId = invoice?.invoice_id || null;
         r.status = attempt.invoiceId ? "PENDING" : "UNCERTAIN"; save();
-        await msg(r.userId, attempt.invoiceId ? "M-Pesa request sent. Enter your PIN on your phone. The PDF will be delivered after payment is confirmed."
-          : "The payment request is being checked. Do not request another payment yet.", buttons(r));
+        await stateMessage(r, attempt.invoiceId ? "M-Pesa request sent. Enter your PIN on your phone. Your PDF will be delivered after payment is confirmed."
+          : "The payment request is being checked. Do not request another payment yet.");
         await verify(r);
       } catch (error) {
         if (!r.paidAt) {
@@ -272,11 +300,12 @@ function createService(deps) {
   }
   function register(bot) {
     bot.action(/^PAHL:([1-9]\d{9})$/, ctx => buy(ctx, ctx.match[1]));
-    bot.action(/^PAH([CX]):([a-f0-9]{24})$/, async ctx => {
+    bot.action(/^PAH([PCX]):([a-f0-9]{24})$/, async ctx => {
       const r = records[ctx.match[2]];
       if (!owned(ctx, r)) return ctx.answerCbQuery("This purchase belongs to another user.");
+      if (ctx.match[1] === "P") return pay(ctx, r);
       if (ctx.match[1] === "X") {
-        if (["WAIT_PHONE", "OFFERED"].includes(r.status)) {
+        if (["READY_TO_PAY", "WAIT_PHONE", "OFFERED"].includes(r.status)) {
           r.status = "OFFERED"; save(); await ctx.answerCbQuery("Cancelled. No payment request sent.");
           return msg(r.userId, "AI HIGHLIGHTS purchase cancelled.");
         }
@@ -288,7 +317,7 @@ function createService(deps) {
   let timer;
   async function tick() {
     for (const r of Object.values(records)) {
-      if (["PREPARING", "WAIT_PHONE"].includes(r.status) && now() > r.quoteExpires) { r.status = "OFFERED"; save(); }
+      if (["PREPARING", "READY_TO_PAY", "WAIT_PHONE"].includes(r.status) && now() > r.quoteExpires) { r.status = "OFFERED"; save(); }
       if (!["SUBMITTING", "UNCERTAIN", "PENDING", "PAID"].includes(r.status) || busy.has(r.token)) continue;
       const cadence = now() - (r.attempts?.at(-1)?.createdAt || now()) < 15 * 60 * 1000 ? 15000 : 5 * 60 * 1000;
       if (now() - (r.lastPollAt || 0) < cadence) continue;
@@ -305,7 +334,7 @@ function createService(deps) {
     }
     save(); void tick(); timer = setInterval(() => void tick(), 15000); timer.unref?.();
   }
-  return { deliveryOffer, buy, handleText, handleWebhook, register, start, tick, cancelPhone,
+  return { deliveryOffer, buy, pay, handleText, handleWebhook, register, start, tick, cancelPhone,
     stop: () => { clearInterval(timer); timer = null; }, records, verify, source };
 }
 module.exports = { createService, price, phone, hasProtectedPurchase };
