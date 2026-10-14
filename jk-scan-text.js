@@ -873,10 +873,11 @@ function mapUtf16RangeToSource(
       localEnd;
     index += 1
   ) {
+    const mappedIndex = map[index];
     const originalIndex =
-      Number(
-        map[index]
-      );
+      Number.isInteger(mappedIndex) && mappedIndex >= 0
+        ? mappedIndex
+        : NaN;
 
     /*
       Synthetic gap / excluded material.
@@ -1122,8 +1123,8 @@ function buildAiInput(rawText, document) {
     .excludeAiRunningMetadata(prepared, document);
 
   // JK_AI_STRUCTURAL_HEADINGS_V1
-  const prose = require("./jk-ai-headings.js")
-    .excludeAiStructuralHeadings(excluded, document);
+  const prose = require("./jk-ai-structure.js")
+    .excludeAiStructuralText(excluded, document);
 
   return require("./jk-ai-line-wraps.js")
     .joinAiVisualLineWraps(prose, document);
