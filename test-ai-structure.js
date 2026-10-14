@@ -92,6 +92,64 @@ function run() {
   const blocked = mapProviderRangesToSource({ text: "    body", map: [null, null, null, null, 20, 21, 22, 23] },
     [{ start: 0, end: 8 }], "utf16");
   assert.deepEqual(blocked.map(({ start, end }) => ({ start, end })), [{ start: 20, end: 24 }]);
+  function mixedFixture({ centered = false, singlePage = true, gap = 40, ambiguous = false } = {}) {
+    const rows = [
+      "Leadership and Team Performance", "Jane Doe", "Walden University",
+      "BUS 501: Organizational Leadership", "Instructor: John Smith", "October 14, 2026",
+      "Introduction",
+      "This paper examines how leadership affects team performance and employee motivation.",
+      "The analysis considers communication, trust and the practical implications for management."
+    ];
+    if (ambiguous) rows.splice(2, 0, "Uncertain lowercase opening content");
+    const doc = { text: "", pages: [] }, items = [];
+    let y = 700;
+    for (let i = 0; i < rows.length; i++) {
+      const text = rows[i], start = doc.text.length; doc.text += text + "\n";
+      items.push({ text, start, end: start + text.length, x: centered && i < 6 ? (612 - text.length * 5) / 2 : 72,
+        y, width: text.length * 5, height: 12, fontName: i === 0 || text === "Introduction" ? "heading" : "body", hasEOL: true });
+      y -= i === 5 ? gap : 24;
+    }
+    doc.pages.push({ pageNumber: 1, width: 612, height: 792, rotation: 0, items });
+    if (!singlePage) doc.pages.push({ pageNumber: 2, width: 612, height: 792, rotation: 0, items: [] });
+    return { document: doc, prepared: { text: doc.text, map: Array.from({ length: doc.text.length }, (_, i) => i) } };
+  }
+  for (const options of [{}, { centered: true }, { singlePage: false }]) {
+    const mixed = mixedFixture(options), before = JSON.stringify(mixed.document);
+    const out = excludeAiStructuralText(mixed.prepared, mixed.document);
+    assert.equal(out.aiCoverPagesExcluded, 0);
+    assert.equal(out.aiCoverBlocksExcluded, 1);
+    assert(out.aiStructuralHeadingSpans.some(s => s.reason === "OPENING_COVER_INFORMATION" && s.text === "Jane Doe"));
+    assert(!out.text.includes("Walden University"));
+    const body = "This paper examines how leadership affects team performance and employee motivation.";
+    assert(out.text.includes(body));
+    const start = out.text.indexOf(body);
+    for (const kind of ["utf16", "codepoint"]) {
+      const mapped = mapProviderRangesToSource(out, [{ start, end: start + body.length }], kind);
+      assert.equal(mapped.length, 1); assert.equal(mixed.document.text.slice(mapped[0].start, mapped[0].end), body);
+    }
+    assert.equal(out.text.length, mixed.prepared.text.length);
+    assert.equal(JSON.stringify(mixed.document), before);
+    const built = buildAiInput(mixed.document.text, mixed.document);
+    assert.equal(built.aiCoverBlocksExcluded, 1); assert(built.text.includes(body));
+  }
+  for (const options of [{ gap: 8 }, { ambiguous: true }]) {
+    const mixed = mixedFixture(options);
+    assert.equal(excludeAiStructuralText(mixed.prepared, mixed.document).aiCoverBlocksExcluded, 0);
+  }
+  // A paper that mentions an institution in its argument is not a cover block.
+  const ordinary = fixture({ cover: false });
+  assert.equal(excludeAiStructuralText(ordinary.prepared, ordinary.document).aiCoverBlocksExcluded, 0);
+  const argument = "University Research\nHigher Education\nThe university supports student learning through evidence-based teaching.\nThe findings indicate that student engagement improves academic outcomes.";
+  const argumentDoc = { text: argument, pages: [{ pageNumber: 1, width: 612, height: 792, rotation: 0, items: [] }] };
+  let offset = 0;
+  argument.split("\n").forEach((text, i) => {
+    argumentDoc.pages[0].items.push({ text, start: offset, end: offset + text.length, fontName: "body", x: 72, y: 700 - i * 24, width: text.length * 5, height: 12 }); offset += text.length + 1;
+  });
+  const argumentInput = { text: argument, map: Array.from({ length: argument.length }, (_, i) => i) };
+  const argumentOut = excludeAiStructuralText(argumentInput, argumentDoc);
+  assert.equal(argumentOut.aiCoverBlocksExcluded, 0);
+  assert(argumentOut.text.includes("The university supports student learning"));
+  console.log("PASS: mixed first pages, centered/left identity blocks, single-page papers, body preservation, UTF-16/codepoint mapping and rejection of unclear boundaries. No API requests.");
   console.log("PASS: separate cover page, standalone headings, mixed-font clinical labels, preserved answers, unchanged source mapping, null barriers and actual buildAiInput integration. No API requests.");
 }
 module.exports = { run, fixture };
