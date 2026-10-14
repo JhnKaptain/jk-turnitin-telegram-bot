@@ -543,6 +543,7 @@ let paymentRefs = {};
 let checkHistory = [];
 let usedProofCodes = {};
 let paidJobs = {};
+let paidAiHighlights;
 let dailySalesSummary = {};
 let dailySalesLedger = {};
 let botUsers = {};
@@ -3901,6 +3902,7 @@ function stopStatusPolling(apiRef) {
 }
 
 function resetSubmission(userId) {
+  if (paidAiHighlights) paidAiHighlights.cancelPhone(userId);
   const sub = submissions[userId];
   if (sub?.paymentAttempts?.length) {
     for (const apiRef of sub.paymentAttempts) stopStatusPolling(apiRef);
@@ -8497,11 +8499,26 @@ require("./jk-provider-recovery-button.cjs").register(bot, {
   getJobs: () => paidJobs
 });
 
+// JK_PAID_AI_HIGHLIGHTS_V1
+paidAiHighlights = require("./jk-client-ai-highlights.cjs").createService({
+  dataDir: DATA_DIR,
+  adminId: ADMIN_ID,
+  telegram: bot.telegram,
+  getJobs: () => paidJobs,
+  configured: () => Boolean(INTASEND_SECRET_KEY),
+  userBusy: userId => Boolean(submissions[userId] && submissions[userId].stage !== STAGE_PAID),
+  sendStk: intasendSendStkPush,
+  checkPayment: invoiceId => intasendCheckPaymentStatus({ invoice_id: invoiceId }),
+  listInvoices: intasendListInvoicesByApiRef
+});
+paidAiHighlights.register(bot);
+
 bot.on("text", async (ctx) => {
   const user = ctx.from;
   const text = (ctx.message.text || "").trim();
 
   if (text.startsWith("/")) return;
+  if (paidAiHighlights && await paidAiHighlights.handleText(ctx, text)) return;
 
   if (user.id === ADMIN_ID) {
     const replyTarget = pendingAdminReplies[ADMIN_ID];
@@ -12254,36 +12271,17 @@ async function renderAndDeliverApiReports(
         savePaidJobs();
 
         try {
-          // JK_STARRED_AI_CLIENT_NOTE_V1
-          const hasStarredAi = function hasStarredAi(files) {
-  return (files || []).some(file => {
-    const value = file.providerAiPercent;
-    const percent = Number(value);
-    return Boolean(
-      file.apiAiDeliveredAt &&
-      file.apiRenderedAiPath &&
-      value !== null &&
-      value !== undefined &&
-      value !== "" &&
-      Number.isFinite(percent) &&
-      percent > 0 &&
-      percent < 20
-    );
-  });
-};
-          const starred = hasStarredAi(job.files);
+          // JK_PAID_AI_HIGHLIGHTS_DELIVERY_V1
+          const offer = paidAiHighlights.deliveryOffer(job);
           const message = String(API_REPORTS_DELIVERED_MESSAGE)
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;") +
-            (starred
-              ? "\n\nYour AI report displays *% because the result is below 20%. AI HIGHLIGHTS <b>MAY</b> be available on request through customer support."
-              : "");
+            .replace(/>/g, "&gt;") + offer.text;
 
           await bot.telegram.sendMessage(
             job.userId,
             message,
-            { parse_mode: "HTML" }
+            { parse_mode: "HTML", reply_markup: offer.replyMarkup }
           );
 
           job.apiDeliveryMessageSentAt =
@@ -13738,6 +13736,8 @@ app.post("/intasend/webhook", (req, res) => {
         return;
       }
 
+      if (await paidAiHighlights.handleWebhook(payload)) return;
+
       let apiRef = extractApiRef(payload);
       const invoiceId = extractInvoiceId(payload);
       const state = normalizePaymentState(extractState(payload));
@@ -13874,6 +13874,7 @@ app.listen(port, async () => {
   }
 
   await syncAdminCommandMenu();
+  paidAiHighlights.start();
 
   startBotDisplayNameScheduler();
   startDailySalesSummaryScheduler();

@@ -97,6 +97,11 @@ function cleanFiles({
       continue;
     }
 
+    if (require("./jk-client-ai-highlights.cjs").hasProtectedPurchase(dataDir, directory, now)) {
+      report.skipped.push({ directory, reason: "AI highlights payment, preparation or delivery unresolved" });
+      continue;
+    }
+
     if (owners.some(processing)) {
       report.skipped.push({
         directory,
