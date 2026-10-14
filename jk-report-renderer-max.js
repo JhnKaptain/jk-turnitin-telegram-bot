@@ -1289,7 +1289,6 @@ function drawBrandMark(page, f, top) {
 }
 
 function shell(page, f, identity, pageNo, totalPages, label) {
-  if (identity.__adminLowScoreReview) label = "AI HIGHLIGHTS";
   const pageWidth =
     page.getWidth();
 
@@ -1338,11 +1337,11 @@ function shell(page, f, identity, pageNo, totalPages, label) {
     const [logoTop, textTop] of
       placements
   ) {
-    if (identity.__adminLowScoreReview) {
-      drawTextTop(page, "JK", 36, textTop, 8, f.notoSemi, C.ink);
-    } else {
-      drawBrandMark(page, f, logoTop);
-    }
+    drawBrandMark(
+      page,
+      f,
+      logoTop
+    );
 
     drawTextTop(
       page,
@@ -1532,17 +1531,6 @@ function drawCover(
   const id =
     bundle.reportIdentity ||
     {};
-  if (bundle.__adminLowScoreReview) {
-    shell(page, f, id, pageNo, totalPages, "AI HIGHLIGHTS");
-    drawTextTop(page, "AI HIGHLIGHTS", 36, 100, 20, f.lexSemi, C.ink);
-    drawTextTop(page, "Sapling - result below 20%", 36, 135, 12, f.notoSemi, C.ink);
-    drawWrappedTop(page, String(id.filename || "Document"), 36, 175, 540, 12, f.noto, C.ink, 5, 5);
-    drawTextTop(page, "Saved AI result: " + String(bundle.aiDetection.percent) + "%", 36, 260, 12, f.notoSemi, C.ink);
-    drawTextTop(page, "Not a Turnitin report.", 36, 295, 11, f.notoSemi, C.ink);
-    drawWrappedTop(page, "Prepared for admin review from existing Sapling results. No new detection request was made. Standard report delivery and the original score are unchanged.", 36, 330, 520, 10, f.noto, C.ink, 4, 5);
-    drawWrappedTop(page, "Low AI scores may contain false positives. Highlights are signals for human review, not proof of AI authorship.", 36, 400, 520, 10, f.noto, C.ink, 4, 5);
-    return;
-  }
 
   shell(
     page,
@@ -3741,14 +3729,11 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
   drawRule(page, 60);
 
   const value = Number(ai?.percent || 0);
-  const review = bundle.__adminLowScoreReview === true;
-  const low = ai.available && value > 0 && value < 20 && !review;
+  const low = ai.available && value > 0 && value < 20;
 
   const headline =
     !ai.available
       ? "AI detection unavailable"
-      : review
-        ? String(ai.percent) + "% - AI HIGHLIGHTS"
       : low
         ? "*% detected as AI"
         : `${fmtPct(value)} detected as AI`;
@@ -3758,8 +3743,6 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
   const description =
     !ai.available
       ? (ai.reason || "AI detection could not be completed.")
-      : review
-        ? "Supplementary review from saved Sapling results below 20%. This is not a Turnitin report. Highlights may contain false positives and require human review."
       : low
         ? "AI detection includes the possibility of false positives. Although some text in this submission is likely AI generated, scores below the 20% threshold are not surfaced because they have a higher likelihood of false positives."
         : "The percentage indicates the combined amount of likely AI-generated text as well as likely AI-generated text that was also likely revised by AI.";
@@ -3809,7 +3792,7 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
   drawRule(page, 148);
 
   if (!low && ai.available) {
-    const count = value >= 20 || review ? countAiPositiveSentences(bundle, ai) : 0;
+    const count = value >= 20 ? countAiPositiveSentences(bundle, ai) : 0;
 
     drawPngTop(page, icons.aiRobot, 36, 168, 12, 12);
     const countText =
@@ -3838,7 +3821,7 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
 
     drawTextTop(
       page,
-      review ? `Saved Sapling result ${ai.percent}%` : `AI-generated ${fmtPct(value)}`,
+      `AI-generated ${fmtPct(value)}`,
       aiLabelX,
       166.517,
       7,
@@ -6333,7 +6316,7 @@ async function renderAi(
     await PDFDocument.create();
 
   doc.setTitle(
-    bundle.__adminLowScoreReview ? "AI HIGHLIGHTS" : "JK AI Writing Report"
+    "JK AI Writing Report"
   );
 
   doc.setSubject(
@@ -6603,7 +6586,6 @@ async function renderAdminLowScoreAiReview({ bundle, bundlePath, outputPath }) {
   ensureProviderIdentity(copy);
   copy.__bundlePath = path.resolve(bundlePath);
   copy.__adminLowScoreReview = true;
-  copy.reportIdentity.__adminLowScoreReview = true;
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   return renderAi(copy, outputPath);
 }

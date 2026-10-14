@@ -3,13 +3,18 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { validateBundle, sendAdmin } = require("./jk-low-ai-review.cjs");
+const { validateBundle, sendAdmin, highlightFileName } = require("./jk-low-ai-review.cjs");
 const { summary } = require("./jk-provider-admin-status.js");
 
 async function run() {
   const bundle = { canonicalDocument: { text: "Original sentence.\nOther writing." },
     aiDetection: { available: true, provider: "sapling", percent: 12.3,
       ranges: [{ id: "sentence-1", start: 0, end: 18, sentence: "Original sentence.", score: 0.9 }] } };
+  assert.equal(highlightFileName({ reportIdentity: { filename: "INTL508 Week 8 Assignment.docx" } }),
+    "AI HIGHLIGHTS - INTL508 Week 8 Assignment.pdf");
+  assert.equal(highlightFileName({ reportIdentity: { filename: "folder/Example.pdf" } }),
+    "AI HIGHLIGHTS - Example.pdf");
+  assert.equal(highlightFileName({}), "AI HIGHLIGHTS - Document.pdf");
   const original = JSON.stringify(bundle);
   assert.equal(validateBundle(bundle), 12.3);
   assert.equal(JSON.stringify(bundle), original);
@@ -43,7 +48,8 @@ async function run() {
   try {
     const sends = [];
     await sendAdmin(filename, "test", { token: "test-token", adminId: "999",
-      telegram: { sendDocument: async (recipient, document) => {
+      telegram: { sendDocument: async (recipient, document, options) => {
+        assert.equal(options, undefined, "Send PDF without caption");
         sends.push(recipient); document.source.destroy();
       } } });
     assert.deepEqual(sends, [999]);

@@ -42,7 +42,15 @@ async function sendAdmin(filename, caption, options = {}) {
   const telegram = options.telegram || new (require("telegraf").Telegraf)(token).telegram;
   await telegram.sendDocument(Number(admin), {
     source: fs.createReadStream(filename), filename: path.basename(filename)
-  }, { caption });
+  });
+}
+
+function highlightFileName(bundle) {
+  const raw = String(bundle.reportIdentity?.filename || "Document");
+  const basename = raw.split(/[\\/]/).pop();
+  const stem = basename.replace(/\.(?:docx?|pdf|txt|rtf|odt)$/i, "")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").trim().slice(0, 180) || "Document";
+  return "AI HIGHLIGHTS - " + stem + ".pdf";
 }
 
 async function main() {
@@ -81,12 +89,11 @@ async function main() {
   const percent = validateBundle(bundle);
   // Read once and pass this exact in-memory copy to the renderer.
   const outputDir = fs.mkdtempSync(path.join(path.dirname(bundlePath), "admin-low-ai-review-"));
-  const outputPath = path.join(outputDir, "AI_HIGHLIGHTS.pdf");
+  const outputPath = path.join(outputDir, highlightFileName(bundle));
   await require("./jk-report-renderer-max.js").renderAdminLowScoreAiReview({ bundle, bundlePath, outputPath });
   console.log("Review PDF:", outputPath);
-  await sendAdmin(outputPath,
-    "ADMIN REVIEW ONLY: Sapling " + percent + "% (below 20%). Supplementary highlights from saved results. Not a Turnitin report. No rescan or client delivery triggered.");
+  await sendAdmin(outputPath);
   console.log("Sent only to ADMIN_ID. Original bundle and job status unchanged. No provider requests.");
 }
-module.exports = { validateBundle, sendAdmin };
+module.exports = { validateBundle, sendAdmin, highlightFileName };
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });
