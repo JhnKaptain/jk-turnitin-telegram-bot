@@ -68,6 +68,47 @@ function inferSelections(checkpoint, issues, findCandidates) {
   return selections;
 }
 
+// JK_QUETEXT_RETURNED_INPUT_RECOVERY_V1
+function inferQuetextSelections(checkpoint, issues, findCandidates) {
+  const selected = new Map();
+  const prepared = checkpoint.preparedInputs?.similarity;
+  const state = checkpoint.providerResults?.similarity;
+  const provider = state?.value;
+  if (state?.status !== "fulfilled" || typeof prepared?.text !== "string" ||
+      typeof provider?.inputText !== "string" || !Array.isArray(provider.matches)) return selected;
+  function trimmed(value) {
+    const result = indexed(value);
+    const leading = result.text.length - result.text.trimStart().length;
+    const length = result.text.trim().length;
+    return {
+      text: result.text.trim(),
+      starts: result.starts.slice(leading, leading + length),
+      ends: result.ends.slice(leading, leading + length)
+    };
+  }
+  const from = trimmed(provider.inputText), to = trimmed(prepared.text);
+  if (from.text !== to.text) return selected;
+  for (const issue of issues) {
+    if (!issue.key.startsWith("similarity:")) continue;
+    const entry = provider.matches[Number(issue.key.split(":")[1]) - 1];
+    if (!entry || !Number.isInteger(entry.start) || !Number.isInteger(entry.end) ||
+        entry.start < 0 || entry.end <= entry.start || entry.end > provider.inputText.length) continue;
+    const passage = provider.inputText.slice(entry.start, entry.end);
+    if (!norm(entry.text) || norm(passage) !== norm(entry.text)) continue;
+    const first = passage.search(/\S/u);
+    const trailing = passage.match(/\s*$/u)[0].length;
+    const left = from.starts.indexOf(entry.start + first);
+    const right = from.ends.indexOf(entry.end - trailing);
+    if (left < 0 || right < left) continue;
+    const start = to.starts[left], end = to.ends[right];
+    if (findCandidates(prepared.text, entry.text, entry.start)
+        .some(candidate => candidate.start === start && candidate.end === end)) {
+      selected.set(issue.key, start);
+    }
+  }
+  return selected;
+}
+
 function selfTest() {
   const a = "1 15 Dec 2026 Written structure";
   const b = "# Action Goal Deadline Evidence";
@@ -105,6 +146,28 @@ function selfTest() {
   checkpoint.preparedInputs.ai.text = original;
   checkpoint.providerResults.ai.value.sentenceScores = scores.slice().reverse();
   assert.equal(inferSelections(checkpoint, issues, find).size, 0);
+  const phrase = "In Alfred the Great: Asser's Life of King";
+  const qInput = "🙂 First reference. " + phrase + "\nNext details.\n\nSecond reference. " + phrase + "\nOther details.";
+  const qPrepared = "\n\n" + qInput.replace(/\n/g, "\n\n");
+  const firstStart = qInput.indexOf(phrase);
+  const secondStart = qInput.lastIndexOf(phrase);
+  const q = { preparedInputs: { similarity: { text: qPrepared } },
+    providerResults: { similarity: { status: "fulfilled", value: {
+      inputText: qInput, matches: [firstStart, secondStart].map(start => ({
+        start, end: start + phrase.length, text: phrase
+      }))
+    } } } };
+  const qIssues = [{ key: "similarity:1" }, { key: "similarity:2" }];
+  const qSelected = inferQuetextSelections(q, qIssues, find);
+  assert.equal(qSelected.size, 2);
+  assert.equal(qSelected.get("similarity:1"), qPrepared.indexOf(phrase));
+  assert.equal(qSelected.get("similarity:2"), qPrepared.lastIndexOf(phrase));
+  q.preparedInputs.similarity.text = qPrepared.replace("Next details", "Different wording");
+  assert.equal(inferQuetextSelections(q, qIssues, find).size, 0);
+  q.preparedInputs.similarity.text = qPrepared;
+  q.providerResults.similarity.value.matches[0].start++;
+  assert(!inferQuetextSelections(q, qIssues, find).has("similarity:1"));
+  console.log("PASS: Quetext repeated references, whitespace mapping, Unicode offsets and rejection of changed text/bad offsets.");
   console.log("PASS: changing offsets, repeated headers/cells, full-sequence verification and rejection of inconsistent evidence.");
 }
 
@@ -127,8 +190,11 @@ function main() {
   };
   const initial = existing.recover(checkpoint, new Map(), deps);
   const selections = inferSelections(checkpoint, initial.issues, existing.candidates);
+  for (const [key, start] of inferQuetextSelections(checkpoint, initial.issues, existing.candidates)) {
+    selections.set(key, start);
+  }
   const verified = existing.recover(checkpoint, selections, deps);
-  for (const [key, start] of selections) console.log("Sequence-verified:", key, "=>", start);
+  for (const [key, start] of selections) console.log("Verified recovery selection:", key, "=>", start);
   if (verified.issues.length) {
     for (const issue of verified.issues) console.log(JSON.stringify(issue, null, 2));
     console.log("REVIEW REQUIRED. No reports written or sent. No provider requests.");
