@@ -9022,6 +9022,12 @@ function ensureProviderRunDir(
 }
 
 // JK_CONCISE_PROVIDER_ALERTS_V1
+// JK_ADMIN_AI_HIGHLIGHTS_BUTTON_V1
+require("./jk-ai-highlights-button.cjs").register(bot, {
+  adminId: ADMIN_ID,
+  getJobs: () => paidJobs
+});
+
 async function updateProviderAdminStatus(job, file, stage, rendered, remainingMs, error) {
   return require("./jk-provider-admin-status.js").updateAdminStatus({
     telegram: bot.telegram,

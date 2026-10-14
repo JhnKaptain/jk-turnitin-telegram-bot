@@ -98,7 +98,10 @@ async function updateAdminStatus(options) {
   const { telegram, adminId, file, save } = options;
   const text = summary(options);
 
-  if (file.providerAdminStatusText === text) return true;
+  const replyMarkup = require("./jk-ai-highlights-button.cjs").replyMarkup(options);
+  const markupKey = JSON.stringify(replyMarkup);
+  if (file.providerAdminStatusText === text &&
+      file.providerAdminStatusMarkup === markupKey) return true;
 
   try {
     if (file.providerAdminStatusMessageId) {
@@ -107,13 +110,15 @@ async function updateAdminStatus(options) {
           adminId,
           file.providerAdminStatusMessageId,
           undefined,
-          text
+          text,
+          { reply_markup: replyMarkup }
         );
       } catch (error) {
         const reason = String(error?.description || error?.message || error);
 
         if (/message is not modified/i.test(reason)) {
           file.providerAdminStatusText = text;
+    file.providerAdminStatusMarkup = markupKey;
           save();
           return true;
         }
@@ -125,15 +130,16 @@ async function updateAdminStatus(options) {
           throw error;
         }
 
-        const sent = await telegram.sendMessage(adminId, text);
+        const sent = await telegram.sendMessage(adminId, text, { reply_markup: replyMarkup });
         file.providerAdminStatusMessageId = sent.message_id;
       }
     } else {
-      const sent = await telegram.sendMessage(adminId, text);
+      const sent = await telegram.sendMessage(adminId, text, { reply_markup: replyMarkup });
       file.providerAdminStatusMessageId = sent.message_id;
     }
 
     file.providerAdminStatusText = text;
+    file.providerAdminStatusMarkup = markupKey;
     save();
     return true;
   } catch (error) {
