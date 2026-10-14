@@ -13,11 +13,30 @@ function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
   }
 
   if (stage === "review") {
+    const checkpoint = String(file.providerResultsFile || "");
+    const valid = checkpoint.startsWith("/") &&
+      checkpoint.endsWith(".provider-results.json") &&
+      !checkpoint.includes(String.fromCharCode(10)) &&
+      !checkpoint.includes(String.fromCharCode(13));
+
+    const escaped = Array.from(checkpoint, character =>
+      [34, 36, 92, 96].includes(character.charCodeAt(0))
+        ? String.fromCharCode(92) + character : character
+    ).join("");
+
+    const command = valid
+      ? 'node jk-recover-reviewed-results.cjs --checkpoint "' + escaped + '"'
+      : null;
+
     return [
       "MANUAL REVIEW - do not resubmit",
       ...lines,
       "Reason: " + String(file.manualReviewReason || error || "Alignment needs review"),
-      "Saved results: " + String(file.providerResultsFile || "Unavailable")
+      "Saved results: " + (checkpoint || "Unavailable"),
+      "",
+      ...(command
+        ? ["Recover to admin only - paste into Render Shell:", command]
+        : ["Recovery command unavailable: saved-results path missing or invalid."])
     ].join("\n");
   }
 
