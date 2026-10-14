@@ -62,6 +62,20 @@ function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
     )
   );
 
+  // JK_ADMIN_LOW_AI_REVIEW_V1
+  const rawAi = rendered?.aiPercent ?? file.providerAiPercent;
+  const lowAi = rawAi !== null && rawAi !== undefined && rawAi !== "" &&
+    Number.isFinite(Number(rawAi)) && Number(rawAi) > 0 && Number(rawAi) < 20;
+  const bundlePath = String(file.providerBundleFile || "");
+  if (rendered?.aiAvailable && runAi !== false && lowAi &&
+      bundlePath.startsWith("/") && !/[\r\n]/.test(bundlePath)) {
+    const escaped = Array.from(bundlePath, c =>
+      [34, 36, 92, 96].includes(c.charCodeAt(0)) ? String.fromCharCode(92) + c : c
+    ).join("");
+    lines.push("Low-score AI review (admin only, no rescan):");
+    lines.push('node jk-low-ai-review.cjs --bundle "' + escaped + '"');
+  }
+
   if (stage === "ready") {
     return [
       "REPORTS READY",
