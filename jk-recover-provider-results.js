@@ -29,7 +29,7 @@ function indexedText(value) {
   return { text, starts, ends };
 }
 
-function candidates(input, target, reported) {
+function candidates(input, target, reported, radius = 512) {
   const haystack = indexedText(input);
   const needle = normalize(target);
   const found = [];
@@ -42,7 +42,7 @@ function candidates(input, target, reported) {
     const start = haystack.starts[at];
     const end = haystack.ends[at + needle.length - 1];
 
-    if (Math.abs(start - reported) <= 512) {
+    if (Math.abs(start - reported) <= radius) {
       found.push({ start, end });
     }
 
@@ -98,12 +98,15 @@ function recover(checkpoint, selections, deps) {
         let aligned;
 
         if (selections.has(key)) {
-          aligned = candidates(prepared.text, target, entry.start)
+          // Explicit selections can be distant, but must match exact returned
+          // text and subsequently pass the original-source mapping checks.
+          // Automatic alignment retains its 512-character search limit.
+          aligned = candidates(prepared.text, target, entry.start, Infinity)
             .find(item => item.start === selections.get(key));
 
           assert.ok(
             aligned,
-            "Selection is not a verified nearby occurrence."
+            "Selection is not a verified text occurrence."
           );
 
           used.add(key);

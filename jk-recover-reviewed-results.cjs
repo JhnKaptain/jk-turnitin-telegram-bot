@@ -68,6 +68,58 @@ function inferSelections(checkpoint, issues, findCandidates) {
   return selections;
 }
 
+// JK_AI_GLOBAL_SEQUENCE_RECOVERY_V1
+// A distant occurrence is accepted only when the whole provider sequence, or
+// a bounded suffix including neighbouring sentences, matches uniquely verbatim
+// after whitespace normalization. Never use nearest-distance guessing.
+function inferGlobalAiSelections(checkpoint, issues) {
+  const selected = new Map();
+  const prepared = checkpoint.preparedInputs?.ai;
+  const state = checkpoint.providerResults?.ai;
+  const scores = state?.value?.sentenceScores;
+  const ranges = state?.value?.ranges;
+  if (state?.status !== "fulfilled" || typeof prepared?.text !== "string" ||
+      !Array.isArray(scores) || !scores.length || !Array.isArray(ranges) ||
+      !scores.every((s, i) => typeof s.sentence === "string" && norm(s.sentence) &&
+        Number.isInteger(s.start) && Number.isInteger(s.end) && s.start >= 0 && s.end > s.start &&
+        (!i || s.start >= scores[i - 1].end))) return selected;
+  const input = indexed(prepared.text);
+  function uniqueSequence(left, right) {
+    const parts = scores.slice(left, right + 1).map(s => norm(s.sentence));
+    if (parts.filter(s => (s.match(/\p{L}/gu) || []).length >= 20 && s.split(" ").length >= 5).length < 2) return null;
+    const needle = parts.join(" ");
+    if (needle.length < 100) return null;
+    const at = input.text.indexOf(needle);
+    if (at < 0 || input.text.indexOf(needle, at + 1) !== -1) return null;
+    // No substring matches inside a larger word or punctuation token.
+    if ((at && !/\s/u.test(input.text[at - 1])) ||
+        (at + needle.length < input.text.length && !/\s/u.test(input.text[at + needle.length]))) return null;
+    return { parts, at, left };
+  }
+  const whole = uniqueSequence(0, scores.length - 1);
+  for (const issue of issues) {
+    if (!/^ai:[1-9]\d*$/.test(issue.key)) continue;
+    const entry = ranges[Number(issue.key.slice(3)) - 1];
+    if (!entry) continue;
+    const matches = scores.map((s, i) => s.start === entry.start && s.end === entry.end &&
+      norm(s.sentence) === norm(entry.sentence) ? i : -1).filter(i => i >= 0);
+    if (matches.length !== 1) continue;
+    const index = matches[0];
+    // Trailing runs have no right anchor, so verify the complete remaining
+    // provider sequence plus at least one preceding sentence.
+    const tail = scores.length - index <= 30 ? uniqueSequence(Math.max(0, index - 2), scores.length - 1) : null;
+    const proof = whole || tail;
+    if (!proof) continue;
+    const relative = index - proof.left;
+    const offset = proof.at + proof.parts.slice(0, relative).reduce((sum, text) => sum + text.length + 1, 0);
+    const start = input.starts[offset], end = input.ends[offset + proof.parts[relative].length - 1];
+    if (Number.isInteger(start) && Number.isInteger(end) && norm(prepared.text.slice(start, end)) === norm(entry.sentence)) {
+      selected.set(issue.key, start);
+    }
+  }
+  return selected;
+}
+
 // JK_QUETEXT_RETURNED_INPUT_RECOVERY_V1
 function inferQuetextSelections(checkpoint, issues, findCandidates) {
   const selected = new Map();
@@ -193,6 +245,9 @@ function main() {
   for (const [key, start] of inferQuetextSelections(checkpoint, initial.issues, existing.candidates)) {
     selections.set(key, start);
   }
+  for (const [key, start] of inferGlobalAiSelections(checkpoint, initial.issues)) {
+    selections.set(key, start);
+  }
   const verified = existing.recover(checkpoint, selections, deps);
   for (const [key, start] of selections) console.log("Verified recovery selection:", key, "=>", start);
   if (verified.issues.length) {
@@ -209,7 +264,7 @@ function main() {
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 }
-module.exports = { inferSelections, selfTest };
+module.exports = { inferSelections, inferGlobalAiSelections, selfTest };
 if (require.main === module) {
   try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
