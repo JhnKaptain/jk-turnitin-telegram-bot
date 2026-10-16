@@ -735,7 +735,7 @@ async function runProviderPipeline({
   // JK_SHARED_API_WORD_GUARD_V1
   // Block BOTH providers before any paid API request.
 
-  const API_WORD_LIMIT_EXCLUSIVE = 4800;
+  const API_WORD_LIMIT = require("./jk-api-word-limit.cjs").readApiWordLimit();
 
   function countApiInputWords(value) {
     const content = String(value ?? "")
@@ -800,7 +800,7 @@ async function runProviderPipeline({
   );
 
   if (
-    largestWordCount >= API_WORD_LIMIT_EXCLUSIVE ||
+    largestWordCount > API_WORD_LIMIT ||
     emptyInput
   ) {
     const reason = emptyInput
@@ -810,7 +810,7 @@ async function runProviderPipeline({
     const error = new Error(
       reason +
       " Count: " + largestWordCount +
-      " words. API requires fewer than 4800."
+      " words. API allows up to " + API_WORD_LIMIT + " words."
     );
 
     error.code = "API_MANUAL_REVIEW_REQUIRED";

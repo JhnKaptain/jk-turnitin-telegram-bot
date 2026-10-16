@@ -1,86 +1,58 @@
-﻿"use strict";
-
+"use strict";
 const fs = require("fs");
+const path = require("path");
 const assert = require("node:assert/strict");
-
-const source = fs.readFileSync(
-  "jk-provider-pipeline.js",
-  "utf8"
-);
-
-const start = source.indexOf(
-  "// JK_SHARED_API_WORD_GUARD_V1"
-);
-
-const end = source.indexOf(
-  "  const result = {",
-  start
-);
-
-if (start < 0 || end <= start) {
-  throw new Error(
-    "Shared API word guard not found."
-  );
-}
-
-const guard = source.slice(start, end);
-
-const validate = new Function(
-  "document",
-  "similarityPrepared",
-  "aiPrepared",
-  "runSimilarity",
-  "runAi",
-  guard + "\nreturn true;"
-);
-
-function words(n) {
-  return Array(n).fill("word").join(" ");
-}
-
-function test(label, original, similarity, ai, blocked) {
-  let error = null;
-
+const { readApiWordLimit } = require("./jk-api-word-limit.cjs");
+const source = fs.readFileSync(path.join(__dirname, "jk-provider-pipeline.js"), "utf8");
+const start = source.indexOf("// JK_SHARED_API_WORD_GUARD_V1");
+const end = source.indexOf("  const result = {", start);
+assert(start >= 0 && end > start, "Shared API word guard missing.");
+const validate = new Function("document", "similarityPrepared", "aiPrepared", "runSimilarity", "runAi", "require", source.slice(start, end) + "\nreturn true;");
+const words = n => Array(n).fill("word").join(" ");
+function check(label, original, similarity, ai, blocked, env = {}, extra = {}) {
+  let error;
   try {
-    validate(
-      {
-        text: words(original),
-        wordCount: original
-      },
-      { text: words(similarity) },
-      { text: words(ai) },
-      true,
-      true
-    );
-  } catch (err) {
-    error = err;
-  }
-
-  const actualBlocked =
-    error?.code === "API_MANUAL_REVIEW_REQUIRED";
-
-  assert.equal(
-    actualBlocked,
-    blocked,
-    label + ": unexpected result"
-  );
-
-  console.log(
-    "PASS:",
-    label,
-    actualBlocked ? "MANUAL REQUIRED" : "API ALLOWED"
-  );
+    validate({ text: words(original), wordCount: extra.extractor ?? original },
+      {text: words(similarity)}, {text: words(ai)}, extra.similarity ?? true,
+      extra.ai ?? true, name => {
+        assert.equal(name, "./jk-api-word-limit.cjs");
+        return { readApiWordLimit: () => readApiWordLimit(env) };
+      });
+  } catch (caught) { error = caught; }
+  if (error && error.code !== "API_MANUAL_REVIEW_REQUIRED") throw error;
+  assert.equal(Boolean(error), blocked, label);
+  if (error) assert.equal(error.apiBlocked, true);
+  console.log("PASS:", label);
 }
-
-test("3000 words", 3000, 3000, 3000, false);
-test("4500 words", 4500, 4500, 4500, false);
-test("4799 words", 4799, 4799, 4799, false);
-test("4800 words", 4800, 4800, 4800, true);
-test("5000 words", 5000, 5000, 5000, true);
-test("Quetext input oversized", 4700, 4800, 4700, true);
-test("Sapling input oversized", 4700, 4700, 4800, true);
-test("Empty original document", 0, 0, 0, true);
-
-console.log(
-  "\nALL WORD-LIMIT TESTS PASSED. NO API REQUESTS MADE."
-);
+check("4999 allowed",4999,4999,4999,false);
+check("Exactly 5000 allowed",5000,5000,5000,false);
+check("5001 blocked",5001,5001,5001,true);
+check("Quetext input oversized",4900,5001,4900,true);
+check("Sapling input oversized",4900,4900,5001,true);
+check("Extractor count oversized",4900,4900,4900,true,{}, {extractor:5001});
+check("Empty original blocked",0,100,100,true);
+check("Configured boundary allowed",3000,3000,3000,false,{API_MAX_WORDS:"3000"});
+check("Configured boundary exceeded",3001,3001,3001,true,{API_MAX_WORDS:"3000"});
+check("Configured increase allowed",6000,6000,6000,false,{API_MAX_WORDS:"6000"});
+check("Unused provider excluded",100,6000,100,false,{}, {similarity:false});
+for (const value of ["0", "-1", "1.5", "oops", "Infinity", "9007199254740992"]) {
+  check("Invalid configuration blocked: " + value,100,100,100,true,{API_MAX_WORDS:value});
+}
+assert.equal(readApiWordLimit({}),5000);
+assert.equal(readApiWordLimit({API_MAX_WORDS:" "}),5000);
+assert.equal(readApiWordLimit({API_MAX_WORDS:" 5200 "}),5200);
+// Execute the actual credit-retry guard in isolation; no provider is loaded.
+const retry = fs.readFileSync(path.join(__dirname,"jk-retry-quetext-credits.cjs"),"utf8");
+const rs = retry.indexOf("    const apiWordLimit =");
+const re = retry.indexOf("    if (!state.reportId",rs);
+assert(rs >= 0 && re > rs);
+const retryGuard = new Function("prepared","saved","assert","require",retry.slice(rs,re));
+for (const cap of [3000,5000,6000]) {
+  for (const n of [cap,cap+1]) {
+    const invoke = () => retryGuard({text:words(n)}, {canonicalDocument:{wordCount:n}}, assert,
+      () => ({readApiWordLimit:()=>readApiWordLimit({API_MAX_WORDS:String(cap)})}));
+    if (n === cap) assert.doesNotThrow(invoke); else assert.throws(invoke);
+  }
+}
+console.log("PASS: credit retry uses the same configurable inclusive limit.");
+console.log("ALL WORD-LIMIT TESTS PASSED. No API requests or deliveries.");

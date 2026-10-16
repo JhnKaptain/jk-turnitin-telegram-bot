@@ -36,10 +36,11 @@ async function retryCheckpoint(filename, provider, log = console.log) {
     assert(typeof prepared?.text === "string" && prepared.text.trim(), "Saved Quetext input missing.");
     assert.equal(prepared.map?.length, prepared.text.length, "Saved source map invalid.");
     assert(typeof saved.canonicalDocument?.text === "string", "Original document text missing.");
+    const apiWordLimit = require("./jk-api-word-limit.cjs").readApiWordLimit();
     const words = prepared.text.trim().split(/\s+/u).length;
-    assert(words < 4800 && words > 0, "Saved input exceeds automatic scan limit.");
+    assert(words <= apiWordLimit && words > 0, "Saved input exceeds automatic scan limit.");
     const sourceWords = saved.canonicalDocument.wordCount;
-    assert(Number.isFinite(sourceWords) && sourceWords > 0 && sourceWords < 4800,
+    assert(Number.isFinite(sourceWords) && sourceWords > 0 && sourceWords <= apiWordLimit,
       "Original word count must satisfy the API word limit.");
     if (!state.reportId && state.phase && state.phase !== "CREDIT_REJECTED") {
       throw new Error("Previous retry has uncertain submission status. Do not repeat a paid submission; inspect " + stateFile);
