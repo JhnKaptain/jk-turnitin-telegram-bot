@@ -217,6 +217,8 @@ async function buildProviderJobBundle({
     );
   }
 
+  const templateProfile = require("./jk-report-template-profiles.cjs").profileFields(file);
+
   const result =
     await runProviderPipeline({
       sourcePath,
@@ -278,6 +280,7 @@ async function buildProviderJobBundle({
   };
 
   result.reportIdentity = {
+    templateProfile,
     /*
       Existing visible submission ID.
     */

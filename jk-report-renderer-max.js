@@ -1533,6 +1533,7 @@ function drawCover(
   const id =
     bundle.reportIdentity ||
     {};
+  const templateLabels = require("./jk-report-template-profiles.cjs").coverLabels(id);
 
   shell(
     page,
@@ -1623,7 +1624,7 @@ function drawCover(
 
   drawTextTop(
     page,
-    "Quick Submit",
+    templateLabels.assignment,
     56,
     quickTop +
       0.448,
@@ -1642,7 +1643,7 @@ function drawCover(
 
   drawTextTop(
     page,
-    "Quick Submit",
+    templateLabels.className,
     56,
     quickTop +
       16.448,

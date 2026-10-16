@@ -2101,6 +2101,8 @@ function createPaidJob({ userId, apiRef, ref, invoiceId, source }) {
     source: source || "payment-confirmed"
   };
 
+  // JK_REPORT_TEMPLATE_ROTATION_V1: reserve once per paid/admin batch.
+  require("./jk-report-template-profiles.cjs").assignBatch(paidJobs[jobId], DATA_DIR);
   cleanupPaidJobs();
   savePaidJobs();
   return paidJobs[jobId];
@@ -2898,6 +2900,7 @@ function adminDiscountKeyboard() {
 
 function reportModeKeyboard() {
   return adminBackKeyboard([
+    [Markup.button.callback("Report Template", "RPTM:OPEN")],
     [
       Markup.button.callback(
         "🧑‍💻 Manual Only",
@@ -3087,6 +3090,7 @@ function adminAllCommandsText() {
     "",
     "Report generation",
     "/reportmode - Manual / Admin Approval / Automatic API",
+    "/reporttemplate - Automatic rotation or fixed report profile",
     "/filtermode - Client choice / Always filtered / Always unfiltered",
     "/institution - View automatic identity pool",
     "/copyleaksstatus - Show Copyleaks configuration status",
@@ -3138,6 +3142,7 @@ async function syncAdminCommandMenu() {
     { command: "mode", description: "Check bot status" },
     { command: "syncname", description: "Sync bot display name" },
     { command: "reportmode", description: "Set report generation mode" },
+    { command: "reporttemplate", description: "View or set report template rotation" },
     { command: "filtermode", description: "Set similarity filtering mode" },
     { command: "institution", description: "View automatic identity pool" },
     { command: "copyleaksstatus", description: "Check Copyleaks API status" },
@@ -8512,6 +8517,9 @@ paidAiHighlights = require("./jk-client-ai-highlights.cjs").createService({
   listInvoices: intasendListInvoicesByApiRef
 });
 paidAiHighlights.register(bot);
+
+// JK_ADMIN_REPORT_TEMPLATE_CONTROL_V1
+require("./jk-report-template-profiles.cjs").register(bot, { dataDir: DATA_DIR, adminId: ADMIN_ID });
 
 bot.on("text", async (ctx) => {
   const user = ctx.from;

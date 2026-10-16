@@ -2,7 +2,9 @@
 
 function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
   const name = String(file.file_name || file.fileName || "Document");
-  const lines = ["File: " + name, "User: " + String(job.userId)];
+  const profile = require("./jk-report-template-profiles.cjs").profileFields(file);
+  const lines = ["File: " + name, "User: " + String(job.userId),
+    "Template: " + (profile.template === "CLASS" ? profile.assignmentName + " / " + profile.className : "Quick Submit")];
 
   if (stage === "submitted") {
     return [

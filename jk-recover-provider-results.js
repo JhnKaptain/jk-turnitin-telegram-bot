@@ -328,6 +328,7 @@ function identityFromStore(checkpointPath, jobsPath, checkpoint) {
       username: job.username
     },
     reportIdentity: {
+      templateProfile: require("./jk-report-template-profiles.cjs").profileFields(file),
       jkSubmissionId: file.jkSubmissionId,
       reportName: file.reportName,
       studentName: file.reportName,
