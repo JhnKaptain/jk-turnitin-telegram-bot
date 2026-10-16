@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const RETENTION_MS = 48 * 60 * 60 * 1000;
+const RETENTION_MS = 24 * 60 * 60 * 1000;
 
 function inspectTree(directory) {
   let latest = 0;
@@ -122,7 +122,7 @@ function cleanFiles({
     if (now - stats.latest < RETENTION_MS) {
       report.skipped.push({
         directory,
-        reason: "Less than 48 hours since last file change"
+        reason: "Less than 24 hours since last file change"
       });
       continue;
     }
@@ -141,7 +141,7 @@ function cleanFiles({
     for (const file of owners) {
       file.providerAutoResubmitBlocked = true;
       file.providerFilesPurgedAt = now;
-      file.providerFilesRetentionHours = 48;
+      file.providerFilesRetentionHours = 24;
     }
 
     try {
@@ -181,7 +181,7 @@ function startFileCleanup({ dataDir, getPaidJobs, persist }) {
 
       if (result.deleted.length) {
         console.log(
-          "48-hour file cleanup:",
+          "24-hour file cleanup:",
           result.deleted.length,
           "scan folder(s) removed."
         );
@@ -210,7 +210,7 @@ function selfTest() {
   fs.mkdirSync(root);
 
   const now = Date.now();
-  const old = new Date(now - 49 * 60 * 60 * 1000);
+  const old = new Date(now - 25 * 60 * 60 * 1000);
   const paidJobs = { test: { files: [] } };
 
   for (const name of ["expired", "recent", "active"]) {
@@ -282,7 +282,7 @@ function selfTest() {
   assert.equal(fs.readFileSync(ledger, "utf8"), "KEEP PAYMENT RECORDS");
   assert.equal(paidJobs.test.files.length, 3);
 
-  console.log("PASS: 48-hour expiry and preview mode.");
+  console.log("PASS: 24-hour expiry and preview mode.");
   console.log("PASS: active and recent files protected.");
   console.log("PASS: payment and job records retained.");
   console.log("PASS: resubmission block saved before deletion.");

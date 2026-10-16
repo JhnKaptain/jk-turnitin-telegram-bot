@@ -81,7 +81,7 @@ function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
       "REPORTS READY",
       ...lines,
       remainingMs > 0
-        ? "Delivery in approximately " + Math.ceil(remainingMs / 60000) + " minute(s)."
+        ? "Delivery in approximately " + Math.ceil(remainingMs / 1000) + " second(s)."
         : "Delivery starting now."
     ].join("\n");
   }
