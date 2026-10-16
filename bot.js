@@ -2851,12 +2851,12 @@ function adminDashboardKeyboard() {
         "ADMIN_DASH_PAYMENTS"
       )
     ],
-    [
+    ...(require("./jk-admin-free-scan-control.cjs").enabled() ? [[
       Markup.button.callback(
         "🧪 Admin Free Scan",
         "ADMIN_DASH_FREE_SCAN"
       )
-    ],
+    ]] : []),
     [
       Markup.button.callback(
         "📋 All Commands",
@@ -6527,6 +6527,12 @@ bot.action("ADMIN_DASH_PAYMENTS", async (ctx) => {
   );
 });
 
+// JK_ADMIN_FREE_SCAN_ENABLED_V1
+require("./jk-admin-free-scan-control.cjs").registerGuard(bot, {
+  adminId: ADMIN_ID,
+  onDisable: () => { adminFreeScanSession = null; }
+});
+
 // JK_ADMIN_FREE_SCAN_ACTIONS_V1
 bot.action(
   "ADMIN_DASH_FREE_SCAN",
@@ -7821,6 +7827,11 @@ bot.on("document", async (ctx) => {
   const user = ctx.from;
 
   // JK_ADMIN_FREE_SCAN_DOCUMENT_V1
+  if (user.id === ADMIN_ID && adminFreeScanSession && !require("./jk-admin-free-scan-control.cjs").enabled()) {
+    adminFreeScanSession = null;
+    await ctx.reply("Admin Free Scan is disabled.");
+    return;
+  }
   if (
     user.id === ADMIN_ID &&
     adminFreeScanSession?.stage ===
