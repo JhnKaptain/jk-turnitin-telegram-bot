@@ -1,4 +1,6 @@
 "use strict";
+const { attachUnicodeFonts, drawUnicodeText } = require("./jk-report-unicode-fonts.cjs");
+
 const {
   classifyAiRunningMetadata,
   countAiPositiveSentences
@@ -1186,7 +1188,7 @@ function findFontFile(pkg, patterns) {
   throw new Error(`Required font not found in ${pkg}: ${patterns.join(", ")}`);
 }
 
-async function loadBrandFonts(doc) {
+async function loadBrandFonts(doc, bundle) {
   doc.registerFontkit(fontkit);
   const notoPkg = "@fontsource/noto-sans";
   const lexPkg = "@fontsource/lexend-deca";
@@ -1218,18 +1220,18 @@ async function loadBrandFonts(doc) {
       )
     );
 
-  return {
+  return attachUnicodeFonts(doc, {
     noto: await doc.embedFont(fs.readFileSync(files.noto), { subset: true }),
     notoSemi: await doc.embedFont(fs.readFileSync(files.notoSemi), { subset: true }),
     lexMed: await doc.embedFont(fs.readFileSync(files.lexMed), { subset: true }),
     lexSemi: await doc.embedFont(fs.readFileSync(files.lexSemi), { subset: true }),
     helv: await doc.embedFont(StandardFonts.Helvetica),
     brandLogo
-  };
+  }, bundle);
 }
 
 function drawTextTop(page, text, x, top, size, font, color = C.ink) {
-  page.drawText(safeText(text), {
+  drawUnicodeText(page, safeText(text), {
     x,
     y: topY(
       top,
@@ -3617,7 +3619,7 @@ function drawSourceBadge(page, f, source, x, top) {
 
   const t = String(source.number);
 
-  page.drawText(t, {
+  drawUnicodeText(page, t, {
     x: x - f.notoSemi.widthOfTextAtSize(t, 6) / 2,
     y: y - 2.2,
     size: 6,
@@ -3670,7 +3672,7 @@ function sourceOverviewPages(doc, f, icons, bundle, groups, cats, sources, start
       const label = String(source.number);
       const labelSize = label.length >= 2 ? 6.2 : 7;
 
-      page.drawText(label, {
+      drawUnicodeText(page, label, {
         x: 48.25 - f.notoSemi.widthOfTextAtSize(label, labelSize) / 2,
         y: PAGE_H - top - labelSize + 0.8,
         size: labelSize,
@@ -3920,7 +3922,7 @@ function drawFittedText(page, value, x, y, size, font, targetWidth, color = C.in
   const sx = fittedScale(font, clean, size, targetWidth);
 
   if (Math.abs(sx - 1) < 0.0005) {
-    page.drawText(clean, {
+    drawUnicodeText(page, clean, {
       x,
       y,
       size,
@@ -3938,7 +3940,7 @@ function drawFittedText(page, value, x, y, size, font, targetWidth, color = C.in
     translate(-x, 0)
   );
 
-  page.drawText(clean, {
+  drawUnicodeText(page, clean, {
     x,
     y,
     size,
@@ -4007,7 +4009,7 @@ function drawSourceNumberBadge(page, f, number, x, y) {
   const label = String(number);
   const size = label.length >= 2 ? 6.6 : 7.754;
 
-  page.drawText(label, {
+  drawUnicodeText(page, label, {
     x: x - f.notoSemi.widthOfTextAtSize(label, size) / 2,
     y: y - size * 0.34,
     size,
@@ -6072,7 +6074,7 @@ async function renderSimilarity(
 
   const f =
     await loadBrandFonts(
-      doc
+      doc, bundle
     );
 
   const icons =
@@ -6325,7 +6327,7 @@ async function renderAi(
 
   const f =
     await loadBrandFonts(
-      doc
+      doc, bundle
     );
 
   const icons =

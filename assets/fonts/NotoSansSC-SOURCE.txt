@@ -1,0 +1,4 @@
+Noto Sans SC, SIL Open Font License 1.1.
+Source: https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc
+NotoSansSC[wght].ttf instantiated at wght=400 using fontTools.varLib.instancer.
+The original font license is included as OFL-NotoSansSC.txt.

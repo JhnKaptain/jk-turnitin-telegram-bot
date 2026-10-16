@@ -1,0 +1,26 @@
+"use strict";
+const fs = require("fs"), path = require("path"), assert = require("node:assert/strict");
+const { PDFDocument, StandardFonts } = require("pdf-lib");
+const fontkit = require("@pdf-lib/fontkit");
+const { attachUnicodeFonts, drawUnicodeText, needsCjk } = require("./jk-report-unicode-fonts.cjs");
+(async () => {
+  assert(needsCjk({ filename: "智慧农业.docx" }));
+  assert(!needsCjk({ filename: "English.docx" }));
+  const doc = await PDFDocument.create(); doc.registerFontkit(fontkit);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const originalWidth = font.widthOfTextAtSize("English filename.docx", 12);
+  const fonts = { noto: font };
+  assert.strictEqual(await attachUnicodeFonts(doc, fonts, { filename: "English.docx" }), fonts);
+  assert.equal(font.widthOfTextAtSize("English filename.docx", 12), originalWidth);
+  await attachUnicodeFonts(doc, fonts, { filename: "智慧农业.docx", other: "繁體中文 日本語" });
+  assert.equal(font.widthOfTextAtSize("English filename.docx", 12), originalWidth);
+  assert(font.widthOfTextAtSize("智慧农业.docx", 12) > font.widthOfTextAtSize(".docx", 12));
+  const page = doc.addPage([612, 792]);
+  drawUnicodeText(page, "智慧农业.docx", { x: 36, y: 700, size: 17, font });
+  drawUnicodeText(page, "English 智慧农业 Report.docx", { x: 36, y: 660, size: 12, font });
+  drawUnicodeText(page, "繁體中文 日本語", { x: 36, y: 620, size: 12, font });
+  if (process.env.JK_UNICODE_TEST_PDF) fs.writeFileSync(process.env.JK_UNICODE_TEST_PDF, await doc.save());
+  else await doc.save();
+  assert.throws(() => font.widthOfTextAtSize("\u{10ffff}", 12), /cannot display/);
+  console.log("PASS: Chinese/mixed-script glyph fallback, English widths preserved, missing glyph rejection and embedded CJK PDF subset. No provider requests or deliveries.");
+})().catch(error => { console.error(error); process.exitCode = 1; });
