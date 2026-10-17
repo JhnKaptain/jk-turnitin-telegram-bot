@@ -87,6 +87,52 @@ function openingCoverBlock(lines, page, source) {
   if (!tail.some(l => !metadata(l) && words(l.text).length >= 8)) return [];
   return prefix;
 }
+// Recognise a common assessment cover with a course code and explicit word count.
+// Only its centred identity block is excluded on mixed pages. A trailing quoted
+// research question is excluded only when it completes a separate sparse cover.
+function assessmentCoverBlock(lines, page, pageCount) {
+  const content = lines.filter(l => l.y > page.height * 0.1 && l.y < page.height * 0.94 &&
+    !/^\s*(?:\d+|Page\s+\d+(?:\s+of\s+\d+)?)\s*$/iu.test(l.text));
+  if (content.length < 4 || content.some((l, i) => i && l.y >= content[i - 1].y)) return null;
+  const centered = l => Math.abs(l.x + l.width / 2 - page.width / 2) <= Math.max(12, l.height * 1.8);
+  const first = content.slice(0, 3);
+  if (!first.every(l => l.isolated && centered(l)) || words(first[0].text).length < 4 ||
+      words(first[0].text).length > 35 || !titleLike(norm(first[0].text)) ||
+      !titleLike(norm(first[1].text)) || words(first[1].text).length < 2 || words(first[1].text).length > 6 ||
+      !/^[A-Z]{2,8}\s*[- ]?\d{3,5}\b/u.test(norm(first[2].text)) ||
+      !/\b(?:assessment|assignment|report|project|dissertation|thesis)\b/iu.test(first[2].text) ||
+      words(first[2].text).length > 20) return null;
+  if (!/^word\s+count\s*:\s*\d[\d,]*\b/iu.test(norm(content[3].text))) return null;
+  const prefix = first.slice();
+  let countText = "", end = 3;
+  for (; end < Math.min(content.length, 6); end++) {
+    const line = content[end];
+    if (!line.isolated || !centered(line)) return null;
+    countText += " " + norm(line.text); prefix.push(line);
+    const opens = (countText.match(/\(/g) || []).length;
+    const closes = (countText.match(/\)/g) || []).length;
+    if (closes > opens) return null;
+    if (opens === closes) { end++; break; }
+  }
+  if ((countText.match(/\(/g) || []).length !== (countText.match(/\)/g) || []).length ||
+      !/^\s*word\s+count\s*:\s*\d[\d,]*(?:\s*\((?:including|excluding)\b[^()]{0,300}\))?\s*$/iu.test(countText) ||
+      words(countText).length > 45) return null;
+  for (let i = 1; i < prefix.length; i++) {
+    const gap = prefix[i - 1].y - prefix[i].y;
+    if (gap < prefix[i].height * 0.8 || gap > prefix[i].height * 5) return null;
+  }
+  const tail = content.slice(end);
+  if (!tail.length) return { lines: prefix, wholePage: pageCount > 1 };
+  const last = prefix.at(-1);
+  if (last.y - tail[0].y < Math.max(last.height, tail[0].height) * 1.5) return null;
+  const question = norm(tail.map(l => l.text).join(" "));
+  const quotedQuestion = /^[“"](?:How|What|Why|To what extent|In what ways)\b[^.!?]{15,700}\?[”"]$/iu.test(question);
+  const sparseQuestion = pageCount > 1 && tail.length <= 5 && quotedQuestion &&
+    tail.every(l => l.isolated) && words(question).length <= 100 &&
+    tail.every((l, i) => !i || (Math.abs(l.x - tail[i - 1].x) <= 18 &&
+      tail[i - 1].y - l.y <= Math.max(l.height, tail[i - 1].height) * 3));
+  return sparseQuestion ? { lines: content, wholePage: true } : { lines: prefix, wholePage: false };
+}
 function classifyAiStructuralText(document) {
   if (!document || typeof document.text !== "string" || !Array.isArray(document.pages)) return [];
   const source = document.text, spans = [], usage = new Map();
@@ -114,7 +160,13 @@ function classifyAiStructuralText(document) {
     const content = lines.filter(l => l.y > page.height * 0.1 && l.y < page.height * 0.92 &&
       !/^\s*(?:\d+|Page\s+\d+(?:\s+of\s+\d+)?)\s*$/iu.test(l.text));
     const centered = line => Math.abs(line.x + line.width / 2 - page.width / 2) <= Math.max(12, line.height * 1.8);
-    const mixedBlock = p === 0 ? openingCoverBlock(lines, page, source) : [];
+    const assessment = p === 0 ? assessmentCoverBlock(lines, page, document.pages.length) : null;
+    if (assessment?.wholePage) {
+      for (const line of assessment.lines) spans.push({ start: line.start, end: line.end, text: line.text,
+        pageNumber: page.pageNumber || p + 1, reason: "SEPARATE_COVER_PAGE" });
+      continue;
+    }
+    const mixedBlock = p === 0 ? (assessment?.lines || openingCoverBlock(lines, page, source)) : [];
     for (const line of mixedBlock) spans.push({ start: line.start, end: line.end, text: line.text,
       pageNumber: page.pageNumber || p + 1, reason: "OPENING_COVER_INFORMATION" });
     // A separate first-page cover needs sparse centered lines AND multiple metadata clues.
@@ -136,7 +188,7 @@ function classifyAiStructuralText(document) {
     }
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
       const line = lines[lineIndex];
-      if (!line.isolated) continue;
+      if (!line.isolated || mixedBlock.includes(line)) continue;
       const text = norm(line.text);
       const colon = line.text.indexOf(":");
       if (colon < 0) {
@@ -191,7 +243,7 @@ function excludeAiStructuralText(prepared, document) {
     spans.push(span); if (span.reason === "SEPARATE_COVER_PAGE") covers.add(span.pageNumber);
     if (span.reason === "OPENING_COVER_INFORMATION") blocks.add(span.pageNumber);
   }
-  return { ...legacy, text: chars.join(""), map, aiHeadingPolicy: "cover-blocks-and-formatted-labels-v3",
+  return { ...legacy, text: chars.join(""), map, aiHeadingPolicy: "assessment-cover-and-formatted-labels-v4",
     aiStructuralHeadingsExcluded: spans.length, aiCoverPagesExcluded: covers.size, aiCoverBlocksExcluded: blocks.size, aiStructuralHeadingSpans: spans };
 }
 module.exports = { classifyAiStructuralText, excludeAiStructuralText };
