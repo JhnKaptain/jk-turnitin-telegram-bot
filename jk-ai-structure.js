@@ -178,7 +178,7 @@ function classifyAiStructuralText(document) {
       (words(l.text).length >= 8 && (/[.!?]["'’”)]?\s*$/u.test(l.text) ||
         /\b(?:reports|states|requires|supports|suggests|shows|explains|describes|indicates|believes|denies)\b/iu.test(l.text)) &&
         !clues.includes(l) && content.indexOf(l) > 1));
-    const cover = p === 0 && !mixedBlock.length && document.pages.length > 1 && content.length >= 4 && content.length <= 14 &&
+    const cover = !mixedBlock.length && document.pages.length > 1 && content.length >= 4 && content.length <= 14 &&
       clues.length >= 2 && words(content.map(l => l.text).join(" ")).length <= 180 &&
       content.filter(centered).length / content.length >= 0.8 && !prose;
     if (cover) {
@@ -190,6 +190,9 @@ function classifyAiStructuralText(document) {
       const line = lines[lineIndex];
       if (!line.isolated || mixedBlock.includes(line)) continue;
       const text = norm(line.text);
+      if (/^(?:Timescale|Timeline|Research Schedule)$/iu.test(text) && styledShare(line, line.start, line.end) >= 0.8) {
+        spans.push({start:line.start,end:line.end,text:line.text,pageNumber:page.pageNumber || p+1,reason:"FORMATTED_SCHEDULE_HEADING"});
+      }
       const colon = line.text.indexOf(":");
       if (colon < 0) {
         const next = lines[lineIndex + 1];
@@ -220,7 +223,7 @@ function classifyAiStructuralText(document) {
         reason: remainder ? "FORMATTED_RUN_IN_LABEL" : "STANDALONE_SECTION_LABEL" });
     }
   }
-  return spans;
+  return spans.concat(require("./jk-ai-layout-extra.cjs").classifyExtra(document));
 }
 function excludeAiStructuralText(prepared, document) {
   if (!document || typeof document.text !== "string" || typeof prepared?.text !== "string" ||
@@ -230,11 +233,11 @@ function excludeAiStructuralText(prepared, document) {
   map.forEach((source, i) => { if (Number.isInteger(source)) indices.set(source, i); });
   const spans = [...(legacy.aiStructuralHeadingSpans || [])], covers = new Set(), blocks = new Set();
   for (const span of classifyAiStructuralText(document)) {
-    const start = indices.get(span.start), length = span.end - span.start;
-    if (!Number.isInteger(start)) continue;
+    const start = prepared.map.indexOf(span.start), length = span.end - span.start;
+    if (!Number.isInteger(start) || start < 0) continue;
     let exact = true;
-    for (let offset = 0; offset < length; offset++) if (map[start + offset] !== span.start + offset ||
-        chars[start + offset] !== document.text[span.start + offset]) { exact = false; break; }
+    for (let offset = 0; offset < length; offset++) if (prepared.map[start + offset] !== span.start + offset ||
+        prepared.text[start + offset] !== document.text[span.start + offset]) { exact = false; break; }
     if (!exact) continue;
     for (let offset = 0; offset < length; offset++) {
       if (!/[\r\n]/u.test(chars[start + offset])) chars[start + offset] = " ";
@@ -243,7 +246,18 @@ function excludeAiStructuralText(prepared, document) {
     spans.push(span); if (span.reason === "SEPARATE_COVER_PAGE") covers.add(span.pageNumber);
     if (span.reason === "OPENING_COVER_INFORMATION") blocks.add(span.pageNumber);
   }
-  return { ...legacy, text: chars.join(""), map, aiHeadingPolicy: "assessment-cover-and-formatted-labels-v4",
-    aiStructuralHeadingsExcluded: spans.length, aiCoverPagesExcluded: covers.size, aiCoverBlocksExcluded: blocks.size, aiStructuralHeadingSpans: spans };
+  // Multiple conservative classifiers can identify the SAME source span.
+  // Keep text masking and null barriers unchanged; count each exact source
+  // interval once. Prefer a descriptive reason over the legacy unlabelled one.
+  const uniqueBySource = new Map();
+  for (const span of spans) {
+    const key = `${span.start}:${span.end}`;
+    const prior = uniqueBySource.get(key);
+    if (!prior) uniqueBySource.set(key, span);
+    else if (!prior.reason && span.reason) uniqueBySource.set(key, span);
+  }
+  const uniqueSpans = [...uniqueBySource.values()];
+  return { ...legacy, text: chars.join(""), map, aiHeadingPolicy: "isolated-layout-v5",
+    aiStructuralHeadingsExcluded: uniqueSpans.length, aiCoverPagesExcluded: covers.size, aiCoverBlocksExcluded: blocks.size, aiStructuralHeadingSpans: uniqueSpans };
 }
 module.exports = { classifyAiStructuralText, excludeAiStructuralText };

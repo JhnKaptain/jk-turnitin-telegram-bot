@@ -23,7 +23,15 @@ function normalizedText(value) {
   return { text, starts, ends };
 }
 
-function alignQuetextMatch(input, match) {
+function alignQuetextMatch(input, match, providerText) {
+  // Quetext returns the exact text it analyzed. When present, use its
+  // verified offset/text correspondence instead of repeated-text guessing.
+  if (typeof providerText === "string") {
+    const { alignAiRanges } = require("./jk-ai-offsets-verified.cjs");
+    const mapped = alignAiRanges({input:String(input ?? ""), providerText,
+      ranges:[match], offsetUnit:"auto"})[0];
+    return {...mapped, alignmentMethod:"RETURNED_FULL_TEXT", reportedStart:match.start};
+  }
   const value = String(input || "");
   const target = String(match?.text || "");
   const reported = match?.start;
@@ -83,4 +91,8 @@ function alignQuetextMatch(input, match) {
   };
 }
 
-module.exports = { alignQuetextMatch };
+function alignQuetextResultMatches(input, result) {
+  const matches = Array.isArray(result?.matches) ? result.matches : [];
+  return matches.map(m => alignQuetextMatch(input, m, result?.inputText));
+}
+module.exports = { alignQuetextMatch, alignQuetextResultMatches };

@@ -112,8 +112,8 @@ function recover(checkpoint, selections, deps) {
           used.add(key);
         } else {
           aligned = name === "similarity"
-            ? deps.alignQuetextMatch(prepared.text, entry)
-            : deps.alignSaplingRange(prepared.text, entry);
+            ? deps.alignQuetextMatch(prepared.text, entry, state.value?.inputText)
+            : deps.alignSaplingRange(prepared.text, entry, state.value?.raw?.text);
         }
 
         assert.equal(
@@ -183,7 +183,8 @@ function recover(checkpoint, selections, deps) {
 
   const similarityDetection = deps.normalizeQuetextResult(
     results.similarity.value,
-    checkpoint.preparedInputs.similarity
+    checkpoint.preparedInputs.similarity,
+    true // entries already aligned and verified above; keep saved raw evidence intact
   );
 
   assert.equal(
@@ -195,7 +196,8 @@ function recover(checkpoint, selections, deps) {
   const aiDetection = results.ai?.status === "fulfilled"
     ? deps.normalizeSaplingResult(
         results.ai.value,
-        checkpoint.preparedInputs.ai
+        checkpoint.preparedInputs.ai,
+        true // prevents a second interpretation of original provider offsets
       )
     : {
         available: false,

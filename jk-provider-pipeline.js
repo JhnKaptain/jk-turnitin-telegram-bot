@@ -262,14 +262,14 @@ function aiEligibility(
 
 function normalizeQuetextResult(
   result,
-  prepared
+  prepared,
+  alreadyAligned = false
 ) {
-  const matches =
-    (Array.isArray(result?.matches) ? result.matches : [])
-      .map(match =>
-        require("./jk-match-offsets.js")
-          .alignQuetextMatch(prepared.text, match)
-      );
+  const matches = alreadyAligned
+    ? (Array.isArray(result?.matches) ? result.matches : []).map(match =>
+        require("./jk-match-offsets.js").alignQuetextMatch(prepared.text, match))
+    : require("./jk-match-offsets.js")
+        .alignQuetextResultMatches(prepared.text, result);
 
   const mappedRanges =
     [];
@@ -565,7 +565,8 @@ function normalizeQuetextResult(
 
 function normalizeSaplingResult(
   result,
-  prepared
+  prepared,
+  alreadyAligned = false
 ) {
   const percent =
     clampPercent(
@@ -589,12 +590,11 @@ function normalizeSaplingResult(
 
     Returned sentence text is verified before UTF-16 source mapping.
   */
-  const providerRanges =
-    (Array.isArray(result?.ranges) ? result.ranges : [])
-      .map(range =>
-        require("./jk-ai-match-offsets.js")
-          .alignSaplingRange(prepared.text, range)
-      );
+  const providerRanges = alreadyAligned
+    ? (Array.isArray(result?.ranges) ? result.ranges : []).map(range =>
+        require("./jk-ai-match-offsets.js").alignSaplingRange(prepared.text, range))
+    : require("./jk-ai-match-offsets.js")
+        .alignSaplingResultRanges(prepared.text, result);
 
   const mappedRanges =
     mapProviderRangesToSource(
