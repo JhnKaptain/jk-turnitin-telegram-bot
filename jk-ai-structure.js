@@ -223,7 +223,10 @@ function classifyAiStructuralText(document) {
         reason: remainder ? "FORMATTED_RUN_IN_LABEL" : "STANDALONE_SECTION_LABEL" });
     }
   }
-  return spans.concat(require("./jk-ai-layout-extra.cjs").classifyExtra(document));
+  return spans.concat(
+    require("./jk-ai-layout-extra.cjs").classifyExtra(document),
+    require("./jk-ai-structure-layout.cjs").classifyLayoutStructures(document)
+  );
 }
 function excludeAiStructuralText(prepared, document) {
   if (!document || typeof document.text !== "string" || typeof prepared?.text !== "string" ||
