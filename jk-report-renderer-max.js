@@ -4165,7 +4165,10 @@ async function drawOriginalPages(
             };
           }
         )
-      : ranges;
+      : kind === "AI"
+        ? require("./jk-ai-visual-mask.cjs")
+            .excludeAiNonProseRanges(ranges, providerDocument(bundle))
+        : ranges;
 
   for (const original of originalPages) {
     const sourceWidth =
