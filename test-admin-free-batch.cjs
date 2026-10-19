@@ -2,7 +2,8 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const source = fs.readFileSync(path.join(__dirname,"bot.js"),"utf8");
+// Normalize Git Windows CRLF and Unix LF before matching code boundaries.
+const source = fs.readFileSync(path.join(__dirname,"bot.js"),"utf8").replace(/\r\n/g,"\n");
 const uploadStart = source.indexOf("// JK_ADMIN_FREE_BATCH_UPLOAD_V1");
 const uploadEnd = source.indexOf("  if (user.id === ADMIN_ID) {",uploadStart);
 const startAction = source.indexOf("// JK_ADMIN_FREE_BATCH_CONFIRM_V1");
@@ -17,7 +18,7 @@ assert(upload.includes("session.files.push(storedFile)"));
 assert(upload.includes("No provider request has been made yet"));
 assert(confirm.includes("session.files.length === 0"));
 assert(confirm.includes("adminFreeScanSession = null;"));
-assert(confirm.indexOf("adminFreeScanSession = null;")<confirm.indexOf("await ctx.answerCbQuery"));
+assert(confirm.lastIndexOf("adminFreeScanSession = null;") < confirm.indexOf('await ctx.answerCbQuery("Batch confirmed. Starting scans.")'));
 assert(confirm.includes("files: session.files"));
 assert(confirm.includes("job.adminFreeScan = true"));
 assert(confirm.includes("submitPaidJobToActiveProvider(job.jobId)"));
