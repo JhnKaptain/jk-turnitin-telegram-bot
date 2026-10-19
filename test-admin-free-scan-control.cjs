@@ -25,7 +25,7 @@ const control=require("./jk-admin-free-scan-control.cjs");
   assert(source.indexOf('require("./jk-admin-free-scan-control.cjs").registerGuard')<source.indexOf('// JK_ADMIN_FREE_SCAN_ACTIONS_V1'));
   // Exercise the real document-handler entry guard with an unfinished free session.
   const begin=source.indexOf('bot.on("document", async (ctx) => {')+'bot.on("document", async (ctx) => {'.length;
-  const end=source.indexOf('  if (\n    user.id === ADMIN_ID &&\n    adminFreeScanSession?.stage',begin);
+  const end=source.indexOf('  // JK_ADMIN_FREE_BATCH_UPLOAD_V1',begin);
   assert(end>begin);const prefix=source.slice(begin,end);
   const run=new Function("require","ctx","state",`return (async()=>{const ADMIN_ID=999;let adminFreeScanSession=state;${prefix}\nreturn "normal document flow";})();`);
   let replies=0;process.env.ADMIN_FREE_SCAN_ENABLED="0";
