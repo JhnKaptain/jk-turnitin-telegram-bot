@@ -2790,7 +2790,15 @@ function adminFreeScanFilterKeyboard() {
 
 function adminFreeScanWaitingKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🚀 Start Scanning", "ADMIN_FREE_SCAN_START")],
+    [Markup.button.callback("📋 Review Batch", "ADMIN_FREE_SCAN_REVIEW")],
+    [Markup.button.callback("❌ Cancel Admin Scan", "ADMIN_FREE_SCAN_CANCEL")]
+  ]);
+}
+
+function adminFreeScanReviewKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("🚀 Confirm & Start Scanning", "ADMIN_FREE_SCAN_START")],
+    [Markup.button.callback("↩️ Add More Files", "ADMIN_FREE_SCAN_MORE")],
     [Markup.button.callback("❌ Cancel Admin Scan", "ADMIN_FREE_SCAN_CANCEL")]
   ]);
 }
@@ -6757,6 +6765,41 @@ bot.action(
   }
 );
 
+// JK_ADMIN_FREE_BATCH_REVIEW_V1
+bot.action("ADMIN_FREE_SCAN_REVIEW", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  const session = adminFreeScanSession;
+  if (!session || session.stage !== "WAIT_DOCUMENT" ||
+      !Array.isArray(session.files) || session.files.length === 0) {
+    return ctx.answerCbQuery("Upload at least one document first.", { show_alert: true });
+  }
+  await ctx.answerCbQuery("Review documents before scanning.");
+  await showAdminScreen(ctx, [
+    "🧪 ADMIN FREE BATCH - REVIEW",
+    "Files: " + session.files.length + " / 10",
+    "Service: " + adminReportTypeLabel(session.type),
+    "Filter: " + similarityFilterLabel(session.similarityFilter),
+    "",
+    ...session.files.map((file, index) =>
+      (index + 1) + ". " + safeText(file.file_name || "Document")),
+    "",
+    "No customer payment. Each document consumes provider API credits.",
+    "Confirm to scan all files, or add more documents."
+  ].join("\n"), adminFreeScanReviewKeyboard(), true);
+});
+
+bot.action("ADMIN_FREE_SCAN_MORE", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  if (!adminFreeScanSession || adminFreeScanSession.stage !== "WAIT_DOCUMENT")
+    return ctx.answerCbQuery("Start Admin Free Scan first.", { show_alert: true });
+  if ((adminFreeScanSession.files || []).length >= MAX_BATCH_FILES)
+    return ctx.answerCbQuery("The batch already has 10 files.", { show_alert: true });
+  await ctx.answerCbQuery();
+  await showAdminScreen(ctx,
+    "🧪 ADMIN FREE SCAN\nSend more PDF or DOCX files, then tap Review Batch.",
+    adminFreeScanWaitingKeyboard(), true);
+});
+
 // JK_ADMIN_FREE_BATCH_CONFIRM_V1
 bot.action("ADMIN_FREE_SCAN_START", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
@@ -7903,7 +7946,7 @@ bot.on("document", async (ctx) => {
     }
     if (!Array.isArray(session.files)) session.files = [];
     if (session.files.length >= MAX_BATCH_FILES) {
-      await ctx.reply("Batch already contains 10 files. Tap Start Scanning or Cancel.");
+      await ctx.reply("Batch already contains 10 files. Tap Review Batch or Cancel.");
       return;
     }
     const duplicate = session.files.some(file =>
@@ -7932,7 +7975,7 @@ bot.on("document", async (ctx) => {
     await ctx.reply([
       "✅ Added file " + session.files.length + " / 10",
       "File: " + safeText(storedFile.file_name),
-      "Upload another PDF/DOCX or tap Start Scanning.",
+      "Upload another PDF/DOCX or tap Review Batch.",
       "No provider request has been made yet."
     ].join("\n"), { reply_markup: adminFreeScanWaitingKeyboard().reply_markup });
     return;
