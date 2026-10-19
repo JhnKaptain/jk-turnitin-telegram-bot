@@ -2790,12 +2790,16 @@ function adminFreeScanFilterKeyboard() {
 
 function adminFreeScanWaitingKeyboard() {
   return Markup.inlineKeyboard([
-    [
-      Markup.button.callback(
-        "❌ Cancel Admin Scan",
-        "ADMIN_FREE_SCAN_CANCEL"
-      )
-    ]
+    [Markup.button.callback("📋 Review Batch", "ADMIN_FREE_SCAN_REVIEW")],
+    [Markup.button.callback("❌ Cancel Admin Scan", "ADMIN_FREE_SCAN_CANCEL")]
+  ]);
+}
+
+function adminFreeScanReviewKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("🚀 Confirm & Start Scanning", "ADMIN_FREE_SCAN_START")],
+    [Markup.button.callback("↩️ Add More Files", "ADMIN_FREE_SCAN_MORE")],
+    [Markup.button.callback("❌ Cancel Admin Scan", "ADMIN_FREE_SCAN_CANCEL")]
   ]);
 }
 
@@ -6695,7 +6699,7 @@ bot.action(
           ),
         "Filter: Quotes + Bibliography",
         "",
-        "Send ONE PDF or DOCX document now.",
+        "Send 1–10 PDF or DOCX documents, then tap Review Batch.",
         "",
         "No bot payment will be requested."
       ].join("\n"),
@@ -6751,7 +6755,7 @@ bot.action(
           ),
         "Filter: Unfiltered",
         "",
-        "Send ONE PDF or DOCX document now.",
+        "Send 1–10 PDF or DOCX documents, then tap Review Batch.",
         "",
         "No bot payment will be requested."
       ].join("\n"),
@@ -6760,6 +6764,108 @@ bot.action(
     );
   }
 );
+
+// JK_ADMIN_FREE_BATCH_REVIEW_V1
+bot.action("ADMIN_FREE_SCAN_REVIEW", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  const session = adminFreeScanSession;
+  if (!session || session.stage !== "WAIT_DOCUMENT" ||
+      !Array.isArray(session.files) || session.files.length === 0) {
+    return ctx.answerCbQuery("Upload at least one document first.", { show_alert: true });
+  }
+  // Lock the exact file list while the admin reviews it.
+  session.stage = "WAIT_CONFIRM";
+  await ctx.answerCbQuery("Review documents before scanning.");
+  await showAdminScreen(ctx, [
+    "🧪 ADMIN FREE BATCH - REVIEW",
+    "Files: " + session.files.length + " / 10",
+    "Service: " + adminReportTypeLabel(session.type),
+    "Filter: " + similarityFilterLabel(session.similarityFilter),
+    "",
+    ...session.files.map((file, index) =>
+      (index + 1) + ". " + safeText(file.file_name || "Document")),
+    "",
+    "No customer payment. Each document consumes provider API credits.",
+    "Confirm to scan all files, or add more documents."
+  ].join("\n"), adminFreeScanReviewKeyboard(), true);
+});
+
+bot.action("ADMIN_FREE_SCAN_MORE", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  if (!adminFreeScanSession || adminFreeScanSession.stage !== "WAIT_CONFIRM")
+    return ctx.answerCbQuery("Review the current batch first.", { show_alert: true });
+  if ((adminFreeScanSession.files || []).length >= MAX_BATCH_FILES)
+    return ctx.answerCbQuery("The batch already has 10 files.", { show_alert: true });
+  adminFreeScanSession.stage = "WAIT_DOCUMENT";
+  await ctx.answerCbQuery();
+  await showAdminScreen(ctx,
+    "🧪 ADMIN FREE SCAN\nSend more PDF or DOCX files, then tap Review Batch.",
+    adminFreeScanWaitingKeyboard(), true);
+});
+
+// JK_ADMIN_FREE_BATCH_CONFIRM_V1
+bot.action("ADMIN_FREE_SCAN_START", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  const session = adminFreeScanSession;
+  if (!session || session.stage !== "WAIT_CONFIRM" || !Array.isArray(session.files) ||
+      session.files.length === 0) {
+    return ctx.answerCbQuery("Upload at least one document first.", { show_alert: true });
+  }
+  if (!require("./jk-admin-free-scan-control.cjs").enabled()) {
+    adminFreeScanSession = null;
+    return ctx.answerCbQuery("Admin Free Scan is disabled.");
+  }
+
+  // Clear synchronously before any await. Double taps cannot start two jobs.
+  adminFreeScanSession = null;
+  await ctx.answerCbQuery("Batch confirmed. Starting scans.");
+
+  const now = Date.now();
+  const batchId = "JK_ADMIN_FREE_" + ADMIN_ID + "_" + now;
+  const job = createPaidJob({
+    userId: ADMIN_ID,
+    apiRef: "ADMINFREE_" + now,
+    ref: {
+      batchId,
+      amount: 0,
+      kind: "ADMIN_FREE_SCAN",
+      summary: "Admin Free Scan",
+      name: getUserFullName(ctx.from),
+      username: safeText(ctx.from.username || "N/A"),
+      phone: null,
+      files: session.files
+    },
+    invoiceId: null,
+    source: "admin-free-scan"
+  });
+  job.reportPipeline = PROVIDER_NEUTRAL_PIPELINE;
+  job.adminFreeScan = true;
+  job.amount = 0;
+  job.reportModeSnapshot = REPORT_MODE_AUTO;
+  job.route = "PENDING";
+  job.status = "PROCESSING";
+  savePaidJobs();
+
+  await ctx.reply([
+    "🧪 ADMIN FREE BATCH STARTED",
+    "Files: " + session.files.length + " / 10",
+    "Service: " + adminReportTypeLabel(session.type),
+    "Filter: " + similarityFilterLabel(session.similarityFilter),
+    "Payment: BYPASSED (ADMIN)",
+    "Provider API usage: LIVE",
+    "Reports will be delivered to your admin account."
+  ].join("\n"));
+  // The established provider-neutral job runner already processes job.files
+  // sequentially and persists each file's checkpoints and delivery state.
+  setImmediate(async () => {
+    try {
+      await submitPaidJobToActiveProvider(job.jobId);
+    } catch (err) {
+      await sendAdminMessage("❌ ADMIN FREE BATCH FAILED\n" +
+        "Batch: " + batchId + "\nError: " + safeText(err?.message || err));
+    }
+  });
+});
 
 bot.action(
   "ADMIN_FREE_SCAN_CANCEL",
@@ -7832,192 +7938,54 @@ bot.on("document", async (ctx) => {
     await ctx.reply("Admin Free Scan is disabled.");
     return;
   }
-  if (
-    user.id === ADMIN_ID &&
-    adminFreeScanSession?.stage ===
-      "WAIT_DOCUMENT"
-  ) {
-    const session = {
-      ...adminFreeScanSession
-    };
+  // Prevent uploads after review until Add More Files is selected.
+  if (user.id === ADMIN_ID && adminFreeScanSession?.stage === "WAIT_CONFIRM") {
+    await ctx.reply("This batch is awaiting confirmation. Tap Add More Files before uploading another document.");
+    return;
+  }
+  // JK_ADMIN_FREE_BATCH_UPLOAD_V1
+  if (user.id === ADMIN_ID && adminFreeScanSession?.stage === "WAIT_DOCUMENT") {
+    const session = adminFreeScanSession;
+    const doc = ctx.message.document;
+    const name = String(doc.file_name || "");
+    if (!/\.(pdf|docx)$/iu.test(name)) {
+      await ctx.reply("Only PDF and DOCX documents are supported. Nothing was queued.");
+      return;
+    }
+    if (!Array.isArray(session.files)) session.files = [];
+    if (session.files.length >= MAX_BATCH_FILES) {
+      await ctx.reply("Batch already contains 10 files. Tap Review Batch or Cancel.");
+      return;
+    }
+    const duplicate = session.files.some(file =>
+      (doc.file_unique_id && file.file_unique_id === doc.file_unique_id) ||
+      file.file_id === doc.file_id);
+    if (duplicate) {
+      await ctx.reply("Duplicate document ignored. Send another file or tap Review Batch.");
+      return;
+    }
 
-    adminFreeScanSession = null;
-
-    const doc =
-      ctx.message.document;
-
-    const storedFile =
-      createStoredFileFromDocument(
-        ADMIN_ID,
-        doc
-      );
-
-    storedFile.type =
-      session.type;
-
+    const storedFile = createStoredFileFromDocument(ADMIN_ID, doc);
+    storedFile.type = session.type;
     storedFile.price = 0;
+    storedFile.similarityFilter = session.similarityFilter;
+    storedFile.pendingType = null;
+    storedFile.adminFreeScan = true;
+    storedFile.sourceChatId = ctx.chat.id;
+    storedFile.sourceMessageId = ctx.message.message_id;
+    storedFile.sourceUsername = user.username || "N/A";
+    storedFile.sourceFirstName = user.first_name || "";
+    storedFile.sourceLastName = user.last_name || "";
+    storedFile.file_unique_id = doc.file_unique_id || null;
+    requireFileReportIdentity(storedFile);
+    session.files.push(storedFile);
 
-    storedFile.similarityFilter =
-      session.similarityFilter;
-
-    storedFile.pendingType =
-      null;
-
-    storedFile.adminFreeScan =
-      true;
-
-    storedFile.sourceChatId =
-      ctx.chat.id;
-
-    storedFile.sourceMessageId =
-      ctx.message.message_id;
-
-    storedFile.sourceUsername =
-      user.username || "N/A";
-
-    storedFile.sourceFirstName =
-      user.first_name || "";
-
-    storedFile.sourceLastName =
-      user.last_name || "";
-
-    /*
-      Validation only.
-      Identity was created once by
-      createStoredFileFromDocument().
-    */
-    requireFileReportIdentity(
-      storedFile
-    );
-
-    const now =
-      Date.now();
-
-    const batchId =
-      "JK_ADMIN_FREE_" +
-      ADMIN_ID +
-      "_" +
-      now;
-
-    const apiRef =
-      "ADMINFREE_" +
-      now;
-
-    const job =
-      createPaidJob({
-        userId:
-          ADMIN_ID,
-
-        apiRef,
-
-        ref: {
-          batchId,
-
-          amount: 0,
-
-          kind:
-            "ADMIN_FREE_SCAN",
-
-          summary:
-            "Admin Free Scan",
-
-          name:
-            getUserFullName(
-              user
-            ),
-
-          username:
-            safeText(
-              user.username ||
-              "N/A"
-            ),
-
-          phone:
-            null,
-
-          files: [
-            storedFile
-          ]
-        },
-
-        invoiceId:
-          null,
-
-        source:
-          "admin-free-scan"
-      });
-
-    /*
-      Always use the provider-neutral route.
-      No customer payment record or daily sale
-      is created by this path.
-    */
-    job.reportPipeline =
-      PROVIDER_NEUTRAL_PIPELINE;
-
-    job.adminFreeScan =
-      true;
-
-    job.amount = 0;
-
-    job.reportModeSnapshot =
-      REPORT_MODE_AUTO;
-
-    job.route =
-      "PENDING";
-
-    job.status =
-      "PROCESSING";
-
-    savePaidJobs();
-
-    await ctx.reply(
-      [
-        "🧪 ADMIN FREE SCAN STARTED",
-        "",
-        "File: " +
-          safeText(
-            storedFile.file_name
-          ),
-        "Service: " +
-          adminReportTypeLabel(
-            storedFile.type
-          ),
-        "Filter: " +
-          similarityFilterLabel(
-            storedFile
-              .similarityFilter
-          ),
-        "",
-        "Payment: BYPASSED (ADMIN)",
-        "Provider API usage: LIVE"
-      ].join("\n")
-    );
-
-    setImmediate(
-      async () => {
-        try {
-          await submitPaidJobToActiveProvider(
-            job.jobId
-          );
-        } catch (err) {
-          await sendAdminMessage(
-            "❌ ADMIN FREE SCAN FAILED\n" +
-            "File: " +
-            safeText(
-              storedFile.file_name ||
-              "N/A"
-            ) +
-            "\nError: " +
-            safeText(
-              err?.message ||
-              err
-            )
-          );
-        }
-      }
-    );
-
+    await ctx.reply([
+      "✅ Added file " + session.files.length + " / 10",
+      "File: " + safeText(storedFile.file_name),
+      "Upload another PDF/DOCX or tap Review Batch.",
+      "No provider request has been made yet."
+    ].join("\n"), { reply_markup: adminFreeScanWaitingKeyboard().reply_markup });
     return;
   }
 
