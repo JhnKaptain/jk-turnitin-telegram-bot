@@ -6699,7 +6699,7 @@ bot.action(
           ),
         "Filter: Quotes + Bibliography",
         "",
-        "Send 1–10 PDF or DOCX documents, then tap Start Scanning.",
+        "Send 1–10 PDF or DOCX documents, then tap Review Batch.",
         "",
         "No bot payment will be requested."
       ].join("\n"),
@@ -6755,7 +6755,7 @@ bot.action(
           ),
         "Filter: Unfiltered",
         "",
-        "Send 1–10 PDF or DOCX documents, then tap Start Scanning.",
+        "Send 1–10 PDF or DOCX documents, then tap Review Batch.",
         "",
         "No bot payment will be requested."
       ].join("\n"),
@@ -6773,6 +6773,8 @@ bot.action("ADMIN_FREE_SCAN_REVIEW", async (ctx) => {
       !Array.isArray(session.files) || session.files.length === 0) {
     return ctx.answerCbQuery("Upload at least one document first.", { show_alert: true });
   }
+  // Lock the exact file list while the admin reviews it.
+  session.stage = "WAIT_CONFIRM";
   await ctx.answerCbQuery("Review documents before scanning.");
   await showAdminScreen(ctx, [
     "🧪 ADMIN FREE BATCH - REVIEW",
@@ -6790,10 +6792,11 @@ bot.action("ADMIN_FREE_SCAN_REVIEW", async (ctx) => {
 
 bot.action("ADMIN_FREE_SCAN_MORE", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
-  if (!adminFreeScanSession || adminFreeScanSession.stage !== "WAIT_DOCUMENT")
-    return ctx.answerCbQuery("Start Admin Free Scan first.", { show_alert: true });
+  if (!adminFreeScanSession || adminFreeScanSession.stage !== "WAIT_CONFIRM")
+    return ctx.answerCbQuery("Review the current batch first.", { show_alert: true });
   if ((adminFreeScanSession.files || []).length >= MAX_BATCH_FILES)
     return ctx.answerCbQuery("The batch already has 10 files.", { show_alert: true });
+  adminFreeScanSession.stage = "WAIT_DOCUMENT";
   await ctx.answerCbQuery();
   await showAdminScreen(ctx,
     "🧪 ADMIN FREE SCAN\nSend more PDF or DOCX files, then tap Review Batch.",
@@ -6804,7 +6807,7 @@ bot.action("ADMIN_FREE_SCAN_MORE", async (ctx) => {
 bot.action("ADMIN_FREE_SCAN_START", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
   const session = adminFreeScanSession;
-  if (!session || session.stage !== "WAIT_DOCUMENT" || !Array.isArray(session.files) ||
+  if (!session || session.stage !== "WAIT_CONFIRM" || !Array.isArray(session.files) ||
       session.files.length === 0) {
     return ctx.answerCbQuery("Upload at least one document first.", { show_alert: true });
   }
@@ -7935,6 +7938,11 @@ bot.on("document", async (ctx) => {
     await ctx.reply("Admin Free Scan is disabled.");
     return;
   }
+  // Prevent uploads after review until Add More Files is selected.
+  if (user.id === ADMIN_ID && adminFreeScanSession?.stage === "WAIT_CONFIRM") {
+    await ctx.reply("This batch is awaiting confirmation. Tap Add More Files before uploading another document.");
+    return;
+  }
   // JK_ADMIN_FREE_BATCH_UPLOAD_V1
   if (user.id === ADMIN_ID && adminFreeScanSession?.stage === "WAIT_DOCUMENT") {
     const session = adminFreeScanSession;
@@ -7953,7 +7961,7 @@ bot.on("document", async (ctx) => {
       (doc.file_unique_id && file.file_unique_id === doc.file_unique_id) ||
       file.file_id === doc.file_id);
     if (duplicate) {
-      await ctx.reply("Duplicate document ignored. Send another file or tap Start Scanning.");
+      await ctx.reply("Duplicate document ignored. Send another file or tap Review Batch.");
       return;
     }
 
