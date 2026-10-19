@@ -17,6 +17,9 @@ assert(upload.includes("Only PDF and DOCX"));
 assert(upload.includes("session.files.push(storedFile)"));
 assert(upload.includes("No provider request has been made yet"));
 assert(confirm.includes("session.files.length === 0"));
+assert(confirm.includes('session.stage !== "WAIT_CONFIRM"'));
+assert(source.includes('session.stage = "WAIT_CONFIRM"'));
+assert(source.includes('adminFreeScanSession.stage = "WAIT_DOCUMENT"'));
 assert(confirm.includes("adminFreeScanSession = null;"));
 assert(confirm.lastIndexOf("adminFreeScanSession = null;") < confirm.indexOf('await ctx.answerCbQuery("Batch confirmed. Starting scans.")'));
 assert(confirm.includes("files: session.files"));
@@ -29,7 +32,7 @@ assert(reviewButton>0 && reviewButton<source.indexOf("function adminFreeScanRevi
 assert(confirmButton>reviewButton && confirmButton<source.indexOf("function adminDashboardKeyboard()"));
 assert(source.includes("JK_ADMIN_FREE_BATCH_REVIEW_V1"));
 assert(source.includes('"ADMIN_FREE_SCAN_MORE"'));
-assert(source.includes("Send 1–10 PDF or DOCX documents, then tap Start Scanning."));
+assert(source.includes("Send 1–10 PDF or DOCX documents, then tap Review Batch."));
 const control = require("./jk-admin-free-scan-control.cjs");
 assert(control.isFreeAction("ADMIN_FREE_SCAN_START"));
 assert(control.isFreeAction("ADMIN_FREE_SCAN_REVIEW"));
