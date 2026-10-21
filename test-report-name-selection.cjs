@@ -12,6 +12,7 @@ assert.deepEqual(Array.from(names),["Author Author","User User"]);
 assert(!/• Jabbar Mutlaq/.test(bot),"admin interface still advertises removed name");
 assert((bot.match(/One random name \+ one random institution are assigned once per new document\./g)||[]).length===4);
 assert(renderer.includes('"Jabbar Mutlaq"'),"historical report identity must remain supported");
+assert(bot.includes('![...REPORT_NAMES, "Jabbar Mutlaq"].includes('),"historical bot validation must remain supported");
 const chooser=bot.match(/function chooseReportName\(\) \{[\s\S]*?\n\}/)?.[0];
 assert(chooser,"name selection function missing");
 for(const random of [0,0.1,0.499,0.5,0.999]) {
