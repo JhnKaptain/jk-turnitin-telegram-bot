@@ -1,0 +1,23 @@
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const {reportSourceGutters}=require("./jk-report-source-gutters.cjs");
+const sourcePage=(height,...lines)=>({width:612,height,elements:lines.map(([bottom,h],i)=>({text:"Body sentence "+i,style:{bottom,height:h,left:60,width:200}}))});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[75,12],[680,12])]),{top:0,bottom:0});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[1.4,12],[680,12])]),{top:0,bottom:63});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[75,12],[740,12])]),{top:6,bottom:0});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[2,12],[770,12])]),{top:36,bottom:62});
+assert.deepEqual(reportSourceGutters([sourcePage(842,[2,12])]),{top:0,bottom:62});
+assert.deepEqual(reportSourceGutters([sourcePage(842,[90,12])]),{top:0,bottom:0});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[55,12],[731.6,12])]),{top:0,bottom:9});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[90,12],[731.6,12])]),{top:0,bottom:0});
+assert.deepEqual(reportSourceGutters([{height:792,elements:[{text:"",style:{bottom:0,height:12}}]}]),{top:0,bottom:0});
+// End.docx's real source first text starts at ~48.4pt, already clear.
+assert.equal(reportSourceGutters([sourcePage(792,[10,12],[731.6,12])]).top,0);
+const renderer=fs.readFileSync(path.join(__dirname,"jk-report-renderer-max.js"),"utf8");
+for(const token of ['require("./jk-report-source-gutters.cjs")','const sourceGutters = reportSourceGutters(originalPages);','sourceHeight + sourceGutters.top + sourceGutters.bottom','const sourceY = sourceGutters.bottom;','const sourceScale = 1;'])assert(renderer.includes(token),token);
+console.log("PASS: normal margins and actual end.docx top whitespace unchanged.");
+console.log("PASS: minimal extra footer clearance only when needed; no oversized top gutter.");
+console.log("PASS: Letter/A4, header collision, native scale and coordinate translation.");
+console.log("Offline only. No provider APIs, customer deliveries or Render deployment.");

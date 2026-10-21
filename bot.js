@@ -607,8 +607,7 @@ const FILTER_MODE_UNFILTERED = "UNFILTERED";
 
 const REPORT_NAMES = [
   "Author Author",
-  "User User",
-  "Jabbar Mutlaq"
+  "User User"
 ];
 
 const REPORT_INSTITUTIONS = [
@@ -975,7 +974,7 @@ function requireFileReportIdentity(
   }
 
   if (
-    !REPORT_NAMES.includes(
+    ![...REPORT_NAMES, "Jabbar Mutlaq"].includes(
       reportName
     )
   ) {
@@ -6303,7 +6302,7 @@ bot.command(
     }
 
     await ctx.reply(
-      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Author Author", "• User User", "• Jabbar Mutlaq", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
+      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Author Author", "• User User", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
       {
         reply_markup:
           institutionKeyboard()
@@ -6954,7 +6953,7 @@ bot.action(
 
     await showAdminScreen(
       ctx,
-      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Author Author", "• User User", "• Jabbar Mutlaq", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
+      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Author Author", "• User User", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
       institutionKeyboard(),
       true
     );
@@ -7249,7 +7248,7 @@ bot.action(
 
     await showAdminScreen(
       ctx,
-      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Author Author", "• User User", "• Jabbar Mutlaq", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
+      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Author Author", "• User User", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
       institutionKeyboard(),
       true
     );
@@ -7276,7 +7275,7 @@ bot.action(
 
     await showAdminScreen(
       ctx,
-      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Author Author", "• User User", "• Jabbar Mutlaq", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
+      ["🎲 AUTOMATIC REPORT IDENTITY", "", "Names:", "• Author Author", "• User User", "", "Institutions:", "• Arsi University", "• University of Anbar", "• Oromia State University", "", "One random name + one random institution are assigned once per new document."].join("\n"),
       institutionKeyboard(),
       true
     );
