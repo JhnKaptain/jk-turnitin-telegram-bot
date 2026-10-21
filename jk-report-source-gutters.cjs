@@ -1,12 +1,10 @@
 "use strict";
 
-// Use native-scale embedded PDF pages. Additional space is allocated only
-// when source text actually occupies the branded header/footer zone.
-// This does not alter canonical text, source maps, provider scores or ranges.
-const HEADER_BAND = 49;
-const FOOTER_BAND = 61;
-const HEADER_SPACE = 64;
-const FOOTER_SPACE = 80;
+// Protect the fixed report shell while keeping embedded source pages native.
+// Reserve only missing whitespace: normal top/bottom margins remain unchanged.
+// No canonical text, source maps, provider scores, or range offsets are changed.
+const HEADER_CLEARANCE = 46; // Branded header logo ends ~40.5pt from top.
+const FOOTER_CLEARANCE = 64; // Branded footer occupies ~28-44pt from bottom.
 
 function reportSourceGutters(pages) {
   let top = 0;
@@ -22,14 +20,14 @@ function reportSourceGutters(pages) {
       const height = Number(item?.style?.height || item?.size);
       if (!Number.isFinite(y) || !Number.isFinite(height) || height <= 0) continue;
 
-      if (pageHeight - (y + height) < HEADER_BAND) top = HEADER_SPACE;
-      if (y < FOOTER_BAND) bottom = FOOTER_SPACE;
-      if (top && bottom) return Object.freeze({ top, bottom });
+      const upperEdge = pageHeight - (y + height);
+      top = Math.max(top, Math.ceil(HEADER_CLEARANCE - upperEdge));
+      bottom = Math.max(bottom, Math.ceil(FOOTER_CLEARANCE - y));
     }
   }
 
-  // Consistent geometry across a document; its pages do not unpredictably
-  // alternate between different sizes.
+  // One consistent page geometry across the original document. Its native
+  // text/images are not rescaled; highlight coordinates shift by sourceY.
   return Object.freeze({ top, bottom });
 }
 
