@@ -20,6 +20,7 @@ const {
 } = require("pdf-lib");
 const fontkit = require("@pdf-lib/fontkit");
 const { prepareOriginalLayout } = require("./jk-original-layout.js");
+const { reportSourceGutters } = require("./jk-report-source-gutters.cjs");
 
 // JK_PRESERVE_ORIGINAL_LAYOUT_V1
 
@@ -4059,6 +4060,7 @@ async function drawOriginalPages(
   const aiProtectedElements = new Set(
     classifyAiRunningMetadata(originalPages).map(entry => entry.item)
   );
+  const sourceGutters = reportSourceGutters(originalPages);
 
   const id = bundle.reportIdentity || {};
   let pageNo = startPageNo;
@@ -4193,7 +4195,7 @@ async function drawOriginalPages(
     const page =
       doc.addPage([
         sourceWidth,
-        sourceHeight
+        sourceHeight + sourceGutters.top + sourceGutters.bottom
       ]);
 
     const pageWidth =
@@ -4209,7 +4211,7 @@ async function drawOriginalPages(
     */
     const sourceScale = 1;
     const sourceX = 0;
-    const sourceY = 0;
+    const sourceY = sourceGutters.bottom;
 
     if (original.embeddedPage) {
       page.drawPage(
