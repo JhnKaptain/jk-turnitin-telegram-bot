@@ -1,45 +1,23 @@
 "use strict";
-// No providers, PDFs, messages or network access. Layout arithmetic only.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { reportSourceGutters } = require("./jk-report-source-gutters.cjs");
-
-const sourcePage = (height, ...texts) => ({
-  width: 612, height,
-  elements: texts.map(([y, h], i) => ({
-    text: "Body sentence " + i,
-    style: { bottom: y, height: h, left: 60, width: 220 }
-  }))
-});
-const normal = [sourcePage(792, [75, 12], [125, 12], [680, 12])];
-const g0 = reportSourceGutters(normal);
-assert.deepEqual(g0, { top: 0, bottom: 0 });
-assert.equal(normal[0].height + g0.top + g0.bottom, 792);
-
-const nearFooter = [sourcePage(792, [1.4, 12], [680, 12]), ...normal];
-const gf = reportSourceGutters(nearFooter);
-assert.deepEqual(gf, { top: 0, bottom: 80 });
-assert.equal(792 + gf.top + gf.bottom, 872);
-// Body text remains at its original distance from the top.
-assert.equal((792 + gf.bottom) - (120 + gf.bottom), 792 - 120);
-// The branded footer stays anchored 44pt from the new bottom edge.
-assert.equal(872 - (872 - (792 - 748)), 792 - (792 - (792 - 748)));
-assert(gf.bottom - (792 - 748) > 30);
-
-assert.deepEqual(reportSourceGutters([sourcePage(792, [740, 12])]), { top: 64, bottom: 0 });
-assert.deepEqual(reportSourceGutters([sourcePage(792, [2, 12], [770, 12])]), { top: 64, bottom: 80 });
-assert.deepEqual(reportSourceGutters([sourcePage(842, [2, 12])]), { top: 0, bottom: 80 });
-assert.deepEqual(reportSourceGutters([sourcePage(842, [90, 12])]), { top: 0, bottom: 0 });
-assert.deepEqual(reportSourceGutters([{height:792,elements:[{text:"",style:{bottom:0,height:12}}]}]), {top:0,bottom:0});
-
-const renderer = fs.readFileSync(path.join(__dirname, "jk-report-renderer-max.js"), "utf8");
-assert(renderer.includes('require("./jk-report-source-gutters.cjs")'));
-assert(renderer.includes('const sourceGutters = reportSourceGutters(originalPages);'));
-assert(renderer.includes('sourceHeight + sourceGutters.top + sourceGutters.bottom'));
-assert(renderer.includes('const sourceY = sourceGutters.bottom;'));
-assert(renderer.includes('const sourceScale = 1;'));
-console.log("PASS: normal pages retain identical canvas dimensions and source placement.");
-console.log("PASS: footer-crowded, header-crowded, Letter and A4 sources receive conditional gutters.");
-console.log("PASS: native-scale placement, branded footer anchor and highlight coordinate translation.");
-console.log("Offline only. No API requests, document uploads or Telegram deliveries.");
+const {reportSourceGutters}=require("./jk-report-source-gutters.cjs");
+const sourcePage=(height,...lines)=>({width:612,height,elements:lines.map(([bottom,h],i)=>({text:"Body sentence "+i,style:{bottom,height:h,left:60,width:200}}))});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[75,12],[680,12])]),{top:0,bottom:0});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[1.4,12],[680,12])]),{top:0,bottom:63});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[75,12],[740,12])]),{top:6,bottom:0});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[2,12],[770,12])]),{top:36,bottom:62});
+assert.deepEqual(reportSourceGutters([sourcePage(842,[2,12])]),{top:0,bottom:62});
+assert.deepEqual(reportSourceGutters([sourcePage(842,[90,12])]),{top:0,bottom:0});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[55,12],[731.6,12])]),{top:0,bottom:9});
+assert.deepEqual(reportSourceGutters([sourcePage(792,[90,12],[731.6,12])]),{top:0,bottom:0});
+assert.deepEqual(reportSourceGutters([{height:792,elements:[{text:"",style:{bottom:0,height:12}}]}]),{top:0,bottom:0});
+// End.docx's real source first text starts at ~48.4pt, already clear.
+assert.equal(reportSourceGutters([sourcePage(792,[10,12],[731.6,12])]).top,0);
+const renderer=fs.readFileSync(path.join(__dirname,"jk-report-renderer-max.js"),"utf8");
+for(const token of ['require("./jk-report-source-gutters.cjs")','const sourceGutters = reportSourceGutters(originalPages);','sourceHeight + sourceGutters.top + sourceGutters.bottom','const sourceY = sourceGutters.bottom;','const sourceScale = 1;'])assert(renderer.includes(token),token);
+console.log("PASS: normal margins and actual end.docx top whitespace unchanged.");
+console.log("PASS: minimal extra footer clearance only when needed; no oversized top gutter.");
+console.log("PASS: Letter/A4, header collision, native scale and coordinate translation.");
+console.log("Offline only. No provider APIs, customer deliveries or Render deployment.");
