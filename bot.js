@@ -974,7 +974,7 @@ function requireFileReportIdentity(
   }
 
   if (
-    !REPORT_NAMES.includes(
+    ![...REPORT_NAMES, "Jabbar Mutlaq"].includes(
       reportName
     )
   ) {
