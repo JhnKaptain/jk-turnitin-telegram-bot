@@ -8,7 +8,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   try {
     const filename = path.join(directory, "bundle.json.provider-results.json");
     const file = { jkSubmissionId: "trn:oid:::1:1234567890", providerResultsFile: filename,
-      file_name: "Example.docx", manualReviewRequired: true };
+      file_name: "Example.docx", manualReviewRequired: false, providerStatus: "COMPLETED" };
     const saved = { version: 1, canonicalDocument: { text: "Original sentence." },
       preparedInputs: { similarity: { text: "Original sentence." } },
       providerResults: { similarity: { status: "fulfilled", value: { score: 4 } } } };
@@ -31,6 +31,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     await action(ctx(111)); await action(ctx(999, 111)); assert.equal(calls, 0);
     await command(ctx(111)); assert.equal(replies.length, 0);
     await command(ctx(999)); assert.equal(replies[0][1].reply_markup.inline_keyboard.length, 1);
+    assert.match(replies[0][0], /no provider charges/);
     await action(ctx(999)); await tick(); assert.equal(calls, 1);
     await action(ctx(999)); assert.equal(calls, 1); finish(); await tick();
     assert.equal(notices.length, 0);

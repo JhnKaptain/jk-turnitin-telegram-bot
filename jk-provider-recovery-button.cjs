@@ -73,7 +73,8 @@ function register(bot, { adminId, getJobs, run = runChild }) {
     const jobs = getJobs() || {}, entries = [], seen = new Set();
     for (const job of Object.values(jobs)) {
       for (const file of job?.files || []) {
-        if (!file.manualReviewRequired && String(file.providerStatus || "").toUpperCase() !== "MANUAL_REQUIRED") continue;
+        // Also allow already-completed reports with saved verified provider results.
+        // Recovery is admin-only and never resubmits to paid providers.
         const item = eligible(file);
         if (!item || seen.has(item.id) || !resolveFile(jobs, item.id)) continue;
         seen.add(item.id); entries.push(item);
@@ -81,8 +82,8 @@ function register(bot, { adminId, getJobs, run = runChild }) {
     }
     entries.sort((a, b) => b.changed - a.changed);
     const latest = entries.slice(0, 10);
-    if (!latest.length) return ctx.reply("No saved reports are currently eligible for recovery without another scan.");
-    return ctx.reply("RECOVER REPORTS - select saved results:", { reply_markup: {
+    if (!latest.length) return ctx.reply("No saved provider results are available to recover without another scan.");
+    return ctx.reply("RECOVER REPORTS - select saved results (admin preview only, no provider charges):", { reply_markup: {
       inline_keyboard: latest.map(item => [{ text: item.name.slice(0, 70), callback_data: "RECV:" + item.id }])
     } });
   });
