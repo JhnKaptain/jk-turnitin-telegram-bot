@@ -4892,7 +4892,7 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   try {
     await bot.telegram.sendMessage(
       userId,
-      MESSAGES.paidMsgBatch(completedRef.amount, completedRef.summary || "Batch payment"),
+      MESSAGES.paidMsgBatch(completedRef.amount, completedRef.summary || "Batch payment", completedRef.currency || "KES"),
       { parse_mode: "Markdown" }
     );
   } catch (e) {
@@ -8524,8 +8524,11 @@ bot.action("WORLDWIDE_BINANCE", async ctx => {
 
 async function handleWorldwideManualProof(ctx, sub, text, screenshot) {
   const method = sub.paymentMethod;
-  const code = screenshot ? "" : worldwidePay.extractTransactionId(text);
   const apiRef = sub.api_ref;
+  const priorCode = apiRef ? String(getPaymentRef(apiRef)?.pendingProof?.code || "") : "";
+  // Receipt images cannot establish a new payment transaction ID. Preserve the
+  // already supplied ID when a customer sends supporting screenshots afterwards.
+  const code = (screenshot ? "" : worldwidePay.extractTransactionId(text)) || priorCode;
   if (apiRef) updatePaymentRef(apiRef, {
     pendingProof: { type: screenshot ? "worldwide-screenshot" : "worldwide-text",
       code: code || null, receivedAt: Date.now() }
