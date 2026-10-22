@@ -287,9 +287,32 @@ function convertOfficeToPdf(
       profile
     ).href;
 
-  const fontAliases = require("./jk-office-font-alias.cjs").beginOfficeFontAliases();
+  // WPS compatibility is isolated to a temporary copy of eligible DOCX files.
+  // Unaffected files and all other file formats retain their original paths.
+  let compatibilityDir = null;
+  let inputPath = originalPath;
+  if (ext === ".docx" && process.env.JK_OFFICE_BLANK_COMPAT !== "0") {
+    try {
+      compatibilityDir = fs.mkdtempSync(path.join(os.tmpdir(), "jk-office-layout-"));
+      const compatibilityPath = path.join(compatibilityDir, path.basename(originalPath));
+      const compatibility = spawnSync("python3", [
+        path.join(__dirname, "jk-office-empty-paragraph-compat.py"),
+        originalPath, compatibilityPath
+      ], { encoding: "utf8", timeout: 20000 });
+      if (compatibility.status === 0) {
+        if (fs.existsSync(compatibilityPath)) inputPath = compatibilityPath;
+      } else {
+        console.warn("Office paragraph compatibility skipped; using original source.",
+          compatibility.stderr || compatibility.error?.message || "");
+      }
+    } catch (error) {
+      console.warn("Office compatibility skipped:", error.message);
+    }
+  }
+  let fontAliases = null;
   let result;
   try {
+    fontAliases = require("./jk-office-font-alias.cjs").beginOfficeFontAliases();
     result = spawnSync(
       resolveSofficeExecutable(),
       [
@@ -308,7 +331,7 @@ function convertOfficeToPdf(
         "--outdir",
         dir,
 
-        originalPath
+        inputPath
       ],
       {
         encoding:
@@ -320,7 +343,9 @@ function convertOfficeToPdf(
       }
     );
   } finally {
-    fontAliases?.cleanup();
+    try { fontAliases?.cleanup(); } finally {
+      if (compatibilityDir) fs.rmSync(compatibilityDir, { recursive: true, force: true });
+    }
   }
 
   if (
