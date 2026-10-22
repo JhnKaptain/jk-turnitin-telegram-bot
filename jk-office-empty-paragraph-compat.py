@@ -6,15 +6,14 @@ import json
 import os
 import sys
 import zipfile
-from lxml import etree
+from xml.etree import ElementTree as etree
 
 W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 W = '{' + W_NS + '}'
 NS = {'w': W_NS}
 
 def is_blank(p):
-    return (len(p) == 1 and p[0].tag == W + 'pPr' and
-            not p.xpath('.//w:t | .//w:drawing | .//w:pict | .//w:object | .//w:br | .//w:fldChar | .//w:instrText', namespaces=NS))
+    return len(p) == 1 and p[0].tag == W + 'pPr'
 
 def explicit_size(p):
     props = p.find(W + 'pPr')
@@ -33,7 +32,7 @@ def repair_document(data):
     if b'Arial Regular' not in data:
         return data, 0
     doc = etree.fromstring(data)
-    paras = doc.xpath('//w:body/w:p', namespaces=NS)
+    paras = doc.findall('./' + W + 'body/' + W + 'p')
     fixed = 0
     i = 0
     while i < len(paras):
@@ -64,7 +63,7 @@ def repair_document(data):
         i = j
     if not fixed:
         return data, 0
-    return etree.tostring(doc, encoding='UTF-8', xml_declaration=True, standalone=True), fixed
+    return etree.tostring(doc, encoding='UTF-8', xml_declaration=True), fixed
 
 def main():
     if len(sys.argv) != 3:
