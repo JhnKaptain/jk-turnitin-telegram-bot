@@ -223,6 +223,7 @@ const worldwidePay = require("./jk-international-manual-payment.cjs");
 const WORLDWIDE_MPESA_NUMBER = String(process.env.WORLDWIDE_MPESA_NUMBER || "+254741924396").replace(/[^+0-9]/g, "");
 const WORLDWIDE_BINANCE_ID = String(process.env.WORLDWIDE_BINANCE_ID || "1203517288").trim();
 const WORLDWIDE_BINANCE_NAME = String(process.env.WORLDWIDE_BINANCE_NAME || "JohnKaptain").trim();
+const WORLDWIDE_KES_PER_USDT = readFloatEnv("WORLDWIDE_KES_PER_USDT", 130);
 const INTERNATIONAL_CHECK_PRICE_USD = readFloatEnv("INTERNATIONAL_CHECK_PRICE_USD", 2);
 const INTERNATIONAL_SIMILARITY_ONLY_PRICE = readFloatEnv(
   "INTERNATIONAL_SIMILARITY_ONLY_PRICE",
@@ -3274,7 +3275,7 @@ function paymentMethodKeyboard() {
   ];
 
   if (INTERNATIONAL_PAYMENT_ENABLED) {
-    rows.push([Markup.button.callback("🌍 International Payment (M-Pesa / Binance USDT)", "PAYMENT_METHOD_WORLDWIDE")]);
+    rows.push([Markup.button.callback("🌍 International", "PAYMENT_METHOD_WORLDWIDE")]);
   }
 
   // Legacy Tanzania payment callback remains supported for pending orders; no new button.
@@ -3304,6 +3305,14 @@ function paymentWaitKeyboard() {
     [Markup.button.callback("\u{1F501} Resend STK Push", "STK_RESEND")],
     [Markup.button.callback("\u{1F4DE} Change phone number", "STK_CHANGE_PHONE")],
     [Markup.button.callback("\u274C Cancel payment attempt", "PAYMENT_CANCEL")]
+  ]);
+}
+
+function internationalCopyKeyboard(recipient, note) {
+  return Markup.inlineKeyboard([
+    [{text: "📋 Copy recipient", copy_text: {text: recipient}}],
+    [{text: "📋 Copy note", copy_text: {text: note}}],
+    [Markup.button.callback("❌ Cancel", "PAYMENT_CANCEL")]
   ]);
 }
 
@@ -4341,7 +4350,7 @@ async function moveBatchToPaymentMethodStep(ctx, sub) {
   const summary = formatBatchSummary(sub);
 
   const bankLine = INTERNATIONAL_PAYMENT_ENABLED
-    ? "\n🌍 International Payment: M-Pesa *" + sub.amount + " KES* or Binance *" + formatPaymentMoney(calculateInternationalAmount(sub), "USDT") + "*"
+    ? "\n🌍 International Payment: M-Pesa *" + sub.amount + " KES* or Binance *" + formatPaymentMoney(worldwidePay.kesToUsdt(sub.amount, WORLDWIDE_KES_PER_USDT), "USDT") + "*"
     : "";
 
   const tzOtherLine = "";
@@ -8453,7 +8462,7 @@ bot.action("PAYMENT_METHOD_WORLDWIDE", async ctx => {
   if (!sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD || !INTERNATIONAL_PAYMENT_ENABLED)
     return ctx.answerCbQuery("International payment not available for this order.");
   await ctx.answerCbQuery("Choose international method");
-  return ctx.reply("🌍 *INTERNATIONAL PAYMENT*\n\nChoose how you will send your payment to Kenya.\n\nNo cards or checkout links. You will submit a transaction reference for admin verification.", {
+  return ctx.reply("🌍 *International payment*\nChoose M-Pesa or Binance Pay (USDT).", {
     parse_mode: "Markdown", reply_markup: worldwidePaymentKeyboard().reply_markup
   });
 });
@@ -8467,8 +8476,9 @@ async function startWorldwideManualPayment(ctx, method) {
     await ctx.answerCbQuery("Not available for this pricing", { show_alert: true });
     return ctx.reply("Binance USDT is available for CHECK, RECHECK, and Similarity Only. Choose Kenya M-Pesa STK for local discounts or contact support.");
   }
-  const quote = worldwidePay.quoteForMethod(method,
-    calculateSubmissionAmount(sub), calculateInternationalAmount(sub));
+  const kesAmount = calculateSubmissionAmount(sub);
+  const usdtAmount = worldwidePay.kesToUsdt(kesAmount, WORLDWIDE_KES_PER_USDT);
+  const quote = worldwidePay.quoteForMethod(method, kesAmount, usdtAmount);
   const userId = ctx.from.id;
   const apiRef = makePaymentAttemptRef(userId);
   const summary = formatBatchSummary(sub);
@@ -8495,19 +8505,20 @@ async function startWorldwideManualPayment(ctx, method) {
   sub.stage = STAGE_WAIT_PAYMENT; sub.paymentMethod = method;
   sub.amount = quote.amount; sub.currency = quote.currency;
   sub.paymentAttempts.push(apiRef);
+  const paymentNoteRef = worldwidePay.noteReference(apiRef);
   const text = worldwidePay.paymentInstructions({
-    method, amount: quote.amount, currency: quote.currency, reference: apiRef,
+    method, amount: quote.amount, currency: quote.currency, reference: apiRef, paymentNoteRef,
     mpesaNumber: WORLDWIDE_MPESA_NUMBER,
     binanceId: WORLDWIDE_BINANCE_ID, binanceName: WORLDWIDE_BINANCE_NAME
   });
   await ctx.answerCbQuery("Manual international payment created");
   await ctx.reply(text, {
-    parse_mode: "Markdown", reply_markup: manualPaymentWaitKeyboard().reply_markup
+    parse_mode: "Markdown", reply_markup: internationalCopyKeyboard(method === worldwidePay.METHOD_BINANCE ? WORLDWIDE_BINANCE_ID : WORLDWIDE_MPESA_NUMBER, paymentNoteRef).reply_markup
   });
   await sendAdminMessage(
     "🌍 New international manual payment\nUser ID: " + userId +
     "\nMethod: " + method + "\nExpected amount: " +
-    formatPaymentMoney(quote.amount, quote.currency) + "\nOrder reference: " + apiRef +
+    formatPaymentMoney(quote.amount, quote.currency) + "\nOrder reference: " + apiRef + "\nCustomer payment note: " + paymentNoteRef +
     "\nSTATUS: PENDING; verify received funds before confirming.",
     { adminButtons: "replyOnly" }
   );

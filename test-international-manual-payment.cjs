@@ -18,7 +18,7 @@ assert.match(pay.manualApprovalBlock({paymentMethod:pay.METHOD_BINANCE,pendingPr
 assert.equal(pay.manualApprovalBlock({paymentMethod:pay.METHOD_BINANCE,pendingProof:{code:"1234567890ABCDEF"}},()=>false),"");
 assert.equal(pay.manualApprovalBlock({paymentMethod:"MPESA",pendingProof:{}},()=>true),"");
 const data={amount:2,currency:"USDT",reference:"JK123456",method:pay.METHOD_BINANCE,binanceId:"1203517288",binanceName:"JohnKaptain",mpesaNumber:"+254741924396"};
-assert.match(pay.paymentInstructions(data),/USDT only/);
+assert.match(pay.paymentInstructions(data),/USDT/);
 assert.match(pay.paymentInstructions(data),/1203517288/);
 assert.match(pay.paymentInstructions({...data,method:pay.METHOD_MPESA,amount:250,currency:"KES"}),/\+254741924396/);
 
@@ -38,4 +38,16 @@ assert(!oldTzButton.includes("startTzOtherPayment(ctx"));
 assert.match(bot,/bot\.action\("PAYMENT_METHOD_MPESA",/); // Kenya STK remains.
 assert(bot.includes('MESSAGES.paidMsgBatch(completedRef.amount, completedRef.summary || "Batch payment", completedRef.currency || "KES")'));
 assert(bot.includes('const priorCode = apiRef ? String(getPaymentRef(apiRef)?.pendingProof?.code || "") : ""'));
+
+assert.equal(pay.kesToUsdt(120,130),0.93);
+assert.equal(pay.kesToUsdt(260,130),2);
+assert.throws(()=>pay.kesToUsdt(120,0));
+const sample="JKPAY6385887728179266263709759107";
+assert.equal(pay.noteReference(sample),"JK66263709759107");
+assert.match(pay.paymentInstructions({...data, paymentNoteRef:pay.noteReference(sample)}),/Note to Payee:/);
+assert.match(pay.paymentInstructions({...data, paymentNoteRef:pay.noteReference(sample)}),/Binance Order ID/);
+assert.match(bot,/copy_text: \{text: recipient\}/);
+assert.match(bot,/copy_text: \{text: note\}/);
+assert.match(bot,/WORLDWIDE_KES_PER_USDT/);
+
 console.log("PASS: international manual payments, M-Pesa, USDT, proof dedup, ledger and legacy buttons.");
