@@ -36,6 +36,6 @@ assert(!oldBankButton.includes("startInternationalPayment(ctx"));
 assert(oldTzButton.includes("worldwidePaymentKeyboard()"));
 assert(!oldTzButton.includes("startTzOtherPayment(ctx"));
 assert.match(bot,/bot\.action\("PAYMENT_METHOD_MPESA",/); // Kenya STK remains.
-assert.match(bot,/MESSAGES\\.paidMsgBatch\\(completedRef\\.amount, completedRef\\.summary \\|\\| "Batch payment", completedRef\\.currency \\|\\| "KES"\\)/);
-assert.match(bot,/const priorCode = apiRef \\? String\\(getPaymentRef\\(apiRef\\)\\?\\.pendingProof\\?\\.code \\|\\| ""\\) : ""/);
+assert(bot.includes('MESSAGES.paidMsgBatch(completedRef.amount, completedRef.summary || "Batch payment", completedRef.currency || "KES")'));
+assert(bot.includes('const priorCode = apiRef ? String(getPaymentRef(apiRef)?.pendingProof?.code || "") : ""'));
 console.log("PASS: international manual payments, M-Pesa, USDT, proof dedup, ledger and legacy buttons.");
