@@ -2,7 +2,7 @@
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 const {beginOfficeFontAliases,CONFIG}=require("./jk-office-font-alias.cjs");
-assert(CONFIG.includes("Arial Regular") && CONFIG.includes("Liberation Sans"));
+assert(CONFIG.includes("Arial Regular") && CONFIG.includes("Roboto"));
 assert.equal(beginOfficeFontAliases({platform:"win32"}),null);
 assert.equal(beginOfficeFontAliases({env:{JK_OFFICE_FONT_ALIAS_ENABLED:"false"}}),null);
 assert.equal(beginOfficeFontAliases({env:{FONTCONFIG_FILE:"/existing/conf"}}),null);
