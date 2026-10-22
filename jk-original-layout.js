@@ -287,6 +287,25 @@ function convertOfficeToPdf(
       profile
     ).href;
 
+  // Work on an isolated copy: the customer's Word file is never edited.
+  const compatibilityDir = fs.mkdtempSync(path.join(os.tmpdir(), "jk-office-layout-"));
+  const compatibilityPath = path.join(compatibilityDir, path.basename(originalPath));
+  let inputPath = originalPath;
+  try {
+    if (ext === ".docx" && process.env.JK_OFFICE_BLANK_COMPAT !== "0") {
+      const compatibility = spawnSync("python3", [
+        path.join(__dirname, "jk-office-empty-paragraph-compat.py"),
+        originalPath, compatibilityPath
+      ], { encoding: "utf8", timeout: 20000 });
+      if (compatibility.status === 0 && fs.existsSync(compatibilityPath)) {
+        inputPath = compatibilityPath;
+      } else {
+        console.warn("Office blank paragraph compatibility unavailable; using unchanged source.", compatibility.stderr || compatibility.error?.message || "");
+      }
+    }
+  } catch (error) {
+    console.warn("Office compatibility skipped:", error.message);
+  }
   const fontAliases = require("./jk-office-font-alias.cjs").beginOfficeFontAliases();
   let result;
   try {
@@ -308,7 +327,7 @@ function convertOfficeToPdf(
         "--outdir",
         dir,
 
-        originalPath
+        inputPath
       ],
       {
         encoding:
@@ -321,6 +340,7 @@ function convertOfficeToPdf(
     );
   } finally {
     fontAliases?.cleanup();
+    fs.rmSync(compatibilityDir, { recursive: true, force: true });
   }
 
   if (
