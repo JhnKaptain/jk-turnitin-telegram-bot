@@ -13,13 +13,15 @@ assert.equal(pay.extractTransactionId("Transaction ID: 1234567890ABCDEF"),"12345
 assert.equal(pay.extractTransactionId("M-PESA code: TTK36A4X9Y"),"TTK36A4X9Y");
 assert.equal(pay.extractTransactionId("I have paid"),"");
 assert.equal(pay.normalizeTransactionId("SHORT"),"");
-assert.match(pay.manualApprovalBlock({paymentMethod:pay.METHOD_BINANCE,pendingProof:{}},()=>false),/required/);
+assert.match(pay.manualApprovalBlock({paymentMethod:pay.METHOD_BINANCE,pendingProof:{}},()=>false),/Binance Order ID required/);
+assert.match(pay.manualApprovalBlock({paymentMethod:pay.METHOD_MPESA,pendingProof:{}},()=>false),/Transfer reference required/);
 assert.match(pay.manualApprovalBlock({paymentMethod:pay.METHOD_BINANCE,pendingProof:{code:"1234567890ABCDEF"}},()=>true),/already been used/);
 assert.equal(pay.manualApprovalBlock({paymentMethod:pay.METHOD_BINANCE,pendingProof:{code:"1234567890ABCDEF"}},()=>false),"");
 assert.equal(pay.manualApprovalBlock({paymentMethod:"MPESA",pendingProof:{}},()=>true),"");
 const data={amount:2,currency:"USDT",reference:"JK123456",method:pay.METHOD_BINANCE,binanceId:"1203517288",binanceName:"JohnKaptain",mpesaNumber:"+254741924396"};
 assert.match(pay.paymentInstructions(data),/USDT/);
 assert.match(pay.paymentInstructions(data),/1203517288/);
+assert.match(pay.paymentInstructions(data),/Binance User ID/);
 assert.match(pay.paymentInstructions({...data,method:pay.METHOD_MPESA,amount:250,currency:"KES"}),/\+254741924396/);
 
 const bot=fs.readFileSync(path.join(__dirname,"bot.js"),"utf8");
@@ -49,6 +51,7 @@ assert.match(pay.paymentInstructions({...data, paymentNoteRef:pay.noteReference(
 assert.match(bot,/copy_text: \{text: recipient\}/);
 assert.match(bot,/Copy Binance User ID:/);
 assert.match(bot,/Binance Order ID received/);
+assert.match(bot,/Binance Order ID:/);
 assert.match(bot,/send only the Binance Order ID/);
 assert.match(bot,/copy_text: \{text: note\}/);
 assert.match(bot,/WORLDWIDE_KES_PER_USDT/);
