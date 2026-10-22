@@ -1,8 +1,8 @@
 "use strict";
 
-// Server-side fontconfig aliases for non-standard WPS/Word font names.
+// Server-side fontconfig aliases for non-standard WPS/Word Arial-style font names.
 // This runs only inside the LibreOffice conversion child process.
-// The customer DOCX, stored original, report templates and system fontconfig
+// Only the four non-standard Arial name variants are mapped to Roboto.\n// Standard Arial, Times New Roman and other font families are not redirected.\n// The customer DOCX, stored original, report templates and system fontconfig
 // are not modified.
 const fs = require("fs");
 const os = require("os");
@@ -14,21 +14,21 @@ const CONFIG = String.raw`<?xml version="1.0"?>
   <include ignore_missing="no">/etc/fonts/fonts.conf</include>
   <match target="pattern">
     <test name="family" qual="any" compare="eq"><string>Arial Regular</string></test>
-    <edit name="family" mode="assign" binding="strong"><string>Liberation Sans</string></edit>
+    <edit name="family" mode="assign" binding="strong"><string>Roboto</string></edit>
   </match>
   <match target="pattern">
     <test name="family" qual="any" compare="eq"><string>Arial Bold</string></test>
-    <edit name="family" mode="assign" binding="strong"><string>Liberation Sans</string></edit>
+    <edit name="family" mode="assign" binding="strong"><string>Roboto</string></edit>
     <edit name="weight" mode="assign"><const>bold</const></edit>
   </match>
   <match target="pattern">
     <test name="family" qual="any" compare="eq"><string>Arial Italic</string></test>
-    <edit name="family" mode="assign" binding="strong"><string>Liberation Sans</string></edit>
+    <edit name="family" mode="assign" binding="strong"><string>Roboto</string></edit>
     <edit name="slant" mode="assign"><const>italic</const></edit>
   </match>
   <match target="pattern">
     <test name="family" qual="any" compare="eq"><string>Arial Bold Italic</string></test>
-    <edit name="family" mode="assign" binding="strong"><string>Liberation Sans</string></edit>
+    <edit name="family" mode="assign" binding="strong"><string>Roboto</string></edit>
     <edit name="weight" mode="assign"><const>bold</const></edit>
     <edit name="slant" mode="assign"><const>italic</const></edit>
   </match>
