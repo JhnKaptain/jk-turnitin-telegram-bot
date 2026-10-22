@@ -1724,6 +1724,7 @@ function recordDailySale({ apiRef, ref, userId, invoiceId, source }) {
     username: ref.username || "N/A",
     phone: ref.phone || null,
     amount: Number(ref.amount || 0) || 0,
+    currency: String(ref.currency || "KES").toUpperCase(),
     kind: ref.kind || "BATCH",
     checks: typeCounts.checks,
     rechecks: typeCounts.rechecks,
@@ -1743,6 +1744,7 @@ function buildDailySalesSummary(dateKey) {
   const counts = {
     payments: 0,
     total: 0,
+    usdtTotal: 0,
     checks: 0,
     rechecks: 0,
     similarities: 0,
@@ -1761,7 +1763,11 @@ function buildDailySalesSummary(dateKey) {
     seenApiRefs.add(apiRef);
 
     counts.payments += 1;
-    counts.total += Number(record?.amount || 0) || 0;
+    if (String(record?.currency || "KES").toUpperCase() === "USDT") {
+      counts.usdtTotal += Number(record?.amount || 0) || 0;
+    } else {
+      counts.total += Number(record?.amount || 0) || 0;
+    }
     counts.checks += Number(record?.checks || 0) || 0;
     counts.rechecks += Number(record?.rechecks || 0) || 0;
     counts.similarities += Number(record?.similarities || 0) || 0;
@@ -1784,7 +1790,10 @@ function buildDailySalesSummary(dateKey) {
     counts.payments += 1;
 
     const amount = Number(ref?.amount || 0);
-    if (Number.isFinite(amount)) counts.total += amount;
+    if (Number.isFinite(amount)) {
+      if (String(ref?.currency || "KES").toUpperCase() === "USDT") counts.usdtTotal += amount;
+      else counts.total += amount;
+    }
 
     counts.checks += typeCounts.checks;
     counts.rechecks += typeCounts.rechecks;
@@ -1837,7 +1846,8 @@ async function sendDailySalesSummaryForDate(
       {
         maximumFractionDigits: 2
       }
-    )} KES\n\n` +
+    )} KES\n` +
+    `Binance Pay collected: ${summary.usdtTotal.toFixed(2)} USDT (not included in KES total)\n\n` +
     `CHECK: ${summary.checks}\n` +
     `RECHECK: ${summary.rechecks}\n` +
     `SIMILARITY ONLY: ${summary.similarities}\n` +
@@ -4894,7 +4904,7 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
       completedRef.username || "N/A"
     )}\nPhone: ${formatPhone254ForAdmin(completedRef.phone || sub?.phone)}\nAmount: ${safeText(
       completedRef.amount
-    )} KES\nType: ${safeText(completedRef.kind || "BATCH")}\nRef: ${safeText(
+    )} ${safeText(completedRef.currency || "KES")}\nType: ${safeText(completedRef.kind || "BATCH")}\nRef: ${safeText(
       invoiceId || completedRef.invoiceId || apiRef || "N/A"
     )}`,
     { adminButtons: "paid" }
@@ -8430,8 +8440,10 @@ bot.action("PAYMENT_METHOD_INTL", async (ctx) => {
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
   if (!sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD) return ctx.answerCbQuery("No payment method needed.");
 
-  await ctx.answerCbQuery("Kenyan bank selected");
-  await startInternationalPayment(ctx, sub);
+  await ctx.answerCbQuery("Choose new international method");
+  await ctx.reply("🌍 International payment is now M-Pesa or Binance Pay USDT. Choose your method:", {
+    reply_markup: worldwidePaymentKeyboard().reply_markup
+  });
 });
 
 
@@ -8542,8 +8554,10 @@ bot.action("PAYMENT_METHOD_TZ_OTHER", async (ctx) => {
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
   if (!sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD) return ctx.answerCbQuery("No payment method needed.");
 
-  await ctx.answerCbQuery("Tanzania / other countries selected");
-  await startTzOtherPayment(ctx, sub);
+  await ctx.answerCbQuery("Choose international method");
+  await ctx.reply("🌍 International payment is now M-Pesa or Binance Pay USDT. Choose your method:", {
+    reply_markup: worldwidePaymentKeyboard().reply_markup
+  });
 });
 
 // =====================
