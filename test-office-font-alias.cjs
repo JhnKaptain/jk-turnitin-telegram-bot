@@ -14,6 +14,8 @@ if (process.platform==="linux" && fs.existsSync("/etc/fonts/fonts.conf")) {
  cfg.cleanup();
  assert(!fs.existsSync(cfg.configPath));
 }
+const docker=fs.readFileSync("./Dockerfile","utf8");
+assert(docker.includes("fonts-roboto-unhinted"));
 const layout=fs.readFileSync("./jk-original-layout.js","utf8");
 assert(layout.includes('require("./jk-office-font-alias.cjs").beginOfficeFontAliases()'));
 assert(layout.includes("fontAliases?.cleanup()"));
