@@ -8163,6 +8163,8 @@ bot.on("document", async (ctx) => {
   sub.currentFileIndex = sub.files.length - 1;
   sub.stage = STAGE_WAIT_FILE_TYPE;
 
+  const pageLayoutNote = require("./jk-upload-layout-note.cjs").layoutFidelityNote(storedFile.file_name);
+  if (pageLayoutNote) await ctx.reply(pageLayoutNote);
   await askForFileType(ctx, sub);
 });
 
