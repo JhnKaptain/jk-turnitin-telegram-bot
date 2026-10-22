@@ -3308,10 +3308,10 @@ function paymentWaitKeyboard() {
   ]);
 }
 
-function internationalCopyKeyboard(recipient, note) {
+function internationalCopyKeyboard(recipient, note, method) {
   return Markup.inlineKeyboard([
-    [{text: "📋 Copy recipient", copy_text: {text: recipient}}],
-    [{text: "📋 Copy note", copy_text: {text: note}}],
+    [{text: method === worldwidePay.METHOD_BINANCE ? "📋 Copy Binance User ID: " + recipient : "📋 Copy recipient: " + recipient, copy_text: {text: recipient}}],
+    [{text: "📋 Copy note: " + note, copy_text: {text: note}}],
     [Markup.button.callback("❌ Cancel", "PAYMENT_CANCEL")]
   ]);
 }
@@ -8513,7 +8513,7 @@ async function startWorldwideManualPayment(ctx, method) {
   });
   await ctx.answerCbQuery("Manual international payment created");
   await ctx.reply(text, {
-    parse_mode: "Markdown", reply_markup: internationalCopyKeyboard(method === worldwidePay.METHOD_BINANCE ? WORLDWIDE_BINANCE_ID : WORLDWIDE_MPESA_NUMBER, paymentNoteRef).reply_markup
+    parse_mode: "Markdown", reply_markup: internationalCopyKeyboard(method === worldwidePay.METHOD_BINANCE ? WORLDWIDE_BINANCE_ID : WORLDWIDE_MPESA_NUMBER, paymentNoteRef, method).reply_markup
   });
   await sendAdminMessage(
     "🌍 New international manual payment\nUser ID: " + userId +
@@ -8523,7 +8523,9 @@ async function startWorldwideManualPayment(ctx, method) {
     { adminButtons: "replyOnly" }
   );
   scheduleManualProofReminder(userId, apiRef, method,
-    "If you have paid, send the transaction ID/reference and a receipt. Admin will confirm after checking received funds.");
+    method === worldwidePay.METHOD_BINANCE
+      ? "After paying, send only the Binance Order ID from Payment Details. Admin verifies received funds before processing."
+      : "If you have paid, send the M-Pesa transfer reference. Admin verifies received funds before processing.");
 }
 
 bot.action("WORLDWIDE_MPESA", async ctx => {
@@ -8556,7 +8558,9 @@ async function handleWorldwideManualProof(ctx, sub, text, screenshot) {
     try { await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id); }
     catch {}
   }
-  await ctx.reply("✅ Proof received. Your payment remains pending until admin verifies funds. Please send the transaction ID in text if you only submitted a screenshot.", {
+  await ctx.reply(method === worldwidePay.METHOD_BINANCE
+    ? "✅ Binance Order ID received. Payment is pending until admin verifies the funds. If you only sent a screenshot, send the Binance Order ID as text."
+    : "✅ Transfer reference received. Payment is pending until admin verifies the funds. If you only sent a screenshot, send the transfer reference as text.", {
     reply_markup: manualPaymentWaitKeyboard().reply_markup
   });
 }
