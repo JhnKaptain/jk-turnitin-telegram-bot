@@ -9,6 +9,7 @@ RUN apt-get update \
        fontconfig \
        fonts-dejavu-core \
        fonts-liberation2 \
+       fonts-roboto-unhinted \
        fonts-crosextra-carlito \
        fonts-crosextra-caladea \
     && rm -rf /var/lib/apt/lists/*
