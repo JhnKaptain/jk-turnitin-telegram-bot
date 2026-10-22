@@ -5,7 +5,7 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "test": "node test-heading-dedup.cjs && node test-ai-headings.js && node test-ai-structure.js && node test-ai-sequence-recovery.cjs && node test-ai-layout-regression.cjs && node test-quetext-unicode-alignment.cjs && node test-admin-free-scan-control.cjs && node test-admin-free-batch.cjs && node test-report-source-gutters.cjs && node test-report-name-selection.cjs && node test-international-manual-payment.cjs"
+    "test": "node test-heading-dedup.cjs && node test-ai-headings.js && node test-ai-structure.js && node test-ai-sequence-recovery.cjs && node test-ai-layout-regression.cjs && node test-quetext-unicode-alignment.cjs && node test-admin-free-scan-control.cjs && node test-admin-free-batch.cjs && node test-report-source-gutters.cjs && node test-report-name-selection.cjs && node test-international-manual-payment.cjs && node test-upload-layout-note.cjs"
   },
   "keywords": [],
   "author": "",
