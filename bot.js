@@ -8441,7 +8441,7 @@ bot.action("PAYMENT_METHOD_WORLDWIDE", async ctx => {
   if (!sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD || !INTERNATIONAL_PAYMENT_ENABLED)
     return ctx.answerCbQuery("International payment not available for this order.");
   await ctx.answerCbQuery("Choose international method");
-  return ctx.reply("🌍 *INTERNATIONAL PAYMENT*\\n\\nChoose how you will send your payment to Kenya.\\n\\nNo cards or checkout links. You will submit a transaction reference for admin verification.", {
+  return ctx.reply("🌍 *INTERNATIONAL PAYMENT*\n\nChoose how you will send your payment to Kenya.\n\nNo cards or checkout links. You will submit a transaction reference for admin verification.", {
     parse_mode: "Markdown", reply_markup: worldwidePaymentKeyboard().reply_markup
   });
 });
@@ -8493,10 +8493,10 @@ async function startWorldwideManualPayment(ctx, method) {
     parse_mode: "Markdown", reply_markup: manualPaymentWaitKeyboard().reply_markup
   });
   await sendAdminMessage(
-    "🌍 New international manual payment\\nUser ID: " + userId +
-    "\\nMethod: " + method + "\\nExpected amount: " +
-    formatPaymentMoney(quote.amount, quote.currency) + "\\nOrder reference: " + apiRef +
-    "\\nSTATUS: PENDING; verify received funds before confirming.",
+    "🌍 New international manual payment\nUser ID: " + userId +
+    "\nMethod: " + method + "\nExpected amount: " +
+    formatPaymentMoney(quote.amount, quote.currency) + "\nOrder reference: " + apiRef +
+    "\nSTATUS: PENDING; verify received funds before confirming.",
     { adminButtons: "replyOnly" }
   );
   scheduleManualProofReminder(userId, apiRef, method,
@@ -8518,13 +8518,13 @@ async function handleWorldwideManualProof(ctx, sub, text, screenshot) {
     pendingProof: { type: screenshot ? "worldwide-screenshot" : "worldwide-text",
       code: code || null, receivedAt: Date.now() }
   });
-  await sendAdminMessage("🌍 International payment proof received\\nUser ID: " +
-    ctx.from.id + "\\nMethod: " + method +
-    "\\nExpected amount: " + formatPaymentMoney(sub.amount, sub.currency) +
-    "\\nOrder reference: " + apiRef +
-    "\\nTransaction reference: " + (code || "MISSING - request transaction ID") +
-    "\\nVerify actual received amount and beneficiary in M-Pesa/Binance account; NEVER approve based on screenshot alone." +
-    (screenshot ? "" : "\\nCustomer message: " + safeText(text)),
+  await sendAdminMessage("🌍 International payment proof received\nUser ID: " +
+    ctx.from.id + "\nMethod: " + method +
+    "\nExpected amount: " + formatPaymentMoney(sub.amount, sub.currency) +
+    "\nOrder reference: " + apiRef +
+    "\nTransaction reference: " + (code || "MISSING - request transaction ID") +
+    "\nVerify actual received amount and beneficiary in M-Pesa/Binance account; NEVER approve based on screenshot alone." +
+    (screenshot ? "" : "\nCustomer message: " + safeText(text)),
     { adminButtons: "paymentProof" });
   if (screenshot) {
     try { await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id); }
