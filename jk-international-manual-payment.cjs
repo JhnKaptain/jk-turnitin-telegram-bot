@@ -80,7 +80,7 @@ function paymentInstructions({ method, amount, currency, reference, paymentNoteR
   return [
     "🟡 *Binance Pay — USDT*",
     "Pay: *" + money + "*",
-    "Binance Pay ID: \`" + binanceId + "\`",
+    "Binance User ID: \`" + binanceId + "\`",
     "Recipient: *" + binanceName + "*",
     "Note to Payee: \`" + note + "\`",
     "",
