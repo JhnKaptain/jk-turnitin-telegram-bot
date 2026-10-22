@@ -92,9 +92,11 @@ function paymentInstructions({ method, amount, currency, reference, paymentNoteR
 function manualApprovalBlock(ref, isUsed) {
   if (!isWorldwideManualMethod(ref?.paymentMethod)) return "";
   const code = normalizeTransactionId(ref?.pendingProof?.code);
-  if (!code) return "Transaction ID required. Ask the customer to send a valid payment transaction ID.";
+  if (!code) return ref?.paymentMethod === METHOD_BINANCE
+    ? "Binance Order ID required. Ask the customer to send the Order ID from Payment Details."
+    : "Transfer reference required. Ask the customer to send the payment transfer reference.";
   if (typeof isUsed === "function" && isUsed(code))
-    return "Transaction ID has already been used for a completed payment. Do not approve.";
+    return "Payment reference has already been used for a completed payment. Do not approve.";
   return "";
 }
 
