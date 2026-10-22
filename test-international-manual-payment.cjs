@@ -47,6 +47,9 @@ assert.equal(pay.noteReference(sample),"JK66263709759107");
 assert.match(pay.paymentInstructions({...data, paymentNoteRef:pay.noteReference(sample)}),/Note to Payee:/);
 assert.match(pay.paymentInstructions({...data, paymentNoteRef:pay.noteReference(sample)}),/Binance Order ID/);
 assert.match(bot,/copy_text: \{text: recipient\}/);
+assert.match(bot,/Copy Binance User ID:/);
+assert.match(bot,/Binance Order ID received/);
+assert.match(bot,/send only the Binance Order ID/);
 assert.match(bot,/copy_text: \{text: note\}/);
 assert.match(bot,/WORLDWIDE_KES_PER_USDT/);
 
