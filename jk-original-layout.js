@@ -287,8 +287,10 @@ function convertOfficeToPdf(
       profile
     ).href;
 
-  const result =
-    spawnSync(
+  const fontAliases = require("./jk-office-font-alias.cjs").beginOfficeFontAliases();
+  let result;
+  try {
+    result = spawnSync(
       resolveSofficeExecutable(),
       [
         "--headless",
@@ -313,9 +315,13 @@ function convertOfficeToPdf(
           "utf8",
 
         timeout:
-          120000
+          120000,
+        env: fontAliases?.env || process.env
       }
     );
+  } finally {
+    fontAliases?.cleanup();
+  }
 
   if (
     result.error ||
