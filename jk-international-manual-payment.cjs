@@ -43,44 +43,50 @@ function quoteForMethod(method, amountKES, amountUSD) {
   };
 }
 
-function paymentInstructions({ method, amount, currency, reference, mpesaNumber, binanceId, binanceName }) {
+// Merchant-configured fixed quote rate, not a live FX feed. Round up to avoid
+// charging less than the underlying KES price.
+function kesToUsdt(amountKES, kesPerUsdt) {
+  const amount = Number(amountKES);
+  const rate = Number(kesPerUsdt);
+  if (!Number.isFinite(amount) || amount <= 0 ||
+      !Number.isFinite(rate) || rate < 50 || rate > 500)
+    throw new Error("Invalid KES price or KES-per-USDT quote rate.");
+  return Math.ceil((amount / rate) * 100 - 1e-9) / 100;
+}
+
+// A shorter customer-facing label; the full apiRef stays in the payment store.
+function noteReference(apiRef) {
+  const raw = String(apiRef || "");
+  if (!/^JKPAY[0-9]{16,45}$/.test(raw)) throw new Error("Invalid JK payment reference.");
+  return "JK" + raw.slice(-14);
+}
+
+function paymentInstructions({ method, amount, currency, reference, paymentNoteRef, mpesaNumber, binanceId, binanceName }) {
   if (!isWorldwideManualMethod(method)) throw new Error("Unsupported payment method");
+  const note = paymentNoteRef || reference;
   const money = Number(amount).toFixed(2) + " " + currency;
-  const main = [
-    "🌍 *INTERNATIONAL PAYMENT*",
-    "",
-    "Amount to receive: *" + money + "*",
-    "Order reference: *" + reference + "*",
-    ""
-  ];
   if (method === METHOD_MPESA) {
-    main.push(
-      "*Option: M-Pesa transfer to Kenya*",
-      "Destination M-Pesa: *" + mpesaNumber + "*",
-      "Choose a supported remittance provider that delivers to a Kenyan M-Pesa wallet.",
-      "Make sure the receiver gets *" + money + "* after any sender fees.",
-      "Availability and fees depend on your country and transfer provider."
-    );
-  } else {
-    main.push(
-      "*Option: Binance Pay (USDT only)*",
-      "Binance Pay ID: *" + binanceId + "*",
-      "Recipient nickname supplied by merchant: *" + binanceName + "*",
-      "In Binance: Pay → Send → Binance User → enter the Binance ID.",
-      "Select *USDT* and pay exactly *" + money + "*.",
-      "Check the recipient's identity in the Binance app before confirming.",
-      "This Binance ID is *not* a blockchain deposit address; do not send an on-chain transfer to it.",
-      "Use this option only where Binance Pay and USDT transfers are supported."
-    );
+    return [
+      "🌍 *International M-Pesa*",
+      "Pay: *" + money + "*",
+      "Send to: \`" + mpesaNumber + "\`",
+      "JK note (if supported): \`" + note + "\`",
+      "",
+      "Use a remittance service that sends to Kenyan M-Pesa.",
+      "Send the transfer reference here after paying.",
+      "Admin verifies payment before processing."
+    ].join("\n");
   }
-  main.push(
+  return [
+    "🟡 *Binance Pay — USDT*",
+    "Pay: *" + money + "*",
+    "Binance Pay ID: \`" + binanceId + "\`",
+    "Recipient: *" + binanceName + "*",
+    "Note to Payee: \`" + note + "\`",
     "",
-    "If possible, add the order reference as your payment note.",
-    "After sending, reply with the *transaction ID/reference* and attach the receipt if available.",
-    "Payment proof is not an approval. The admin must verify funds received before processing.",
-    "Never send a PIN, password, seed phrase or verification code."
-  );
-  return main.join("\n");
+    "After paying, copy the *Binance Order ID* from Payment Details and send it here.",
+    "Admin verifies the payment before processing."
+  ].join("\n");
 }
 
 function manualApprovalBlock(ref, isUsed) {
@@ -95,5 +101,5 @@ function manualApprovalBlock(ref, isUsed) {
 module.exports = {
   METHOD_MPESA, METHOD_BINANCE, SUPPORTED_METHODS,
   isWorldwideManualMethod, normalizeTransactionId, extractTransactionId,
-  quoteForMethod, paymentInstructions, manualApprovalBlock
+  quoteForMethod, kesToUsdt, noteReference, paymentInstructions, manualApprovalBlock
 };
