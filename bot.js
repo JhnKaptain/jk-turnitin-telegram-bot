@@ -219,6 +219,10 @@ const DISCOUNT_START_EAT = normalizeHHMM(process.env.DISCOUNT_START_EAT, "");
 const DISCOUNT_END_EAT = normalizeHHMM(process.env.DISCOUNT_END_EAT, "");
 
 const INTERNATIONAL_PAYMENT_ENABLED = readBoolEnv("INTERNATIONAL_PAYMENT_ENABLED", true);
+const worldwidePay = require("./jk-international-manual-payment.cjs");
+const WORLDWIDE_MPESA_NUMBER = String(process.env.WORLDWIDE_MPESA_NUMBER || "+254741924396").replace(/[^+0-9]/g, "");
+const WORLDWIDE_BINANCE_ID = String(process.env.WORLDWIDE_BINANCE_ID || "1203517288").trim();
+const WORLDWIDE_BINANCE_NAME = String(process.env.WORLDWIDE_BINANCE_NAME || "JohnKaptain").trim();
 const INTERNATIONAL_CHECK_PRICE_USD = readFloatEnv("INTERNATIONAL_CHECK_PRICE_USD", 2);
 const INTERNATIONAL_SIMILARITY_ONLY_PRICE = readFloatEnv(
   "INTERNATIONAL_SIMILARITY_ONLY_PRICE",
@@ -1720,6 +1724,7 @@ function recordDailySale({ apiRef, ref, userId, invoiceId, source }) {
     username: ref.username || "N/A",
     phone: ref.phone || null,
     amount: Number(ref.amount || 0) || 0,
+    currency: String(ref.currency || "KES").toUpperCase(),
     kind: ref.kind || "BATCH",
     checks: typeCounts.checks,
     rechecks: typeCounts.rechecks,
@@ -1739,6 +1744,7 @@ function buildDailySalesSummary(dateKey) {
   const counts = {
     payments: 0,
     total: 0,
+    usdtTotal: 0,
     checks: 0,
     rechecks: 0,
     similarities: 0,
@@ -1757,7 +1763,11 @@ function buildDailySalesSummary(dateKey) {
     seenApiRefs.add(apiRef);
 
     counts.payments += 1;
-    counts.total += Number(record?.amount || 0) || 0;
+    if (String(record?.currency || "KES").toUpperCase() === "USDT") {
+      counts.usdtTotal += Number(record?.amount || 0) || 0;
+    } else {
+      counts.total += Number(record?.amount || 0) || 0;
+    }
     counts.checks += Number(record?.checks || 0) || 0;
     counts.rechecks += Number(record?.rechecks || 0) || 0;
     counts.similarities += Number(record?.similarities || 0) || 0;
@@ -1780,7 +1790,10 @@ function buildDailySalesSummary(dateKey) {
     counts.payments += 1;
 
     const amount = Number(ref?.amount || 0);
-    if (Number.isFinite(amount)) counts.total += amount;
+    if (Number.isFinite(amount)) {
+      if (String(ref?.currency || "KES").toUpperCase() === "USDT") counts.usdtTotal += amount;
+      else counts.total += amount;
+    }
 
     counts.checks += typeCounts.checks;
     counts.rechecks += typeCounts.rechecks;
@@ -1833,7 +1846,8 @@ async function sendDailySalesSummaryForDate(
       {
         maximumFractionDigits: 2
       }
-    )} KES\n\n` +
+    )} KES\n` +
+    `Binance Pay collected: ${summary.usdtTotal.toFixed(2)} USDT (not included in KES total)\n\n` +
     `CHECK: ${summary.checks}\n` +
     `RECHECK: ${summary.rechecks}\n` +
     `SIMILARITY ONLY: ${summary.similarities}\n` +
@@ -3260,12 +3274,10 @@ function paymentMethodKeyboard() {
   ];
 
   if (INTERNATIONAL_PAYMENT_ENABLED) {
-    rows.push([Markup.button.callback("\u{1F3E6} Kenyan Bank Payment", "PAYMENT_METHOD_INTL")]);
+    rows.push([Markup.button.callback("🌍 International Payment (M-Pesa / Binance USDT)", "PAYMENT_METHOD_WORLDWIDE")]);
   }
 
-  if (TZ_OTHER_PAYMENT_ENABLED) {
-    rows.push([Markup.button.callback("\u{1F1F9}\u{1F1FF} Tanzania / Other Countries", "PAYMENT_METHOD_TZ_OTHER")]);
-  }
+  // Legacy Tanzania payment callback remains supported for pending orders; no new button.
 
   rows.push([Markup.button.callback("\u274C Cancel payment attempt", "PAYMENT_CANCEL")]);
 
@@ -3276,6 +3288,14 @@ function internationalPayKeyboard(checkoutUrl) {
   return Markup.inlineKeyboard([
     [Markup.button.url("\u{1F3E6} Pay via Kenyan Bank", checkoutUrl)],
     [Markup.button.callback("\u274C Cancel payment attempt", "PAYMENT_CANCEL")]
+  ]);
+}
+
+function worldwidePaymentKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("📱 M-Pesa to Kenya", "WORLDWIDE_MPESA")],
+    [Markup.button.callback("🟡 Binance Pay — USDT", "WORLDWIDE_BINANCE")],
+    [Markup.button.callback("❌ Cancel payment attempt", "PAYMENT_CANCEL")]
   ]);
 }
 
@@ -4321,16 +4341,10 @@ async function moveBatchToPaymentMethodStep(ctx, sub) {
   const summary = formatBatchSummary(sub);
 
   const bankLine = INTERNATIONAL_PAYMENT_ENABLED
-    ? "\n\u{1F3E6} Kenyan Bank Payment: *" + sub.amount + " KES*"
+    ? "\n🌍 International Payment: M-Pesa *" + sub.amount + " KES* or Binance *" + formatPaymentMoney(calculateInternationalAmount(sub), "USDT") + "*"
     : "";
 
-  const tzOtherLine = TZ_OTHER_PAYMENT_ENABLED
-    ? (
-        isInternationalCheckOnly(sub)
-          ? "\n\u{1F1F9}\u{1F1FF} Tanzania / Other Countries: *" + formatPaymentMoney(calculateInternationalAmount(sub), TZ_OTHER_CURRENCY) + "*"
-          : "\n\u{1F1F9}\u{1F1FF} Tanzania / Other Countries: not available for discount/resale"
-      )
-    : "";
+  const tzOtherLine = "";
 
   await replyMarkdownSafe(
     ctx,
@@ -4878,7 +4892,7 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
   try {
     await bot.telegram.sendMessage(
       userId,
-      MESSAGES.paidMsgBatch(completedRef.amount, completedRef.summary || "Batch payment"),
+      MESSAGES.paidMsgBatch(completedRef.amount, completedRef.summary || "Batch payment", completedRef.currency || "KES"),
       { parse_mode: "Markdown" }
     );
   } catch (e) {
@@ -4890,7 +4904,7 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
       completedRef.username || "N/A"
     )}\nPhone: ${formatPhone254ForAdmin(completedRef.phone || sub?.phone)}\nAmount: ${safeText(
       completedRef.amount
-    )} KES\nType: ${safeText(completedRef.kind || "BATCH")}\nRef: ${safeText(
+    )} ${safeText(completedRef.currency || "KES")}\nType: ${safeText(completedRef.kind || "BATCH")}\nRef: ${safeText(
       invoiceId || completedRef.invoiceId || apiRef || "N/A"
     )}`,
     { adminButtons: "paid" }
@@ -6028,6 +6042,8 @@ async function manuallyConfirmLatestPaymentForUser(userId, source) {
   if (!found) return { ok: false, message: `❌ No pending payment found for user ${userId}` };
 
   const [apiRef, ref] = found;
+  const block = worldwidePay.manualApprovalBlock(ref, isProofCodeUsed);
+  if (block) return { ok: false, message: "❌ Payment NOT approved: " + block };
 
   await markPaymentComplete({
     apiRef,
@@ -6128,6 +6144,8 @@ bot.command("paidref", async (ctx) => {
 
   const ref = getPaymentRef(apiRef);
   if (!ref) return ctx.reply(`❌ No payment found for apiref: ${apiRef}`);
+  const block = worldwidePay.manualApprovalBlock(ref, isProofCodeUsed);
+  if (block) return ctx.reply("❌ Payment NOT approved: " + block);
 
   await markPaymentComplete({
     apiRef,
@@ -8182,7 +8200,9 @@ bot.on("photo", async (ctx) => {
   const sub = submissions[user.id];
 
   if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
-    if (sub.paymentMethod === "INTERNATIONAL" || sub.paymentMethod === "KENYAN_BANK") {
+    if (worldwidePay.isWorldwideManualMethod(sub.paymentMethod)) {
+      await handleWorldwideManualProof(ctx, sub, "", true);
+    } else if (sub.paymentMethod === "INTERNATIONAL" || sub.paymentMethod === "KENYAN_BANK") {
       await handleInternationalPaymentScreenshotProof(ctx, sub);
     } else if (sub.paymentMethod === "TZ_OTHER") {
       await handleTzOtherPaymentScreenshotProof(ctx, sub);
@@ -8420,10 +8440,115 @@ bot.action("PAYMENT_METHOD_INTL", async (ctx) => {
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
   if (!sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD) return ctx.answerCbQuery("No payment method needed.");
 
-  await ctx.answerCbQuery("Kenyan bank selected");
-  await startInternationalPayment(ctx, sub);
+  await ctx.answerCbQuery("Choose new international method");
+  await ctx.reply("🌍 International payment is now M-Pesa or Binance Pay USDT. Choose your method:", {
+    reply_markup: worldwidePaymentKeyboard().reply_markup
+  });
 });
 
+
+bot.action("PAYMENT_METHOD_WORLDWIDE", async ctx => {
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+  const sub = submissions[ctx.from.id];
+  if (!sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD || !INTERNATIONAL_PAYMENT_ENABLED)
+    return ctx.answerCbQuery("International payment not available for this order.");
+  await ctx.answerCbQuery("Choose international method");
+  return ctx.reply("🌍 *INTERNATIONAL PAYMENT*\n\nChoose how you will send your payment to Kenya.\n\nNo cards or checkout links. You will submit a transaction reference for admin verification.", {
+    parse_mode: "Markdown", reply_markup: worldwidePaymentKeyboard().reply_markup
+  });
+});
+
+async function startWorldwideManualPayment(ctx, method) {
+  const sub = submissions[ctx.from.id];
+  if (!INTERNATIONAL_PAYMENT_ENABLED || !sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD)
+    return ctx.answerCbQuery("Payment selection expired.");
+  // The legacy resale/discount KES pricing is not USD-equivalent; do not assume a USDT exchange rate.
+  if (method === worldwidePay.METHOD_BINANCE && !isInternationalCheckOnly(sub)) {
+    await ctx.answerCbQuery("Not available for this pricing", { show_alert: true });
+    return ctx.reply("Binance USDT is available for CHECK, RECHECK, and Similarity Only. Choose Kenya M-Pesa STK for local discounts or contact support.");
+  }
+  const quote = worldwidePay.quoteForMethod(method,
+    calculateSubmissionAmount(sub), calculateInternationalAmount(sub));
+  const userId = ctx.from.id;
+  const apiRef = makePaymentAttemptRef(userId);
+  const summary = formatBatchSummary(sub);
+  putPaymentRef(apiRef, {
+    userId, batchId: sub.batchId, kind: getBatchKindLabel(sub),
+    amount: quote.amount, currency: quote.currency,
+    createdAt: Date.now(), updatedAt: Date.now(), summary,
+    phone: null, name: getUserFullName(ctx.from), username: ctx.from.username || "N/A",
+    invoiceId: null, status: "PENDING", lastState: "PENDING",
+    mode: "MANUAL", paymentMethod: method, pendingProof: null,
+    files: (sub.files || []).map(file => ({
+      file_id: file.file_id || null, file_unique_id: file.file_unique_id || null,
+      file_name: file.file_name || null,
+      file_size: Number(file.file_size || file.fileSize || 0) || null,
+      type: file.type || null, price: file.price || null,
+      recheckEligible: Boolean(file.recheckEligible),
+      similarityFilter: effectiveSimilarityFilter(file),
+      jkSubmissionId: file.jkSubmissionId || null,
+      reportName: file.reportName || null,
+      reportInstitution: file.reportInstitution || null
+    }))
+  });
+  sub.api_ref = apiRef; sub.invoiceId = null;
+  sub.stage = STAGE_WAIT_PAYMENT; sub.paymentMethod = method;
+  sub.amount = quote.amount; sub.currency = quote.currency;
+  sub.paymentAttempts.push(apiRef);
+  const text = worldwidePay.paymentInstructions({
+    method, amount: quote.amount, currency: quote.currency, reference: apiRef,
+    mpesaNumber: WORLDWIDE_MPESA_NUMBER,
+    binanceId: WORLDWIDE_BINANCE_ID, binanceName: WORLDWIDE_BINANCE_NAME
+  });
+  await ctx.answerCbQuery("Manual international payment created");
+  await ctx.reply(text, {
+    parse_mode: "Markdown", reply_markup: manualPaymentWaitKeyboard().reply_markup
+  });
+  await sendAdminMessage(
+    "🌍 New international manual payment\nUser ID: " + userId +
+    "\nMethod: " + method + "\nExpected amount: " +
+    formatPaymentMoney(quote.amount, quote.currency) + "\nOrder reference: " + apiRef +
+    "\nSTATUS: PENDING; verify received funds before confirming.",
+    { adminButtons: "replyOnly" }
+  );
+  scheduleManualProofReminder(userId, apiRef, method,
+    "If you have paid, send the transaction ID/reference and a receipt. Admin will confirm after checking received funds.");
+}
+
+bot.action("WORLDWIDE_MPESA", async ctx => {
+  await startWorldwideManualPayment(ctx, worldwidePay.METHOD_MPESA);
+});
+bot.action("WORLDWIDE_BINANCE", async ctx => {
+  await startWorldwideManualPayment(ctx, worldwidePay.METHOD_BINANCE);
+});
+
+async function handleWorldwideManualProof(ctx, sub, text, screenshot) {
+  const method = sub.paymentMethod;
+  const apiRef = sub.api_ref;
+  const priorCode = apiRef ? String(getPaymentRef(apiRef)?.pendingProof?.code || "") : "";
+  // Receipt images cannot establish a new payment transaction ID. Preserve the
+  // already supplied ID when a customer sends supporting screenshots afterwards.
+  const code = (screenshot ? "" : worldwidePay.extractTransactionId(text)) || priorCode;
+  if (apiRef) updatePaymentRef(apiRef, {
+    pendingProof: { type: screenshot ? "worldwide-screenshot" : "worldwide-text",
+      code: code || null, receivedAt: Date.now() }
+  });
+  await sendAdminMessage("🌍 International payment proof received\nUser ID: " +
+    ctx.from.id + "\nMethod: " + method +
+    "\nExpected amount: " + formatPaymentMoney(sub.amount, sub.currency) +
+    "\nOrder reference: " + apiRef +
+    "\nTransaction reference: " + (code || "MISSING - request transaction ID") +
+    "\nVerify actual received amount and beneficiary in M-Pesa/Binance account; NEVER approve based on screenshot alone." +
+    (screenshot ? "" : "\nCustomer message: " + safeText(text)),
+    { adminButtons: "paymentProof" });
+  if (screenshot) {
+    try { await bot.telegram.forwardMessage(ADMIN_ID, ctx.chat.id, ctx.message.message_id); }
+    catch {}
+  }
+  await ctx.reply("✅ Proof received. Your payment remains pending until admin verifies funds. Please send the transaction ID in text if you only submitted a screenshot.", {
+    reply_markup: manualPaymentWaitKeyboard().reply_markup
+  });
+}
 
 bot.action("PAYMENT_METHOD_TZ_OTHER", async (ctx) => {
   const userId = ctx.from.id;
@@ -8432,8 +8557,10 @@ bot.action("PAYMENT_METHOD_TZ_OTHER", async (ctx) => {
   if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
   if (!sub || sub.stage !== STAGE_WAIT_PAYMENT_METHOD) return ctx.answerCbQuery("No payment method needed.");
 
-  await ctx.answerCbQuery("Tanzania / other countries selected");
-  await startTzOtherPayment(ctx, sub);
+  await ctx.answerCbQuery("Choose international method");
+  await ctx.reply("🌍 International payment is now M-Pesa or Binance Pay USDT. Choose your method:", {
+    reply_markup: worldwidePaymentKeyboard().reply_markup
+  });
 });
 
 // =====================
@@ -8614,7 +8741,9 @@ ${text}
   }
 
   if (sub && sub.stage === STAGE_WAIT_PAYMENT) {
-    if (sub.paymentMethod === "INTERNATIONAL" || sub.paymentMethod === "KENYAN_BANK") {
+    if (worldwidePay.isWorldwideManualMethod(sub.paymentMethod)) {
+      await handleWorldwideManualProof(ctx, sub, text, false);
+    } else if (sub.paymentMethod === "INTERNATIONAL" || sub.paymentMethod === "KENYAN_BANK") {
       await handleInternationalPaymentProofText(ctx, sub, text);
     } else if (sub.paymentMethod === "TZ_OTHER") {
       await handleTzOtherPaymentProofText(ctx, sub, text);
