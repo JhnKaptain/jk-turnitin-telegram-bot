@@ -8550,7 +8550,8 @@ async function handleWorldwideManualProof(ctx, sub, text, screenshot) {
     ctx.from.id + "\nMethod: " + method +
     "\nExpected amount: " + formatPaymentMoney(sub.amount, sub.currency) +
     "\nOrder reference: " + apiRef +
-    "\nTransaction reference: " + (code || "MISSING - request transaction ID") +
+    (method === worldwidePay.METHOD_BINANCE ? "\nBinance Order ID: " : "\nTransfer reference: ") +
+    (code || (method === worldwidePay.METHOD_BINANCE ? "MISSING - request Binance Order ID" : "MISSING - request transfer reference")) +
     "\nVerify actual received amount and beneficiary in M-Pesa/Binance account; NEVER approve based on screenshot alone." +
     (screenshot ? "" : "\nCustomer message: " + safeText(text)),
     { adminButtons: "paymentProof" });
@@ -8559,8 +8560,8 @@ async function handleWorldwideManualProof(ctx, sub, text, screenshot) {
     catch {}
   }
   await ctx.reply(method === worldwidePay.METHOD_BINANCE
-    ? "✅ Binance Order ID received. Payment is pending until admin verifies the funds. If you only sent a screenshot, send the Binance Order ID as text."
-    : "✅ Transfer reference received. Payment is pending until admin verifies the funds. If you only sent a screenshot, send the transfer reference as text.", {
+    ? (code ? "✅ Binance Order ID received. Payment is pending until admin verifies the funds." : "✅ Screenshot received. Please send the Binance Order ID from Payment Details as text. Payment remains pending until admin verifies funds.")
+    : (code ? "✅ Transfer reference received. Payment is pending until admin verifies the funds." : "✅ Screenshot received. Please send the M-Pesa transfer reference as text. Admin verification is still required."), {
     reply_markup: manualPaymentWaitKeyboard().reply_markup
   });
 }
