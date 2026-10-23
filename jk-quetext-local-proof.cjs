@@ -46,11 +46,31 @@ function anchorsOnSide(returned, original, providerAt, canonicalAt, length, side
   return false;
 }
 
+// Reject different documents that merely share an isolated passage. This
+// remains stricter than local-only evidence but permits bounded text changes.
+// Percentages describe sampled document agreement, NEVER similarity scores.
+function broadAgreement(input, providerText) {
+  const source = indexed(input).text.trim();
+  const returned = indexed(providerText).text.trim();
+  const samples = Array.from({ length: 4 }, () => ({ checked: 0, matched: 0 }));
+  for (let at = 0; at + 48 <= source.length; at += 96) {
+    const quarter = Math.min(3, Math.floor(4 * at / source.length));
+    const group = samples[quarter];
+    group.checked++;
+    if (returned.includes(source.slice(at, at + 48))) group.matched++;
+  }
+  const checked = samples.reduce((sum, part) => sum + part.checked, 0);
+  const matched = samples.reduce((sum, part) => sum + part.matched, 0);
+  return checked >= 16 && matched / checked >= 0.8 &&
+    samples.every(part => part.checked >= 3 && part.matched / part.checked >= 0.65);
+}
+
 function alignByVerifiedLocalContext(input, match, providerText) {
   if (typeof input !== "string" || typeof providerText !== "string" ||
       typeof match?.text !== "string" || !Number.isInteger(match.start) ||
       !Number.isInteger(match.end) || match.start < 0 || match.end <= match.start) return null;
 
+  if (!broadAgreement(input, providerText)) return null;
   const target = normalize(match.text);
   if (target.length < 24 || (target.match(/\p{L}/gu) || []).length < 12) return null;
   const original = indexed(input), returned = indexed(providerText);
