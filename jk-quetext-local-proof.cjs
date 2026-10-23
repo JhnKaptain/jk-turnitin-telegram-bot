@@ -93,6 +93,15 @@ function alignByVerifiedLocalContext(input, match, providerText) {
     const j = i + target.length;
     if (i < 0 || j > returned.text.length || returned.text.slice(i, j) !== target ||
         returned.ends[j - 1] > b) continue;
+    // Distant anchors alone can be shared by unrelated passages. Require
+    // substantial unchanged text immediately touching the provider match.
+    let nearLeft = 0, nearRight = 0;
+    while (nearLeft < 128 && i - nearLeft > 0 && where - nearLeft > 0 &&
+        returned.text[i - nearLeft - 1] === original.text[where - nearLeft - 1]) nearLeft++;
+    while (nearRight < 128 && i + target.length + nearRight < returned.text.length &&
+        where + target.length + nearRight < original.text.length &&
+        returned.text[i + target.length + nearRight] === original.text[where + target.length + nearRight]) nearRight++;
+    if (nearLeft + nearRight < 48 || Math.max(nearLeft, nearRight) < 40) continue;
     if (!anchorsOnSide(returned.text, original.text, i, where, target.length, "left") ||
         !anchorsOnSide(returned.text, original.text, i, where, target.length, "right")) continue;
     matches.set(start + ":" + end, { start, end });
