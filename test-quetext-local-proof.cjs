@@ -6,7 +6,10 @@ const p = "A unique opening description with several details about the particula
 const q = " Next section describes objectives in enough detail to confirm the original context. Further notes about requirements make the ending portion distinct and discoverable without guesses. ";
 const target = "unique academic passage within a complicated sentence";
 const original = "Intro filler ".repeat(120) + p + "prefix" + target + q + " End filler.".repeat(180);
-// Use a mostly identical document with bounded provider-only text changes.\nconst returned = original\n  .replace("Intro filler ".repeat(18), "Changed provider prefix ".repeat(18))\n  .replace(" End filler.".repeat(22), " Altered suffix.".repeat(22));
+// Use a mostly identical document with bounded provider-only text changes.
+const returned = original
+  .replace("Intro filler ".repeat(18), "Changed provider prefix ".repeat(18))
+  .replace(" End filler.".repeat(22), " Altered suffix.".repeat(22));
 const where = returned.indexOf(target);
 const match = { start: where, end: where + target.length, text: target };
 const verified = {start: original.indexOf(target), end: original.indexOf(target) + target.length};
