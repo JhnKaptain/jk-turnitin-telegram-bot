@@ -23,4 +23,9 @@ const editedOriginal = original.replace(p, "DIFFERENT PRECEDING CONTENT ".repeat
 assert.equal(align(editedOriginal, match, returned), null);
 const providerEdited = returned.replace("within a complicated", "within an altered");
 assert.equal(align(original, match, providerEdited), null);
+// Even exact shared passages must not authenticate unrelated documents.
+const foreignOriginal = "Original context A. ".repeat(150) + p + "prefix" + target + q + "Original ending A. ".repeat(150);
+const foreignReturned = "Foreign context B. ".repeat(150) + p + "prefix" + target + q + "Foreign ending B. ".repeat(150);
+const foreignOffset = foreignReturned.indexOf(target);
+assert.equal(align(foreignOriginal, {start:foreignOffset, end:foreignOffset+target.length, text:target}, foreignReturned), null);
 console.log("PASS: strict Quetext local-context fallback and negative safety cases; offline only.");
