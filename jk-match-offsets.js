@@ -49,6 +49,12 @@ function alignQuetextChangedText(input, match, providerText) {
     if (returned.text.includes(original.text.slice(at, at + sampleSize))) agreed++;
   }
   if (checked < 5 || agreed / checked < 0.9) {
+    // Preserve the global safety threshold. Recover individual passages only
+    // when a separate verifier proves offsets, uniqueness and dual-side context.
+    const proof = require("./jk-quetext-local-proof.cjs")
+      .alignByVerifiedLocalContext(input, match, providerText);
+    if (proof) return { ...match, ...proof, reportedStart: match.start,
+      alignmentMethod: "VERIFIED_LOCAL_CONTEXT" };
     quetextReview("returned document differs too substantially to verify");
   }
 
