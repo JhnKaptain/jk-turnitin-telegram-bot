@@ -5,11 +5,11 @@ const { alignQuetextMatch } = require("./jk-match-offsets.js");
 const p = "A unique opening description with several details about the particular text. These further details establish what the specific textual portion is intended to communicate in this one passage. ";
 const q = " Next section describes objectives in enough detail to confirm the original context. Further notes about requirements make the ending portion distinct and discoverable without guesses. ";
 const target = "unique academic passage within a complicated sentence";
-const original = "Intro filler ".repeat(120) + p + "prefix" + target + q + " End filler.".repeat(180);
-// Use a mostly identical document with bounded provider-only text changes.
-const returned = original
-  .replace("Intro filler ".repeat(25), "Changed provider prefix ".repeat(25))
-  .replace(" End filler.".repeat(25), " Altered suffix.".repeat(25));
+const intro = Array.from({length:90}, (_, i) => "Opening statement "+i+" explains distinct historical observations and specific economic values "+(i*73+1009)+". ");
+const outro = Array.from({length:90}, (_, i) => "Closing statement "+i+" describes different statistical assumptions and explanatory details "+(i*91+2003)+". ");
+const alter = (items, label) => items.map((value,i) => i % 9 === 0 ? label + " substituted data region " + i + " and revised interpretation (" + (i*47+809) + "). " : value);
+const original = intro.join("") + p + "prefix" + target + q + outro.join("");
+const returned = alter(intro, "Introduction").join("") + p + "prefix" + target + q + alter(outro, "Conclusion").join("");
 const where = returned.indexOf(target);
 const match = { start: where, end: where + target.length, text: target };
 const verified = {start: original.indexOf(target), end: original.indexOf(target) + target.length};
