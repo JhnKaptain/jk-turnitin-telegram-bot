@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - Dockerfile
+      - jk-document-extractor.js
+      - jk-original-layout.js
+      - jk-pptx-fidelity.cjs
       - .github/workflows/security-docker-build.yml
 
 permissions:
@@ -21,3 +24,34 @@ jobs:
         run: |
           docker run --rm --entrypoint node jk-turnitin-security-check --version | grep -Fx v22.23.4
           docker run --rm --entrypoint sh jk-turnitin-security-check -c 'test -s /etc/ssl/certs/ca-certificates.crt'
+      - name: Create a real two-slide PPTX fixture
+        run: |
+          python3 -m pip install --user --break-system-packages python-pptx
+          mkdir -p test-fixtures
+          python3 - <<'PY'
+          from pptx import Presentation
+          p = Presentation()
+          for text in [
+              "Slide one contains alpha beta gamma and verifiable office conversion words",
+              "Slide two contains delta epsilon zeta and visible slide content words"
+          ]:
+              slide = p.slides.add_slide(p.slide_layouts[6])
+              box = slide.shapes.add_textbox(300000, 300000, 8000000, 1700000)
+              box.text = text
+          p.save("test-fixtures/sample.pptx")
+          PY
+      - name: Verify real PPTX to canonical PDF with slide mapping
+        run: |
+          docker run --rm --entrypoint node -v "$PWD/test-fixtures:/tmp/test-fixtures" jk-turnitin-security-check -e '
+          (async () => {
+            const assert = require("node:assert/strict");
+            const { extractDocument } = require("./jk-document-extractor.js");
+            const d = await extractDocument("/tmp/test-fixtures/sample.pptx");
+            assert.equal(d.sourceType, "PPTX");
+            assert.equal(d.pageCount, 2);
+            assert(d.text.includes("Slide one contains alpha beta"));
+            assert(d.text.includes("Slide two contains delta epsilon"));
+            assert(d.pages.every(page => page.items.length > 0));
+            console.log("PASS: real PPTX conversion and canonical slide text mapping.");
+          })().catch(e => { console.error(e); process.exitCode=1; });
+          '
