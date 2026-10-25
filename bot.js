@@ -4948,6 +4948,14 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
     );
   }
 
+  if (paidJob?.reportModeSnapshot === REPORT_MODE_AUTO &&
+      paidJob.files?.some(file => String(file.type).toUpperCase() === "SIMILARITY")) {
+    try { await bot.telegram.sendMessage(userId,
+      "🔒 Similarity-only files need administrator approval before the API scan. " +
+      "Eligible full-check files continue automatically. You will receive your report after processing."); }
+    catch (err) { console.error("Similarity approval customer notice failed:", err?.message || err); }
+  }
+
   resetSubmission(userId);
   return true;
 }
@@ -7961,6 +7969,7 @@ bot.action(/^BATCH_COUNT_(\d{1,2})$/, async (ctx) => {
 // request unless the approved file has a saved paid job and correct identity.
 function needsSimilarityApiApproval(job, file) {
   return !job?.adminFreeScan &&
+    !["CLOSED","DELIVERED","CANCELLED","CANCELLATION_REQUESTED"].includes(String(job?.status || "").toUpperCase()) &&
     String(job?.reportModeSnapshot || "").toUpperCase() === REPORT_MODE_AUTO &&
     String(file?.type || "").toUpperCase() === "SIMILARITY" &&
     !file?.similarityApiApprovedAt;
@@ -7987,6 +7996,7 @@ async function requestSimilarityApproval(job, file) {
     file.similarityApprovalStatus = "PENDING_ADMIN";
     savePaidJobs();
     const token = similarityApprovalToken(job,file);
+    try {
     await bot.telegram.sendMessage(ADMIN_ID,
       "🔒 SIMILARITY-ONLY API APPROVAL REQUIRED\n" +
       "Customer: " + job.userId + "\n" +
@@ -7997,6 +8007,11 @@ async function requestSimilarityApproval(job, file) {
         {text:"✅ Approve Quetext Only",callback_data:"JK_SIM_APPROVE_" + token},
         {text:"🧑‍💻 Manual",callback_data:"JK_SIM_MANUAL_" + token}
       ]] } });
+    } catch (error) {
+      delete file.similarityApprovalNotifiedAt;
+      savePaidJobs();
+      throw error;
+    }
   }
   return true;
 }
