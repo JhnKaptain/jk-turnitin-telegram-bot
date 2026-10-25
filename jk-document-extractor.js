@@ -719,7 +719,8 @@ async function extractDocument(
       ".doc",
       ".docx",
       ".odt",
-      ".rtf"
+      ".rtf",
+      ".pptx"
     ].includes(
       ext
     )
@@ -744,6 +745,12 @@ async function extractDocument(
       await extractPdfDocument(
         pdfPath
       );
+
+    if (ext === ".pptx") {
+      // Verify slide order and selectable slide text against source XML.
+      const {auditPptxPdf} = require("./jk-pptx-fidelity.cjs");
+      auditPptxPdf(originalPath, result);
+    }
 
     return {
       ...result,
