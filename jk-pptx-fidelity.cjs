@@ -60,7 +60,10 @@ with zipfile.ZipFile(f) as z:
     print(json.dumps(out,ensure_ascii=False))
 `;
   const checked = spawnSync("python3",["-c",py,inputFile],{encoding:"utf8",timeout:15000,maxBuffer:4*1024*1024});
-  if (checked.status !== 0 || checked.error) review("Cannot inspect original slide XML.");
+  if (checked.status !== 0 || checked.error) {
+    const detail = String(checked.stderr || checked.error?.message || "").trim().split("\n").at(-1).slice(0,160);
+    review("Cannot inspect original slide XML. " + detail);
+  }
   let slides;
   try {slides = JSON.parse(checked.stdout);} catch {review("Invalid PPTX slide audit response.");}
   if (!Array.isArray(slides) || !slides.length ||
