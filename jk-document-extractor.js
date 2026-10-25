@@ -725,6 +725,10 @@ async function extractDocument(
       ext
     )
   ) {
+    if (ext === ".pptx") {
+      require("./jk-pptx-fidelity.cjs").preflightPptxArchive(originalPath);
+    }
+
     const pdfPath =
       convertOfficeToPdf(
         originalPath
