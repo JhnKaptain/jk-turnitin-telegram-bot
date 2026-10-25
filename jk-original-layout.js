@@ -225,7 +225,8 @@ function convertOfficeToPdf(
       ".doc",
       ".docx",
       ".odt",
-      ".rtf"
+      ".rtf",
+      ".pptx"
     ].includes(
       ext
     )
@@ -326,7 +327,7 @@ function convertOfficeToPdf(
           profileUrl,
 
         "--convert-to",
-        "pdf:writer_pdf_Export",
+        ext === ".pptx" ? "pdf:impress_pdf_Export" : "pdf:writer_pdf_Export",
 
         "--outdir",
         dir,

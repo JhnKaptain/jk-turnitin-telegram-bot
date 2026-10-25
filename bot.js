@@ -4037,6 +4037,9 @@ function ensureFreshSubmission(userId) {
   return submissions[userId];
 }
 
+function supportedScanUpload(name) {
+  return /\.(pdf|docx|doc|pptx)$/iu.test(String(name || ""));
+}
 function createStoredFileFromDocument(userId, doc) {
   const fileName = doc.file_name || `file_${Date.now()}`;
   const fileUniqueId = doc.file_unique_id || null;
@@ -4943,6 +4946,14 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
         }
       }
     );
+  }
+
+  if (paidJob?.reportModeSnapshot === REPORT_MODE_AUTO &&
+      paidJob.files?.some(file => String(file.type).toUpperCase() === "SIMILARITY")) {
+    try { await bot.telegram.sendMessage(userId,
+      "🔒 Similarity-only files need administrator approval before the API scan. " +
+      "Eligible full-check files continue automatically. You will receive your report after processing."); }
+    catch (err) { console.error("Similarity approval customer notice failed:", err?.message || err); }
   }
 
   resetSubmission(userId);
@@ -6725,7 +6736,7 @@ bot.action(
           ),
         "Filter: Quotes + Bibliography",
         "",
-        "Send 1–10 PDF or DOCX documents, then tap Review Batch.",
+        "Send 1–10 PDF, DOCX, DOC or PPTX documents, then tap Review Batch.",
         "",
         "No bot payment will be requested."
       ].join("\n"),
@@ -7952,6 +7963,88 @@ bot.action(/^BATCH_COUNT_(\d{1,2})$/, async (ctx) => {
   });
 });
 
+
+// JK_SIMILARITY_API_APPROVAL_V1
+// Approval is per paid file, persistent, and never triggers a new provider
+// request unless the approved file has a saved paid job and correct identity.
+function needsSimilarityApiApproval(job, file) {
+  return !job?.adminFreeScan &&
+    !["CLOSED","DELIVERED","CANCELLED","CANCELLATION_REQUESTED"].includes(String(job?.status || "").toUpperCase()) &&
+    String(job?.reportModeSnapshot || "").toUpperCase() === REPORT_MODE_AUTO &&
+    String(file?.type || "").toUpperCase() === "SIMILARITY" &&
+    !["MANUAL","DECLINED"].includes(String(file?.similarityApprovalStatus || "").toUpperCase()) &&
+    !file?.similarityApiApprovedAt;
+}
+function similarityApprovalToken(job, file) {
+  return require("crypto").createHash("sha256")
+    .update(String(job.jobId) + ":" + String(file.fileIndex) + ":" + String(job.userId))
+    .digest("hex").slice(0, 24);
+}
+function findSimilarityApproval(token) {
+  const matches = [];
+  for (const job of Object.values(paidJobs)) {
+    for (const file of job.files || []) {
+      if (needsSimilarityApiApproval(job, file) &&
+          similarityApprovalToken(job,file) === token) matches.push({job,file});
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+async function requestSimilarityApproval(job, file) {
+  if (!needsSimilarityApiApproval(job,file)) return false;
+  if (!file.similarityApprovalNotifiedAt) {
+    file.similarityApprovalNotifiedAt = Date.now();
+    file.similarityApprovalStatus = "PENDING_ADMIN";
+    savePaidJobs();
+    const token = similarityApprovalToken(job,file);
+    try {
+    await bot.telegram.sendMessage(ADMIN_ID,
+      "🔒 SIMILARITY-ONLY API APPROVAL REQUIRED\n" +
+      "Customer: " + job.userId + "\n" +
+      "File: " + safeText(file.file_name || "") + "\n" +
+      "Paid job: " + safeText(job.jobId || "") + "\n" +
+      "No API has been called for this file.",
+      { reply_markup: { inline_keyboard: [[
+        {text:"✅ Approve Quetext Only",callback_data:"JK_SIM_APPROVE_" + token},
+        {text:"🧑‍💻 Manual",callback_data:"JK_SIM_MANUAL_" + token}
+      ]] } });
+    } catch (error) {
+      delete file.similarityApprovalNotifiedAt;
+      savePaidJobs();
+      throw error;
+    }
+  }
+  return true;
+}
+bot.action(/^JK_SIM_(APPROVE|MANUAL)_([a-f0-9]{24})$/, async ctx => {
+  if (Number(ctx.from?.id) !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  const [,decision,token] = ctx.match;
+  const found = findSimilarityApproval(token);
+  if (!found) return ctx.answerCbQuery("Not pending, already handled, or expired.",{show_alert:true});
+  const {job,file} = found;
+  if (decision === "MANUAL") {
+    file.similarityApprovalStatus = "MANUAL";
+    file.providerStatus = "MANUAL_REQUIRED";
+    file.manualReviewRequired = true;
+    file.manualReviewReason = "Similarity-only: admin manual handling requested";
+    savePaidJobs();
+    await ctx.answerCbQuery("Manual handling selected.");
+    return;
+  }
+  if (file.providerAutoResubmitBlocked ||
+      file.providerResultsFile ||
+      (file.providerBundleFile &&
+       fs.existsSync(file.providerBundleFile + ".provider-results.json"))) {
+    return ctx.answerCbQuery("Saved results exist. Review; do not rescan.",{show_alert:true});
+  }
+  file.similarityApiApprovedAt = Date.now();
+  file.similarityApprovalStatus = "APPROVED";
+  savePaidJobs();
+  await ctx.answerCbQuery("Approved once. Submitting Quetext only.");
+  setImmediate(() => submitPaidJobToActiveProvider(job.jobId).catch(err =>
+    sendAdminMessage("Approved similarity API failed: " + safeText(err.message))));
+});
+
 // =====================
 // DOCUMENT HANDLER
 // =====================
@@ -7974,8 +8067,8 @@ bot.on("document", async (ctx) => {
     const session = adminFreeScanSession;
     const doc = ctx.message.document;
     const name = String(doc.file_name || "");
-    if (!/\.(pdf|docx)$/iu.test(name)) {
-      await ctx.reply("Only PDF and DOCX documents are supported. Nothing was queued.");
+    if (!/\.(pdf|docx|doc|pptx)$/iu.test(name)) {
+      await ctx.reply("Only PDF, DOCX, DOC and PPTX documents are supported. Nothing was queued.");
       return;
     }
     if (!Array.isArray(session.files)) session.files = [];
@@ -8009,7 +8102,7 @@ bot.on("document", async (ctx) => {
     await ctx.reply([
       "✅ Added file " + session.files.length + " / 10",
       "File: " + safeText(storedFile.file_name),
-      "Upload another PDF/DOCX or tap Review Batch.",
+      "Upload another PDF/DOCX/DOC/PPTX or tap Review Batch.",
       "No provider request has been made yet."
     ].join("\n"), { reply_markup: adminFreeScanWaitingKeyboard().reply_markup });
     return;
@@ -8056,6 +8149,7 @@ bot.on("document", async (ctx) => {
 
   if (!sub) {
     const doc = ctx.message.document;
+    if (!supportedScanUpload(doc.file_name)) return ctx.reply("Only PDF, DOCX, DOC and PPTX are supported for scanning.");
 
     submissions[user.id] = createEmptySubmission();
     submissions[user.id].pendingInitialDocument = {
@@ -8086,6 +8180,7 @@ bot.on("document", async (ctx) => {
     }
 
     const doc = ctx.message.document;
+    if (!supportedScanUpload(doc.file_name)) return ctx.reply("Only PDF, DOCX, DOC and PPTX are supported for scanning.");
 
     sub.pendingInitialDocument = {
       userId: user.id,
@@ -8151,6 +8246,7 @@ bot.on("document", async (ctx) => {
   }
 
   const doc = ctx.message.document;
+  if (!supportedScanUpload(doc.file_name)) return ctx.reply("Only PDF, DOCX, DOC and PPTX are supported for scanning.");
   const storedFile = createStoredFileFromDocument(user.id, doc);
 
   storedFile.sourceChatId = ctx.chat.id;
@@ -9313,6 +9409,12 @@ async function submitPaidJobToProviders(
       continue;
     }
 
+    if (needsSimilarityApiApproval(job,file)) {
+      manualCount++;
+      await requestSimilarityApproval(job,file);
+      continue;
+    }
+
     try {
       file.providerStatus =
         "DOWNLOADING";
@@ -9837,6 +9939,11 @@ async function submitPaidJobToCopyleaks(
         )
       )
     ) {
+      continue;
+    }
+
+    if (needsSimilarityApiApproval(job,file)) {
+      await requestSimilarityApproval(job,file);
       continue;
     }
 

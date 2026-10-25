@@ -7,7 +7,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates \
        libreoffice-writer \
-       python3-minimal \
+       libreoffice-impress \
+       python3 \
        fontconfig \
        fonts-dejavu-core \
        fonts-liberation2 \
