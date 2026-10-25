@@ -10,6 +10,19 @@ function tokens(text) {
   return String(text || "").normalize("NFKC").toLowerCase()
     .match(/[\p{L}\p{N}]+/gu) || [];
 }
+function preflightPptxArchive(inputFile) {
+  const fs = require("node:fs");
+  if (fs.statSync(inputFile).size > 25 * 1024 * 1024) review("PPTX file size exceeds safe automatic processing limit.");
+  const py = "import sys,zipfile\n" +
+    "with zipfile.ZipFile(sys.argv[1]) as z:\n" +
+    " p=z.infolist()\n" +
+    " if len(p)>5000 or sum(i.file_size for i in p)>75000000: raise ValueError('Oversized ZIP contents')\n" +
+    " if any(i.file_size>15000000 for i in p): raise ValueError('Oversized ZIP member')\n" +
+    " if 'ppt/presentation.xml' not in z.namelist(): raise ValueError('Not a PPTX presentation')\n";
+  const checked=spawnSync("python3",["-c",py,inputFile],{encoding:"utf8",timeout:15000});
+  if (checked.error || checked.status !== 0) review("PPTX archive integrity or size check failed.");
+}
+
 function auditPptxPdf(inputFile, document) {
   const py = String.raw`import sys,zipfile,re,xml.etree.ElementTree as E,json
 f=sys.argv[1]
@@ -78,4 +91,4 @@ with zipfile.ZipFile(f) as z:
     review("Insufficient original slide text verified in converted PDF.");
   return {slideCount:slides.length,sourceWords,verifiedWords:seenWords};
 }
-module.exports={auditPptxPdf};
+module.exports={auditPptxPdf, preflightPptxArchive};
