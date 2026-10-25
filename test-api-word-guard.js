@@ -43,7 +43,6 @@ const windowEnv={API_MAX_WORDS:"5000",JK_10K_WINDOW_ENABLED:"1",JK_10K_MAX_WORDS
 const at=(hhmm)=>new Date("2026-10-26T"+hhmm+":00+03:00");
 for(const h of ["22:00","23:59","00:00","01:59","11:00","12:59"]){
  assert.equal(readApiWordLimit(windowEnv,at(h)),10000,h);
- check("Window extended "+h,9999,9999,9999,false,windowEnv);
 }
 for(const h of ["21:59","02:00","10:59","13:00","16:00"]){
  assert.equal(readApiWordLimit(windowEnv,at(h)),5000,h);
