@@ -14,6 +14,11 @@ function auditPptxPdf(inputFile, document) {
   const py = String.raw`import sys,zipfile,re,xml.etree.ElementTree as E,json
 f=sys.argv[1]
 with zipfile.ZipFile(f) as z:
+    entries=z.infolist()
+    if len(entries)>5000 or sum(i.file_size for i in entries)>75000000:
+        raise ValueError("Presentation exceeds safe archive inspection limits")
+    if any(i.file_size>15000000 for i in entries):
+        raise ValueError("Presentation contains oversized archive parts")
     names=[n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide[1-9][0-9]*\.xml",n)]
     # Use Presentation slide order from ppt/presentation.xml + relationships.
     pres=E.fromstring(z.read("ppt/presentation.xml"))
@@ -31,10 +36,11 @@ with zipfile.ZipFile(f) as z:
             name=name.replace("ppt/../","")
             if name not in names: raise ValueError("Invalid PPTX slide relationship")
             ordered.append(name)
-    if len(ordered)!=len(names): raise ValueError("PPTX slide count mismatch")
+    if len(ordered)!=len(names) or len(names)>250: raise ValueError("PPTX slide count mismatch")
     t="{http://schemas.openxmlformats.org/drawingml/2006/main}t"
     out=[]
     for name in ordered:
+        if z.getinfo(name).file_size>2000000: raise ValueError("Slide XML too large")
         root=E.fromstring(z.read(name))
         strings=[x.text or "" for x in root.iter(t)]
         out.append(" ".join(strings))
