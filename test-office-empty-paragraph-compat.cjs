@@ -20,6 +20,6 @@ try {
  assert(source.includes("compatibilityDir"));
  assert(source.includes("fs.rmSync(compatibilityDir, { recursive: true, force: true })"));
  const docker = fs.readFileSync("./Dockerfile", "utf8");
- assert(docker.includes("python3-minimal"));
+ assert(docker.includes("python3-minimal") || docker.includes("       python3 \\"));
  console.log("PASS: conversion-only feature flag, cleanup, immutable source and python availability.");
 } finally { fs.rmSync(root, { recursive: true, force: true }); }
