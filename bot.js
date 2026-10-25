@@ -7952,6 +7952,80 @@ bot.action(/^BATCH_COUNT_(\d{1,2})$/, async (ctx) => {
   });
 });
 
+
+// JK_SIMILARITY_API_APPROVAL_V1
+// Approval is per paid file, persistent, and never triggers a new provider
+// request unless the approved file has a saved paid job and correct identity.
+function needsSimilarityApiApproval(job, file) {
+  return !job?.adminFreeScan &&
+    String(job?.reportModeSnapshot || "").toUpperCase() === REPORT_MODE_AUTO &&
+    String(file?.type || "").toUpperCase() === "SIMILARITY" &&
+    !file?.similarityApiApprovedAt;
+}
+function similarityApprovalToken(job, file) {
+  return require("crypto").createHash("sha256")
+    .update(String(job.jobId) + ":" + String(file.fileIndex) + ":" + String(job.userId))
+    .digest("hex").slice(0, 24);
+}
+function findSimilarityApproval(token) {
+  const matches = [];
+  for (const job of Object.values(paidJobs)) {
+    for (const file of job.files || []) {
+      if (needsSimilarityApiApproval(job, file) &&
+          similarityApprovalToken(job,file) === token) matches.push({job,file});
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+async function requestSimilarityApproval(job, file) {
+  if (!needsSimilarityApiApproval(job,file)) return false;
+  if (!file.similarityApprovalNotifiedAt) {
+    file.similarityApprovalNotifiedAt = Date.now();
+    file.similarityApprovalStatus = "PENDING_ADMIN";
+    savePaidJobs();
+    const token = similarityApprovalToken(job,file);
+    await bot.telegram.sendMessage(ADMIN_ID,
+      "🔒 SIMILARITY-ONLY API APPROVAL REQUIRED\n" +
+      "Customer: " + job.userId + "\n" +
+      "File: " + safeText(file.file_name || "") + "\n" +
+      "Paid job: " + safeText(job.jobId || "") + "\n" +
+      "No API has been called for this file.",
+      { reply_markup: { inline_keyboard: [[
+        {text:"✅ Approve Quetext Only",callback_data:"JK_SIM_APPROVE_" + token},
+        {text:"🧑‍💻 Manual",callback_data:"JK_SIM_MANUAL_" + token}
+      ]] } });
+  }
+  return true;
+}
+bot.action(/^JK_SIM_(APPROVE|MANUAL)_([a-f0-9]{24})$/, async ctx => {
+  if (Number(ctx.from?.id) !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  const [,decision,token] = ctx.match;
+  const found = findSimilarityApproval(token);
+  if (!found) return ctx.answerCbQuery("Not pending, already handled, or expired.",{show_alert:true});
+  const {job,file} = found;
+  if (decision === "MANUAL") {
+    file.similarityApprovalStatus = "MANUAL";
+    file.providerStatus = "MANUAL_REQUIRED";
+    file.manualReviewRequired = true;
+    file.manualReviewReason = "Similarity-only: admin manual handling requested";
+    savePaidJobs();
+    await ctx.answerCbQuery("Manual handling selected.");
+    return;
+  }
+  if (file.providerAutoResubmitBlocked ||
+      file.providerResultsFile ||
+      (file.providerBundleFile &&
+       fs.existsSync(file.providerBundleFile + ".provider-results.json"))) {
+    return ctx.answerCbQuery("Saved results exist. Review; do not rescan.",{show_alert:true});
+  }
+  file.similarityApiApprovedAt = Date.now();
+  file.similarityApprovalStatus = "APPROVED";
+  savePaidJobs();
+  await ctx.answerCbQuery("Approved once. Submitting Quetext only.");
+  setImmediate(() => submitPaidJobToActiveProvider(job.jobId).catch(err =>
+    sendAdminMessage("Approved similarity API failed: " + safeText(err.message))));
+});
+
 // =====================
 // DOCUMENT HANDLER
 // =====================
@@ -9313,6 +9387,12 @@ async function submitPaidJobToProviders(
       continue;
     }
 
+    if (needsSimilarityApiApproval(job,file)) {
+      manualCount++;
+      await requestSimilarityApproval(job,file);
+      continue;
+    }
+
     try {
       file.providerStatus =
         "DOWNLOADING";
@@ -9837,6 +9917,11 @@ async function submitPaidJobToCopyleaks(
         )
       )
     ) {
+      continue;
+    }
+
+    if (needsSimilarityApiApproval(job,file)) {
+      await requestSimilarityApproval(job,file);
       continue;
     }
 
