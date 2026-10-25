@@ -7972,6 +7972,7 @@ function needsSimilarityApiApproval(job, file) {
     !["CLOSED","DELIVERED","CANCELLED","CANCELLATION_REQUESTED"].includes(String(job?.status || "").toUpperCase()) &&
     String(job?.reportModeSnapshot || "").toUpperCase() === REPORT_MODE_AUTO &&
     String(file?.type || "").toUpperCase() === "SIMILARITY" &&
+    !["MANUAL","DECLINED"].includes(String(file?.similarityApprovalStatus || "").toUpperCase()) &&
     !file?.similarityApiApprovedAt;
 }
 function similarityApprovalToken(job, file) {
