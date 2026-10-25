@@ -4037,6 +4037,9 @@ function ensureFreshSubmission(userId) {
   return submissions[userId];
 }
 
+function supportedScanUpload(name) {
+  return /\.(pdf|docx|doc|pptx)$/iu.test(String(name || ""));
+}
 function createStoredFileFromDocument(userId, doc) {
   const fileName = doc.file_name || `file_${Date.now()}`;
   const fileUniqueId = doc.file_unique_id || null;
@@ -6725,7 +6728,7 @@ bot.action(
           ),
         "Filter: Quotes + Bibliography",
         "",
-        "Send 1–10 PDF or DOCX documents, then tap Review Batch.",
+        "Send 1–10 PDF, DOCX, DOC or PPTX documents, then tap Review Batch.",
         "",
         "No bot payment will be requested."
       ].join("\n"),
@@ -8048,8 +8051,8 @@ bot.on("document", async (ctx) => {
     const session = adminFreeScanSession;
     const doc = ctx.message.document;
     const name = String(doc.file_name || "");
-    if (!/\.(pdf|docx)$/iu.test(name)) {
-      await ctx.reply("Only PDF and DOCX documents are supported. Nothing was queued.");
+    if (!/\.(pdf|docx|doc|pptx)$/iu.test(name)) {
+      await ctx.reply("Only PDF, DOCX, DOC and PPTX documents are supported. Nothing was queued.");
       return;
     }
     if (!Array.isArray(session.files)) session.files = [];
@@ -8083,7 +8086,7 @@ bot.on("document", async (ctx) => {
     await ctx.reply([
       "✅ Added file " + session.files.length + " / 10",
       "File: " + safeText(storedFile.file_name),
-      "Upload another PDF/DOCX or tap Review Batch.",
+      "Upload another PDF/DOCX/DOC/PPTX or tap Review Batch.",
       "No provider request has been made yet."
     ].join("\n"), { reply_markup: adminFreeScanWaitingKeyboard().reply_markup });
     return;
@@ -8130,6 +8133,7 @@ bot.on("document", async (ctx) => {
 
   if (!sub) {
     const doc = ctx.message.document;
+    if (!supportedScanUpload(doc.file_name)) return ctx.reply("Only PDF, DOCX, DOC and PPTX are supported for scanning.");
 
     submissions[user.id] = createEmptySubmission();
     submissions[user.id].pendingInitialDocument = {
@@ -8160,6 +8164,7 @@ bot.on("document", async (ctx) => {
     }
 
     const doc = ctx.message.document;
+    if (!supportedScanUpload(doc.file_name)) return ctx.reply("Only PDF, DOCX, DOC and PPTX are supported for scanning.");
 
     sub.pendingInitialDocument = {
       userId: user.id,
@@ -8225,6 +8230,7 @@ bot.on("document", async (ctx) => {
   }
 
   const doc = ctx.message.document;
+  if (!supportedScanUpload(doc.file_name)) return ctx.reply("Only PDF, DOCX, DOC and PPTX are supported for scanning.");
   const storedFile = createStoredFileFromDocument(user.id, doc);
 
   storedFile.sourceChatId = ctx.chat.id;
