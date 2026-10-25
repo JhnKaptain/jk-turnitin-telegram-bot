@@ -7,6 +7,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates \
        libreoffice-writer \
+       libreoffice-impress \
        python3-minimal \
        fontconfig \
        fonts-dejavu-core \
