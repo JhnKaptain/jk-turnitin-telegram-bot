@@ -137,12 +137,12 @@ function looksLikeSubstantiveBody(value) {
 }
 
 function looksLikeUnheadedBodyLine(value) {
-  const text = String(value || "").replace(/\\s+/gu, " ").trim();
-  const words = text.match(/[\\p{L}\\p{N}][\\p{L}\\p{N}'’.-]*/gu) || [];
+  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  const words = text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) || [];
   if (words.length < 10) return false;
-  if (!/^(?:the|this|these|those|in|on|when|while|however|therefore|according to|ultimately|moreover|it|they|we|as|for|although|unlike|similarly|germany|the united states|in contrast)\\b/iu.test(text)) return false;
-  if (!/\\b(?:is|are|was|were|has|have|serves|shows|explains|discusses|compares|argues|suggests|provides|examines|demonstrates|remains|continues|includes|contains|indicates|means|describes|requires|supports|presents|focuses|emphasizes|uses|allows|creates|reveals|contrasts)\\b/iu.test(text)) return false;
-  if (/^(?:journal|volume|issue|pp?\\.?|edition|publisher|retrieved|available at|doi|https?:|www\\.)\\b/iu.test(text)) return false;
+  if (!/^(?:the|this|these|those|in|on|when|while|however|therefore|according to|ultimately|moreover|it|they|we|as|for|although|unlike|similarly|germany|the united states|in contrast)\b/iu.test(text)) return false;
+  if (!/\b(?:is|are|was|were|has|have|serves|shows|explains|discusses|compares|argues|suggests|provides|examines|demonstrates|remains|continues|includes|contains|indicates|means|describes|requires|supports|presents|focuses|emphasizes|uses|allows|creates|reveals|contrasts)\b/iu.test(text)) return false;
+  if (/^(?:journal|volume|issue|pp?\.?|edition|publisher|retrieved|available at|doi|https?:|www\.)\b/iu.test(text)) return false;
   return true;
 }
 
