@@ -8062,16 +8062,15 @@ bot.action(/^JK_REF_BOUNDARY_(END|\d{1,2})_([a-f0-9]{20})$/, async ctx => {
     end = Number(candidate.offset);
   }
 
-  if (!Number.isInteger(end) || end <= review.start || end > review.sourceLength ||
-      (end !== review.sourceLength && !["\n", "\r"].includes(
-        String(review.sourceTextNewlineAtEnd || "")
-      ))) {
-    // Candidate offsets are line starts from the saved canonical extraction.
-    // The source hash is checked again by the preparation layer on resubmission.
-    if (end !== Number(review.sourceLength) &&
-        !((review.candidates || []).some(c => Number(c.offset) === end))) {
-      return ctx.answerCbQuery("Invalid boundary; review remains pending.", {show_alert: true});
-    }
+  const chosenCandidate = choice === "END"
+    ? null
+    : (review.candidates || []).find(c => String(c.id) === choice);
+  const validEndChoice = choice === "END"
+    ? end === Number(review.sourceLength)
+    : Boolean(chosenCandidate && Number(chosenCandidate.offset) === end);
+  if (!Number.isInteger(end) || end <= Number(review.start) ||
+      end > Number(review.sourceLength) || !validEndChoice) {
+    return ctx.answerCbQuery("Invalid boundary; review remains pending.", {show_alert: true});
   }
 
   const overrides = Array.isArray(file.referenceBoundaryOverrides)
