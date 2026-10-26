@@ -85,6 +85,28 @@ const bodyOffset = aiTitleless.text.indexOf(bodyPhrase);
 assert.equal(titleless.slice(aiTitleless.map[bodyOffset], aiTitleless.map[bodyOffset] + bodyPhrase.length),
   bodyPhrase);
 
+// Early real bibliography must be detected by entry evidence, not document percentage.
+const earlyBib = [
+  "Opening paragraph with meaningful body content before the references section.",
+  "Table of Contents",
+  "References",
+  "Introduction",
+  "This is a table-of-contents continuation, not a bibliography entry.",
+  "The first assignment discusses several academic themes and meaningful evidence.",
+  "References",
+  "Barker, T. (2021). Research design and analysis. Journal of Academic Methods, 12(2), 44-58.",
+  "The criminal justice system continues here as body prose without a heading, and must remain eligible for AI checking after the reference entry."
+].join("\n");
+const earlyRanges = findReferenceSections(earlyBib);
+assert.equal(earlyRanges.length, 1, JSON.stringify(earlyRanges));
+assert(earlyRanges[0].start > earlyBib.indexOf("Table of Contents"));
+const earlyPrepared = prepareWithoutReferences(earlyBib, source => ({
+  text: source, map: Array.from({length: source.length}, (_, i) => i)
+}));
+assert(earlyPrepared.text.includes("This is a table-of-contents continuation"));
+assert(!earlyPrepared.text.includes("Research design and analysis"));
+assert(earlyPrepared.text.includes("The criminal justice system continues here as body prose"));
+
 const proseOnly="This is substantial text. The article references Smith for a useful example. The author discusses bibliography design in the final discussion.";
 assert.equal(findReferenceSections(proseOnly).length,0);
 console.log("PASS: multiple bibliography blocks excluded independently.");

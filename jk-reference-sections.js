@@ -136,6 +136,16 @@ function looksLikeSubstantiveBody(value) {
   return words.length >= 16;
 }
 
+function looksLikeUnheadedBodyLine(value) {
+  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  const words = text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) || [];
+  if (words.length < 10) return false;
+  if (!/^(?:the|this|these|those|in|on|when|while|however|therefore|according to|ultimately|moreover|it|they|we|as|for|although|unlike|similarly|germany|the united states|in contrast)\b/iu.test(text)) return false;
+  if (!/\b(?:is|are|was|were|has|have|serves|shows|explains|discusses|compares|argues|suggests|provides|examines|demonstrates|remains|continues|includes|contains|indicates|means|describes|requires|supports|presents|focuses|emphasizes|uses|allows|creates|reveals|contrasts)\b/iu.test(text)) return false;
+  if (/^(?:journal|volume|issue|pp?\.?|edition|publisher|retrieved|available at|doi|https?:|www\.)\b/iu.test(text)) return false;
+  return true;
+}
+
 function findSectionBoundary(source, start, lines) {
   const index = lines.findIndex(line => line.start >= start);
   if (index < 0) return source.length;
@@ -143,6 +153,24 @@ function findSectionBoundary(source, start, lines) {
   const paragraphs = paragraphsFor(source);
   const headingParagraph = paragraphs.findIndex(p =>
     p.start <= start && start < p.end);
+
+  // Detect the no-heading case at line level as well as paragraph level.
+  // PDF/DOCX extraction may place the first body paragraph on the next line
+  // without an empty line separating it from the last reference entry.
+  let lineConfirmedEntries = 0;
+  for (let i = index + 1; i < lines.length; i++) {
+    const text = lines[i].text.trim();
+    if (!text) continue;
+    if (KNOWN_TERMINATOR.test(text)) return lines[i].start;
+    if (isLikelySectionHeading(lines, i, start, source)) return lines[i].start;
+    if (isReferenceEntryParagraph(text)) {
+      lineConfirmedEntries++;
+      continue;
+    }
+    if (lineConfirmedEntries > 0 && looksLikeUnheadedBodyLine(text)) {
+      return lines[i].start;
+    }
+  }
 
   // First preserve the strong explicit-heading/known-terminator behavior.
   // Also remember which paragraphs look like actual bibliography entries.
@@ -183,6 +211,29 @@ function findSectionBoundary(source, start, lines) {
   return source.length;
 }
 
+function hasReferenceEntryAfterHeading(source, start, lines) {
+  const headingIndex = lines.findIndex(line =>
+    line.start <= start && start <= line.end);
+  if (headingIndex < 0) return false;
+
+  // Validate each exact heading against real reference-entry evidence nearby.
+  // This allows early bibliographies without mistaking a table-of-contents
+  // label for a bibliography, because TOC headings are not followed by
+  // author/date, DOI, URL, or numbered reference entries.
+  let examined = 0;
+  for (let i = headingIndex + 1; i < lines.length && examined < 12; i++) {
+    const text = lines[i].text.trim();
+    if (!text) continue;
+    examined++;
+
+    if (isReferenceEntryParagraph(text)) return true;
+    if (KNOWN_TERMINATOR.test(text) ||
+        COMMON_SECTION_HEADING.test(text) ||
+        STRUCTURAL_FOLLOWER.test(text)) return false;
+  }
+  return false;
+}
+
 function findReferenceSections(source, fallbackStart = -1) {
   source = String(source || "");
   const lines = lineRecords(source);
@@ -191,7 +242,7 @@ function findReferenceSections(source, fallbackStart = -1) {
   let match;
   while ((match = re.exec(source))) {
     const start = match.index + match[1].length;
-    if (start >= source.length * 0.30) headings.push(start);
+    if (hasReferenceEntryAfterHeading(source, start, lines)) headings.push(start);
   }
 
   // Preserve conservative flattened-heading fallback used by PDF extraction.
