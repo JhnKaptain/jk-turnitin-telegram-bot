@@ -77,22 +77,108 @@ function isLikelySectionHeading(lines, index, start, source) {
   return structuralNext || bodyNext;
 }
 
+function paragraphsFor(source) {
+  const lines = lineRecords(source);
+  const out = [];
+  let current = null;
+  for (const line of lines) {
+    if (!line.text.trim()) {
+      if (current) {
+        current.text = current.lines.join("\n");
+        delete current.lines;
+        out.push(current);
+        current = null;
+      }
+      continue;
+    }
+    if (!current) current = { start: line.start, end: line.end, lines: [line.text.trim()] };
+    else {
+      current.end = line.end;
+      current.lines.push(line.text.trim());
+    }
+  }
+  if (current) {
+    current.text = current.lines.join("\n");
+    delete current.lines;
+    out.push(current);
+  }
+  return out;
+}
+
+function isReferenceEntryParagraph(value) {
+  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  if (!text) return false;
+  if (/^(?:\[\d+\]\s*)?(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return true;
+  if (/\b(?:https?:\/\/|doi\s*:\s*10\.\d{4,9}\/)/iu.test(text)) return true;
+  if (/^(?:\[\d+\]\s*)?[A-Z][\p{L}'’.-]{1,50},\s*(?:[A-Z]\.?|[A-Z][\p{L}'’.-]+)\b/u.test(text)) return true;
+  if (/^[A-Z][^.!?]{1,100}\.\s*\((?:19|20)\d{2}[a-z]?\)/u.test(text)) return true;
+  if (/^[A-Z][^.!?]{1,100}\s+\((?:19|20)\d{2}[a-z]?\)/u.test(text)) return true;
+  if (/^(?:\[\d+\]|\d+[.)])\s+.{8,}/u.test(text) &&
+      /\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|doi\b/iu.test(text)) return true;
+  return false;
+}
+
+function looksLikeReferenceContinuation(value) {
+  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  const words = text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) || [];
+  if (!text || isReferenceEntryParagraph(text)) return true;
+  if (text.length <= 85 && words.length <= 12 &&
+      !/\b(?:I|we|they|he|she|it|this|these|those|the|because|however|therefore|although|is|are|was|were|has|have|serves|shows|explains|discusses|compares|argues|suggests|provides|examines|demonstrates|remains|continues|includes|contains)\b/iu.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function looksLikeSubstantiveBody(value) {
+  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  const words = text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) || [];
+  if (words.length >= 8 && /\b(?:the|and|but|because|this|that|these|those|is|are|was|were|has|have|serves|shows|explains|discusses|compares|argues|suggests|provides|examines|demonstrates|remains|continues|includes|contains|while|which|who|when|where|with|from|into|their|they|we|it)\b/iu.test(text)) return true;
+  return words.length >= 16;
+}
+
 function findSectionBoundary(source, start, lines) {
   const index = lines.findIndex(line => line.start >= start);
   if (index < 0) return source.length;
 
-  for (let i = index + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.start <= start) continue;
-    const text = line.text.trim();
-    if (!text) continue;
+  const paragraphs = paragraphsFor(source);
+  const headingParagraph = paragraphs.findIndex(p =>
+    p.start <= start && start < p.end);
 
-    if (KNOWN_TERMINATOR.test(text)) return line.start;
+  // First preserve the strong explicit-heading/known-terminator behavior.
+  // Also remember which paragraphs look like actual bibliography entries.
+  let confirmedEntries = 0;
+  const firstParagraph = headingParagraph >= 0
+    ? headingParagraph + 1
+    : paragraphs.findIndex(p => p.start > start);
 
-    // A later standalone structural heading closes this bibliography block.
-    // It remains in the analysis text and can itself contain a later
-    // References section that will be detected independently.
-    if (isLikelySectionHeading(lines, i, start, source)) return line.start;
+  for (let p = Math.max(0, firstParagraph); p < paragraphs.length; p++) {
+    const paragraph = paragraphs[p];
+    if (paragraph.start <= start) continue;
+
+    const firstLine = lines.findIndex(line => line.start >= paragraph.start);
+    if (firstLine >= 0) {
+      const line = lines[firstLine];
+      const text = paragraph.text.trim();
+
+      if (KNOWN_TERMINATOR.test(text)) return paragraph.start;
+
+      if (isLikelySectionHeading(lines, firstLine, start, source))
+        return paragraph.start;
+
+      if (isReferenceEntryParagraph(text)) {
+        confirmedEntries++;
+        continue;
+      }
+
+      // New, titleless substantive prose after confirmed reference entries
+      // ends the exclusion block. A heading is not required. If the following
+      // text is ambiguous (short publisher/continuation line), keep scanning
+      // rather than guessing that it is body content.
+      if (confirmedEntries > 0 && looksLikeSubstantiveBody(text) &&
+          !looksLikeReferenceContinuation(text)) {
+        return paragraph.start;
+      }
+    }
   }
   return source.length;
 }
