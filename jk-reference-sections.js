@@ -41,17 +41,25 @@ function isLikelySectionHeading(lines, index, start, source) {
   if (!hasReferenceEvidence(preceding)) return false;
 
   const previous = index > 0 ? lines[index - 1].text.trim() : "";
-  const next = index + 1 < lines.length ? lines[index + 1].text.trim() : "";
+  let nextIndex = index + 1;
+  while (nextIndex < lines.length && !lines[nextIndex].text.trim()) nextIndex++;
+  const next = nextIndex < lines.length ? lines[nextIndex].text.trim() : "";
   const blankBefore = previous === "";
-  const blankAfter = next === "";
+  const blankAfter = nextIndex > index + 1 ||
+    (index + 1 < lines.length && !lines[index + 1].text.trim());
   const structuralNext = STRUCTURAL_FOLLOWER.test(next) ||
     /^(?:date|context|children|apst|purpose)\s*:/i.test(next);
+  const words = text.match(/[\p{L}\p{N}’'-]+/gu) || [];
+  const titleCaseHeading = words.length >= 2 && words.length <= 10 &&
+    !/[.!?]\s*$/.test(text) &&
+    words.filter(word => /^[A-ZÀ-Þ]/u.test(word)).length >= 2 &&
+    words.filter(word => /^[A-ZÀ-Þ]/u.test(word)).length / words.length >= 0.45;
 
-  // A bibliography title or wrapped reference line can itself look like a
-  // heading. Require section-like spacing or a recognisable section preface.
-  if (!(blankBefore && (blankAfter || structuralNext)) &&
-      !(blankAfter && structuralNext) &&
-      !structuralNext) return false;
+  // Prefer a known structural follower (e.g. Date, Context, Purpose, or a
+  // numbered section) or a standalone title-case heading separated by blank
+  // lines. Wrapped bibliographic titles generally lack this combined evidence.
+  if (!structuralNext && !(titleCaseHeading && blankBefore && blankAfter))
+    return false;
 
   // Reject likely reference continuation lines ending in bibliographic
   // punctuation and lines that look like authors, URLs, identifiers or years.
