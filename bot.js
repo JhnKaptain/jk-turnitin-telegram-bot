@@ -4948,14 +4948,6 @@ async function markPaymentComplete({ apiRef, invoiceId, state, source }) {
     );
   }
 
-  if (paidJob?.reportModeSnapshot === REPORT_MODE_AUTO &&
-      paidJob.files?.some(file => String(file.type).toUpperCase() === "SIMILARITY")) {
-    try { await bot.telegram.sendMessage(userId,
-      "🔒 Similarity-only files need administrator approval before the API scan. " +
-      "Eligible full-check files continue automatically. You will receive your report after processing."); }
-    catch (err) { console.error("Similarity approval customer notice failed:", err?.message || err); }
-  }
-
   resetSubmission(userId);
   return true;
 }
