@@ -54,6 +54,37 @@ assert.equal(prepared.map.length,prepared.text.length);
 for(let i=0;i<prepared.map.length;i++){
   if(Number.isInteger(prepared.map[i])) assert.equal(prepared.text[i],sample[prepared.map[i]]);
 }
+// Critical edge case: body prose resumes after the bibliography with no section title.
+const titleless = [
+  "Opening academic discussion with enough original words to exceed the early-heading cutoff. ".repeat(8),
+  "",
+  "References",
+  "",
+  "Barker, T. (2021). Research design and analysis. Journal of Academic Methods, 12(2), 44-58.",
+  "",
+  "The criminal justice system serves as the backbone of societal order and establishes how laws are enforced across communities. This paragraph must remain in the AI analysis even though it has no heading.",
+  "The following discussion compares policing and courts, and explains why rehabilitation differs across the countries examined in this essay."
+].join("\n");
+const titlelessRanges = findReferenceSections(titleless);
+assert.equal(titlelessRanges.length, 1, JSON.stringify(titlelessRanges));
+const titlelessPrepared = prepareWithoutReferences(titleless, source => ({
+  text: source, map: Array.from({length: source.length}, (_, i) => i)
+}));
+assert(!titlelessPrepared.text.includes("Research design and analysis"));
+assert(titlelessPrepared.text.includes("The criminal justice system serves as the backbone"));
+assert(titlelessPrepared.text.includes("The following discussion compares policing and courts"));
+const titlelessScan = require("./jk-scan-text.js");
+const aiTitleless = titlelessScan.buildAiInput(titleless);
+const simTitleless = titlelessScan.buildSimilarityInput(titleless, titlelessScan.FILTER_MODE_FILTERED);
+assert(aiTitleless.text.includes("The criminal justice system serves as the backbone"));
+assert(simTitleless.text.includes("The criminal justice system serves as the backbone"));
+assert(!aiTitleless.text.includes("Research design and analysis"));
+assert(!simTitleless.text.includes("Research design and analysis"));
+const bodyPhrase = "The criminal justice system serves as the backbone";
+const bodyOffset = aiTitleless.text.indexOf(bodyPhrase);
+assert.equal(titleless.slice(aiTitleless.map[bodyOffset], aiTitleless.map[bodyOffset] + bodyPhrase.length),
+  bodyPhrase);
+
 const proseOnly="This is substantial text. The article references Smith for a useful example. The author discusses bibliography design in the final discussion.";
 assert.equal(findReferenceSections(proseOnly).length,0);
 console.log("PASS: multiple bibliography blocks excluded independently.");
