@@ -183,6 +183,29 @@ function findSectionBoundary(source, start, lines) {
   return source.length;
 }
 
+function hasReferenceEntryAfterHeading(source, start, lines) {
+  const headingIndex = lines.findIndex(line =>
+    line.start <= start && start <= line.end);
+  if (headingIndex < 0) return false;
+
+  // Validate each exact heading against real reference-entry evidence nearby.
+  // This allows early bibliographies without mistaking a table-of-contents
+  // label for a bibliography, because TOC headings are not followed by
+  // author/date, DOI, URL, or numbered reference entries.
+  let examined = 0;
+  for (let i = headingIndex + 1; i < lines.length && examined < 12; i++) {
+    const text = lines[i].text.trim();
+    if (!text) continue;
+    examined++;
+
+    if (isReferenceEntryParagraph(text)) return true;
+    if (KNOWN_TERMINATOR.test(text) ||
+        COMMON_SECTION_HEADING.test(text) ||
+        STRUCTURAL_FOLLOWER.test(text)) return false;
+  }
+  return false;
+}
+
 function findReferenceSections(source, fallbackStart = -1) {
   source = String(source || "");
   const lines = lineRecords(source);
@@ -191,7 +214,7 @@ function findReferenceSections(source, fallbackStart = -1) {
   let match;
   while ((match = re.exec(source))) {
     const start = match.index + match[1].length;
-    if (start >= source.length * 0.30) headings.push(start);
+    if (hasReferenceEntryAfterHeading(source, start, lines)) headings.push(start);
   }
 
   // Preserve conservative flattened-heading fallback used by PDF extraction.
