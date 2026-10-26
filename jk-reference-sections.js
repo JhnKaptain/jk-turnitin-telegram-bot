@@ -4,6 +4,13 @@ const REFERENCE_HEADING = /^(reference list|references?|bibliography|works cited
 const KNOWN_TERMINATOR = /^(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits)(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
 const STRUCTURAL_FOLLOWER = /^(?:date|context|children|apst|purpose|overview|learning objectives|introduction|background|stimulus behaviour|strategies used|reflection|references|appendix|appendices|table of contents)\s*:?\s*$|^\d+(?:\.\d+)*[.)]?\s+[A-Z]/i;
 
+const SECTION_STOPWORDS = new Set([
+  "a","an","and","as","at","by","for","from","in","into","of","on","or",
+  "the","to","with","without","vs","versus"
+]);
+const COMMON_SECTION_HEADING = /^(?:abstract|introduction(?:\s+(?:of|to)\b.*)?|background|overview(?:\s+of\b.*)?|basic overview(?:\s+of\b.*)?|purpose|objective(?:s)?|literature review|related work|method(?:s|ology)?|results?|discussion|conclusion|summary|police|courts|corrections|structure of\b.*|origin of\b.*|current issues and concerns|legal philosophy|type of system|alternatives to incarceration|handling juveniles|guiding children(?:['’]s)? behaviour|teaching resources(?:,?\s+strategies)?(?:\s+and transitions)?|main point\s+\d+|chapter\s+\d+.*|part\s+\d+.*)$/i;
+const REFERENCE_ENTRY_START = /^(?:\[\d+\]\s*)?(?:[A-Z][\p{L}'’.-]{1,50},\s*[A-Z]|\S.{0,100}\((?:19|20)\d{2}[a-z]?\)\s*[.,]|https?:\/\/|www\.|doi\s*:)/u;
+
 function lineRecords(source) {
   const out = [];
   const re = /[^\r\n]*(?:\r\n|\n|\r|$)/g;
@@ -30,11 +37,7 @@ function isLikelySectionHeading(lines, index, start, source) {
   if (REFERENCE_HEADING.test(text) || KNOWN_TERMINATOR.test(text)) return false;
   if (/^(?:https?:\/\/|doi\s*:|www\.)/i.test(text)) return false;
   if (/\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|doi\s*:/i.test(text)) return false;
-  if (/^[A-Z][A-Za-z'’.-]{1,50},\s/.test(text)) return false;
-  if (/^[\[(]?\d+[\])\.]\s+[A-Z]/.test(text) && !/^\d+(?:\.\d+)+/.test(text)) {
-    // Numbered section heading is possible; reference lists are usually
-    // author/date entries and are rejected by the reference-evidence checks.
-  }
+  if (/^[A-Z][\p{L}'’.-]{1,50},\s/u.test(text)) return false;
   if (line.start < start + 24) return false;
 
   const preceding = source.slice(start, line.start);
@@ -47,17 +50,31 @@ function isLikelySectionHeading(lines, index, start, source) {
   const blankBefore = previous === "";
   const blankAfter = nextIndex > index + 1 ||
     (index + 1 < lines.length && !lines[index + 1].text.trim());
-  const structuralNext = STRUCTURAL_FOLLOWER.test(next) ||
-    /^(?:date|context|children|apst|purpose)\s*:/i.test(next);
-  // Conservative by design: close a reference block only when the next
-  // nonblank line confirms a recognizable section structure. Title-cased
-  // article/journal titles alone are not sufficient evidence.
-  if (!structuralNext) return false;
 
-  // Reject likely reference continuation lines ending in bibliographic
-  // punctuation and lines that look like authors, URLs, identifiers or years.
-  if (/[,:;]\s*$/.test(text)) return false;
-  return true;
+  // Detect the heading itself. Real sections commonly start with a heading
+  // such as "Introduction" and then an ordinary body paragraph.
+  const words = text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) || [];
+  const meaningful = words.filter(word =>
+    !SECTION_STOPWORDS.has(word.toLowerCase()));
+  const titleCase = meaningful.length > 0 &&
+    meaningful.every(word => /^\p{Lu}/u.test(word));
+  const knownHeading = COMMON_SECTION_HEADING.test(text) ||
+    /^\d+(?:\.\d+)*[.)]?\s+[A-Z]/u.test(text);
+  const headingShape = knownHeading ||
+    (titleCase && words.length <= 12 && blankBefore && blankAfter);
+
+  if (!headingShape || /[,:;]\s*$/.test(text)) return false;
+  if (!next) return false;
+
+  // Do not treat a reference entry as the body following a candidate heading.
+  const structuralNext = STRUCTURAL_FOLLOWER.test(next);
+  const referenceNext = REFERENCE_ENTRY_START.test(next);
+  const bodyNext = next.length >= 18 &&
+    !REFERENCE_HEADING.test(next) &&
+    !KNOWN_TERMINATOR.test(next) &&
+    !referenceNext;
+
+  return structuralNext || bodyNext;
 }
 
 function findSectionBoundary(source, start, lines) {
