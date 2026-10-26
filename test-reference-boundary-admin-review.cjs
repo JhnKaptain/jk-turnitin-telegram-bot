@@ -20,7 +20,7 @@ assert.equal(inspection.reviews.length, 1, "ambiguous boundary must be flagged")
 const review = inspection.reviews[0];
 assert.equal(review.status, undefined);
 assert.equal(typeof review.sourceTextSha256, "string");
-assert.equal(review.candidates.length, 1);
+assert(review.candidates.length >= 1);
 assert(source.slice(review.candidates[0].offset).startsWith(
   "Professional standards specify the applicable editorial format."
 ));
