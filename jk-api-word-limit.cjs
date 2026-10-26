@@ -41,21 +41,19 @@ function getWordLimitState(env = process.env, now = new Date()) {
   if (maximum > 10000 || maximum <= normal) {
     invalid("JK_10K_MAX_WORDS must exceed API_MAX_WORDS and not exceed 10000.");
   }
-  const windows = [1,2].map(number => {
-    const start = timeOfDay(env["JK_10K_WINDOW_" + number + "_START_EAT"],
-      "JK_10K_WINDOW_" + number + "_START_EAT");
-    const end = timeOfDay(env["JK_10K_WINDOW_" + number + "_END_EAT"],
-      "JK_10K_WINDOW_" + number + "_END_EAT");
-    if (start === end) invalid("10K window " + number + " cannot last 24 hours.");
-    return {number,start,end};
-  });
+  // Exactly one recurring daily EAT window. It may cross midnight.
+  // Legacy WINDOW_2 variables, if still present in Render, are ignored.
+  const start = timeOfDay(env.JK_10K_WINDOW_1_START_EAT,
+    "JK_10K_WINDOW_1_START_EAT");
+  const end = timeOfDay(env.JK_10K_WINDOW_1_END_EAT,
+    "JK_10K_WINDOW_1_END_EAT");
   const when = now instanceof Date ? now : new Date(now);
   if (!Number.isFinite(when.getTime())) invalid("Word limit clock is invalid.");
   // EAT is UTC+03:00 throughout the year; use UTC getters to avoid host TZ.
   const eat = (when.getUTCHours() * 60 + when.getUTCMinutes() + 180) % 1440;
-  const current = windows.find(w => within(eat,w.start,w.end));
-  return {limit: current ? maximum : normal, normal, extended: Boolean(current),
-    window: current ? current.number : null};
+  const active = within(eat, start, end);
+  return {limit: active ? maximum : normal, normal, extended: active,
+    window: active ? 1 : null};
 }
 
 function readApiWordLimit(env = process.env, now = new Date()) {
