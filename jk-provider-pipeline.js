@@ -685,7 +685,8 @@ async function runProviderPipeline({
   onQuetextProgress =
     null
 ,
-  onQuetextSubmitted = null
+  onQuetextSubmitted = null,
+  referenceBoundaryOverrides = []
 }) {
   sourcePath =
     path.resolve(
@@ -721,11 +722,12 @@ async function runProviderPipeline({
   const similarityPrepared =
     buildSimilarityInput(
       document.text,
-      similarityMode
+      similarityMode,
+      referenceBoundaryOverrides
     );
 
   const aiPrepared =
-    buildAiInput(document.text, document);
+    buildAiInput(document.text, document, referenceBoundaryOverrides);
 
   const eligibility =
     aiEligibility(
