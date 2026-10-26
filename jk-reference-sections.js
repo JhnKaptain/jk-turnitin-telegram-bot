@@ -49,17 +49,10 @@ function isLikelySectionHeading(lines, index, start, source) {
     (index + 1 < lines.length && !lines[index + 1].text.trim());
   const structuralNext = STRUCTURAL_FOLLOWER.test(next) ||
     /^(?:date|context|children|apst|purpose)\s*:/i.test(next);
-  const words = text.match(/[\p{L}\p{N}’'-]+/gu) || [];
-  const titleCaseHeading = words.length >= 2 && words.length <= 10 &&
-    !/[.!?]\s*$/.test(text) &&
-    words.filter(word => /^[A-ZÀ-Þ]/u.test(word)).length >= 2 &&
-    words.filter(word => /^[A-ZÀ-Þ]/u.test(word)).length / words.length >= 0.45;
-
-  // Prefer a known structural follower (e.g. Date, Context, Purpose, or a
-  // numbered section) or a standalone title-case heading separated by blank
-  // lines. Wrapped bibliographic titles generally lack this combined evidence.
-  if (!structuralNext && !(titleCaseHeading && blankBefore && blankAfter))
-    return false;
+  // Conservative by design: close a reference block only when the next
+  // nonblank line confirms a recognizable section structure. Title-cased
+  // article/journal titles alone are not sufficient evidence.
+  if (!structuralNext) return false;
 
   // Reject likely reference continuation lines ending in bibliographic
   // punctuation and lines that look like authors, URLs, identifiers or years.
