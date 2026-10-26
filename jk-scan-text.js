@@ -300,17 +300,17 @@ function buildIdentityInput(
 */
 
 function buildFilteredInput(
-  rawText
+  rawText,
+  options = {}
 ) {
   const source =
     safeText(
       rawText
     );
 
-  const bibliographyStart =
-    findBibliographyStart(
-      source
-    );
+  const bibliographyStart = options.skipBibliographyFilter
+    ? -1
+    : findBibliographyStart(source);
 
   const limit =
     bibliographyStart >= 0
@@ -581,7 +581,8 @@ function buildFilteredInput(
 
 function buildSimilarityInputBeforeReferenceSections(
   rawText,
-  mode
+  mode,
+  options = {}
 ) {
   const normalizedMode =
     safeText(
@@ -595,7 +596,8 @@ function buildSimilarityInputBeforeReferenceSections(
     FILTER_MODE_FILTERED
   ) {
     return buildFilteredInput(
-      rawText
+      rawText,
+      options
     );
   }
 
@@ -617,17 +619,17 @@ function buildSimilarityInputBeforeReferenceSections(
 
 // JK_AI_QUOTES_INCLUDED_REFERENCES_EXCLUDED_V1
 function buildAiInputBeforeReferenceSections(
-  rawText
+  rawText,
+  options = {}
 ) {
   const source =
     safeText(
       rawText
     );
 
-  const bibliographyStart =
-    findBibliographyStart(
-      source
-    );
+  const bibliographyStart = options.skipBibliographyFilter
+    ? -1
+    : findBibliographyStart(source);
 
   const limit =
     bibliographyStart >= 0
@@ -1141,7 +1143,7 @@ function buildSimilarityInput(rawText, mode) {
   return require("./jk-reference-sections.js")
     .prepareWithoutReferences(
       rawText,
-      text => buildSimilarityInputBeforeReferenceSections(text, mode),
+      (text, options) => buildSimilarityInputBeforeReferenceSections(text, mode, options),
       findBibliographyStart(safeText(rawText))
     );
 }
@@ -1150,7 +1152,7 @@ function buildAiInputWithoutRunningMetadata(rawText) {
   return require("./jk-reference-sections.js")
     .prepareWithoutReferences(
       rawText,
-      text => buildAiInputBeforeReferenceSections(text),
+      (text, options) => buildAiInputBeforeReferenceSections(text, options),
       findBibliographyStart(safeText(rawText))
     );
 }
