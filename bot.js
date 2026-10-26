@@ -7956,6 +7956,156 @@ bot.action(/^BATCH_COUNT_(\d{1,2})$/, async (ctx) => {
 });
 
 
+// JK_REFERENCE_BOUNDARY_ADMIN_REVIEW_V1
+// Ambiguous reference boundaries pause this individual file before providers
+// are called. Decisions are persistent and keyed to the exact canonical text.
+function referenceBoundaryToken(job, file, review) {
+  const index = (job.files || []).indexOf(file);
+  return require("crypto").createHash("sha256")
+    .update([
+      String(job.jobId || ""),
+      String(job.userId || ""),
+      String(index),
+      String(review?.sourceTextSha256 || ""),
+      String(review?.start)
+    ].join(":"))
+    .digest("hex").slice(0, 20);
+}
+
+function findPendingReferenceBoundaryReview(token) {
+  const matches = [];
+  for (const job of Object.values(paidJobs)) {
+    for (const file of job.files || []) {
+      const review = file.referenceBoundaryReview;
+      if (file.referenceBoundaryReviewStatus === "PENDING_ADMIN" &&
+          review && referenceBoundaryToken(job, file, review) === token) {
+        matches.push({job, file, review});
+      }
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+async function notifyReferenceBoundaryReview(job, file, review) {
+  file.referenceBoundaryReview = {
+    ...review,
+    requestedAt: Date.now()
+  };
+  file.referenceBoundaryReviewStatus = "PENDING_ADMIN";
+  file.providerStatus = "MANUAL_REQUIRED";
+  file.manualReviewRequired = true;
+  file.manualReviewReason = "Reference/bibliography boundary requires administrator review.";
+  file.providerError = null;
+  file.referenceReviewNoProviderRequests = true;
+  savePaidJobs();
+
+  const token = referenceBoundaryToken(job, file, file.referenceBoundaryReview);
+  const lines = [
+    "REFERENCE / BIBLIOGRAPHY BOUNDARY REVIEW",
+    "File: " + safeText(file.file_name || "N/A"),
+    "Job: " + safeText(job.jobId || "N/A"),
+    "User ID: " + String(job.userId || "N/A"),
+    "Heading: " + safeText(review.heading || "References"),
+    "Reason: " + safeText(review.reason || "Ending boundary is ambiguous."),
+    "Reference entries detected: " + String(review.entriesFound || 0),
+    "",
+    "No Quetext or Sapling request was made for this file.",
+    "Choose the first text that should be INCLUDED after the references."
+  ];
+  const keyboard = [];
+  for (const candidate of (review.candidates || []).slice(0, 3)) {
+    keyboard.push([{
+      text: "Include from: " + safeText(candidate.preview || ("candidate " + candidate.id)).slice(0, 36),
+      callback_data: "JK_REF_BOUNDARY_" + String(candidate.id) + "_" + token
+    }]);
+  }
+  keyboard.push([{
+    text: "Treat remainder as references (exclude to end)",
+    callback_data: "JK_REF_BOUNDARY_END_" + token
+  }]);
+  await bot.telegram.sendMessage(ADMIN_ID, lines.join("\n"), {
+    reply_markup: {inline_keyboard: keyboard}
+  });
+}
+
+bot.action(/^JK_REF_BOUNDARY_(END|\d{1,2})_([a-f0-9]{20})$/, async ctx => {
+  if (Number(ctx.from?.id) !== ADMIN_ID) {
+    return ctx.answerCbQuery("Admin only.", {show_alert: true});
+  }
+  const [, choice, token] = ctx.match;
+  const found = findPendingReferenceBoundaryReview(token);
+  if (!found) {
+    return ctx.answerCbQuery("Review is stale or already handled.", {show_alert: true});
+  }
+  const {job, file, review} = found;
+
+  // The detector raises this review before any paid provider request. Refuse
+  // to resume if another route has already submitted or saved provider data.
+  const resultsPath = file.providerBundleFile
+    ? file.providerBundleFile + ".provider-results.json"
+    : null;
+  if (!file.referenceReviewNoProviderRequests ||
+      file.providerAutoResubmitBlocked ||
+      file.providerQuetextReportId ||
+      file.providerSubmittedAt ||
+      file.providerResultsFile ||
+      (resultsPath && fs.existsSync(resultsPath))) {
+    return ctx.answerCbQuery("Cannot resume safely; check saved results first.", {show_alert: true});
+  }
+
+  let end;
+  if (choice === "END") {
+    end = Number(review.sourceLength);
+  } else {
+    const candidate = (review.candidates || []).find(c => String(c.id) === choice);
+    if (!candidate) return ctx.answerCbQuery("That boundary option is no longer available.", {show_alert: true});
+    end = Number(candidate.offset);
+  }
+
+  const chosenCandidate = choice === "END"
+    ? null
+    : (review.candidates || []).find(c => String(c.id) === choice);
+  const validEndChoice = choice === "END"
+    ? end === Number(review.sourceLength)
+    : Boolean(chosenCandidate && Number(chosenCandidate.offset) === end);
+  if (!Number.isInteger(end) || end <= Number(review.start) ||
+      end > Number(review.sourceLength) || !validEndChoice) {
+    return ctx.answerCbQuery("Invalid boundary; review remains pending.", {show_alert: true});
+  }
+
+  const overrides = Array.isArray(file.referenceBoundaryOverrides)
+    ? file.referenceBoundaryOverrides.filter(x => x.start !== review.start)
+    : [];
+  overrides.push({
+    start: Number(review.start),
+    end,
+    sourceTextSha256: String(review.sourceTextSha256),
+    approvedBy: String(ctx.from.id),
+    approvedAt: Date.now()
+  });
+  file.referenceBoundaryOverrides = overrides;
+  file.referenceBoundaryReviewStatus = "APPROVED";
+  file.referenceBoundaryReviewedAt = Date.now();
+  file.referenceBoundaryReviewedBy = String(ctx.from.id);
+  file.referenceReviewNoProviderRequests = false;
+  file.manualReviewRequired = false;
+  file.manualReviewReason = null;
+  file.providerError = null;
+  file.providerStatus = "QUEUED";
+  savePaidJobs();
+
+  await ctx.answerCbQuery("Boundary saved. Resuming provider preparation.");
+  await bot.telegram.sendMessage(ADMIN_ID,
+    "REFERENCE BOUNDARY APPROVED\nFile: " + safeText(file.file_name || "N/A") +
+    "\nChosen end offset: " + end +
+    "\nThe saved boundary will be applied to both AI and filtered Similarity inputs. Processing is resuming.");
+
+  setImmediate(() => submitPaidJobToActiveProvider(job.jobId).catch(error => {
+    sendAdminMessage("Reference-review resume failed for " +
+      safeText(file.file_name || "N/A") + ": " + safeText(error.message));
+  }));
+});
+
 // JK_SIMILARITY_API_APPROVAL_V1
 // Approval is per paid file, persistent, and never triggers a new provider
 // request unless the approved file has a saved paid job and correct identity.
@@ -9689,6 +9839,33 @@ async function submitPaidJobToProviders(
         bundlePath
       );
     } catch (err) {
+      if (err?.code === "REFERENCE_BOUNDARY_REVIEW_REQUIRED") {
+        manualCount += 1;
+        file.providerStatus = "MANUAL_REQUIRED";
+        file.manualReviewRequired = true;
+        file.manualReviewRequestedAt = Date.now();
+        file.manualReviewReason = "Reference/bibliography boundary requires administrator review.";
+        file.referenceReviewNoProviderRequests = true;
+        file.providerError = null;
+        savePaidJobs();
+        try {
+          await notifyReferenceBoundaryReview(job, file, err.referenceReview || {});
+        } catch (notifyError) {
+          file.referenceBoundaryReviewStatus = "NOTIFICATION_FAILED";
+          file.referenceBoundaryReviewNotifyError = safeText(notifyError?.message || notifyError).slice(0, 300);
+          savePaidJobs();
+          try {
+            await sendAdminMessage(
+              "REFERENCE BOUNDARY REVIEW ALERT FAILED\n" +
+              "File: " + safeText(file.file_name || "N/A") + "\n" +
+              "Job: " + safeText(job.jobId || "N/A") + "\n" +
+              "No provider requests were made. Retry notification or review the saved referenceBoundaryReview record."
+            );
+          } catch {}
+        }
+        continue;
+      }
+
       // JK_PROVIDER_RESULTS_MANUAL_REVIEW_V1
       if (err?.code === "PROVIDER_RESULTS_REVIEW_REQUIRED") {
         manualCount += 1;
