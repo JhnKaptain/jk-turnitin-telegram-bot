@@ -130,7 +130,7 @@ function findReferenceSections(source, fallbackStart = -1) {
 function prepareWithoutReferences(rawText, builder, fallbackStart = -1) {
   const source = String(rawText || "");
   const ranges = findReferenceSections(source, fallbackStart);
-  if (!ranges.length) return builder(source);
+  if (!ranges.length) return builder(source, { skipBibliographyFilter: false });
 
   let text = "";
   const map = [];
@@ -153,7 +153,7 @@ function prepareWithoutReferences(rawText, builder, fallbackStart = -1) {
     map.push(i);
   }
 
-  const prepared = builder(text);
+  const prepared = builder(text, { skipBibliographyFilter: true });
   const composed = prepared.map.map(index =>
     Number.isInteger(index) && index >= 0 ? map[index] : Number.NaN
   );
