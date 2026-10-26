@@ -9840,6 +9840,33 @@ async function submitPaidJobToProviders(
         bundlePath
       );
     } catch (err) {
+      if (err?.code === "REFERENCE_BOUNDARY_REVIEW_REQUIRED") {
+        manualCount += 1;
+        file.providerStatus = "MANUAL_REQUIRED";
+        file.manualReviewRequired = true;
+        file.manualReviewRequestedAt = Date.now();
+        file.manualReviewReason = "Reference/bibliography boundary requires administrator review.";
+        file.referenceReviewNoProviderRequests = true;
+        file.providerError = null;
+        savePaidJobs();
+        try {
+          await notifyReferenceBoundaryReview(job, file, err.referenceReview || {});
+        } catch (notifyError) {
+          file.referenceBoundaryReviewStatus = "NOTIFICATION_FAILED";
+          file.referenceBoundaryReviewNotifyError = safeText(notifyError?.message || notifyError).slice(0, 300);
+          savePaidJobs();
+          try {
+            await sendAdminMessage(
+              "REFERENCE BOUNDARY REVIEW ALERT FAILED\n" +
+              "File: " + safeText(file.file_name || "N/A") + "\n" +
+              "Job: " + safeText(job.jobId || "N/A") + "\n" +
+              "No provider requests were made. Retry notification or review the saved referenceBoundaryReview record."
+            );
+          } catch {}
+        }
+        continue;
+      }
+
       // JK_PROVIDER_RESULTS_MANUAL_REVIEW_V1
       if (err?.code === "PROVIDER_RESULTS_REVIEW_REQUIRED") {
         manualCount += 1;
