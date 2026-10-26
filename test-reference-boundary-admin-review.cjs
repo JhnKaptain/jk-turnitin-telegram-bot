@@ -68,11 +68,12 @@ assert.throws(
 // Verify the admin resume workflow only offers admin callbacks, persists the
 // decision and blocks already-submitted/saved provider data.
 const bot = fs.readFileSync(require.resolve("./bot.js"), "utf8");
+const bundle = fs.readFileSync(require.resolve("./jk-provider-job-bundle.js"), "utf8");
 assert(bot.includes("REFERENCE_BOUNDARY_REVIEW_REQUIRED"));
 assert(bot.includes("notifyReferenceBoundaryReview(job, file, err.referenceReview"));
 assert(bot.includes("bot.action(/^JK_REF_BOUNDARY_"));
 assert(bot.includes("Number(ctx.from?.id) !== ADMIN_ID"));
-assert(bot.includes("referenceBoundaryOverrides = file.referenceBoundaryOverrides || []"));
+assert(bundle.includes("referenceBoundaryOverrides = file.referenceBoundaryOverrides || []"));
 assert(bot.includes("file.referenceReviewNoProviderRequests"));
 console.log("PASS: ambiguous bibliography boundary blocks AI and Similarity before provider submission.");
 console.log("PASS: administrator-selected boundary resumes preparation for both inputs.");
