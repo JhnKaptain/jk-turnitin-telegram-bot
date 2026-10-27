@@ -391,7 +391,7 @@ function inspectBoundary(source, start, lines) {
       }
     }
 
-    if (entriesFound > 0 &&
+    // A Chicago book/chapter title can begin with a capital letter and look\n    // like body prose, while the preceding citation visibly ends with "In".\n    // Keep that wrapped line with its reference even without PDF geometry.\n    const preceding = String(previousNonblankLine?.text || "").trim();\n    if (entriesFound > 0 && /\\b(?:in|of|and|for|with|from|by|the|a|an|to|at|as)\\s*$/iu.test(preceding) &&\n        !KNOWN_TERMINATOR.test(text) && !isReferenceEntryStart(text)) {\n      previousNonblankLine = line;\n      continue;\n    }\n\n    if (entriesFound > 0 &&
         (looksLikeReferenceContinuation(text) ||
          isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
       previousNonblankLine = line;
