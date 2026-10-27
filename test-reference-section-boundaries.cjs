@@ -267,6 +267,12 @@ assert.equal(assignmentInspection.reviews.length, 0,
   "The known second essay heading should end the bibliography without admin review.");
 assert.equal(assignmentInspection.ranges.length, 1,
   "The single bibliography block should be excluded as one range.");
+console.log("ASSIGNMENT REFERENCE DEBUG", JSON.stringify({
+  titleOffset: secondTitleOffset,
+  ranges: assignmentInspection.ranges,
+  reviews: assignmentInspection.reviews.map(x => ({start:x.start, reason:x.reason, entriesFound:x.entriesFound, candidates:x.candidates})),
+  endingText: assignmentOne.slice(Math.max(0, assignmentInspection.ranges[0]?.end - 90), assignmentInspection.ranges[0]?.end + 100)
+}));
 assert.equal(assignmentInspection.ranges[0].end, secondTitleOffset,
   "Reference exclusion must stop exactly before the second essay title.");
 const assignmentPrepared = prepareWithoutReferences(assignmentOne, source => ({
