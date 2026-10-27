@@ -5,7 +5,7 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "test": "node test-reference-boundary-admin-review.cjs && node test-ai-reference-resume.cjs && node test-client-internal-messages.cjs && node test-reference-section-boundaries.cjs && node test-heading-dedup.cjs && node test-ai-headings.js && node test-ai-structure.js && node test-ai-sequence-recovery.cjs && node test-ai-layout-regression.cjs && node test-quetext-unicode-alignment.cjs && node test-quetext-local-proof.cjs && node test-api-word-guard.js && node test-feature-upgrade.cjs && node test-admin-free-scan-control.cjs && node test-admin-free-batch.cjs && node test-report-source-gutters.cjs && node test-report-name-selection.cjs && node test-international-manual-payment.cjs && node test-office-font-alias.cjs && node test-office-empty-paragraph-compat.cjs"
+    "test": "node test-reference-boundary-multiple-blocks.cjs && node test-reference-boundary-admin-review.cjs && node test-ai-reference-resume.cjs && node test-client-internal-messages.cjs && node test-reference-section-boundaries.cjs && node test-heading-dedup.cjs && node test-ai-headings.js && node test-ai-structure.js && node test-ai-sequence-recovery.cjs && node test-ai-layout-regression.cjs && node test-quetext-unicode-alignment.cjs && node test-quetext-local-proof.cjs && node test-api-word-guard.js && node test-feature-upgrade.cjs && node test-admin-free-scan-control.cjs && node test-admin-free-batch.cjs && node test-report-source-gutters.cjs && node test-report-name-selection.cjs && node test-international-manual-payment.cjs && node test-office-font-alias.cjs && node test-office-empty-paragraph-compat.cjs"
   },
   "keywords": [],
   "author": "",
