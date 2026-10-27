@@ -723,7 +723,8 @@ async function runProviderPipeline({
     buildSimilarityInput(
       document.text,
       similarityMode,
-      referenceBoundaryOverrides
+      referenceBoundaryOverrides,
+      document
     );
 
   const aiPrepared =
