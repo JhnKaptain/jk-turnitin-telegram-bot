@@ -129,7 +129,7 @@ function isLikelySectionHeading(lines, index, start, source) {
   const knownHeading = COMMON_SECTION_HEADING.test(text) ||
     /^\d+(?:\.\d+)*[.)]?\s+[A-Z]/u.test(text);
   const followsWithSubstantiveBody = looksLikeSubstantiveBody(next) || looksLikeUnheadedBodyLine(next);
-  const headingShape = knownHeading ||
+  const headingShape = (knownHeading && (blankBefore || visualBreakBefore || KNOWN_TERMINATOR.test(text))) ||
     (titleCase && words.length <= 12 && (blankBefore || visualBreakBefore) &&
       (blankAfter || separatedVisually || followsWithSubstantiveBody));
   if (!headingShape || /[,:;]\s*$/.test(text) || !next) return false;
