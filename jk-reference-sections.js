@@ -239,18 +239,20 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
       previousNonblankLine = line;
       continue;
     }
-    if (entries > 0 &&
-        (looksLikeReferenceContinuation(text) ||
-         isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
-      previousNonblankLine = line;
-      continue;
-    }
-
+    // After a real visual/structural break, a section heading takes priority.
+    // Citation titles like "Introduction to..." without a break remain continuations.
     if (isLikelySectionHeading(lines, i, start, source)) {
       if (entries > 0) {
         add(line.start);
         break;
       }
+      previousNonblankLine = line;
+      continue;
+    }
+
+    if (entries > 0 &&
+        (looksLikeReferenceContinuation(text) ||
+         isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
       previousNonblankLine = line;
       continue;
     }
@@ -332,6 +334,13 @@ function inspectBoundary(source, start, lines) {
       continue;
     }
 
+    // A true section heading after a visible boundary takes priority over
+    // continuation detection. Citation titles such as "Introduction to..." are
+    // protected because they lack a paragraph/visual break before them.
+    if (entriesFound > 0 && isLikelySectionHeading(lines, i, start, source)) {
+      return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
+    }
+
     // Wrapped titles, corporate author continuation, date/publisher lines,
     // links and DOI lines must never be treated as the end of the bibliography.
     if (entriesFound > 0 &&
@@ -351,9 +360,6 @@ function inspectBoundary(source, start, lines) {
 
     if (KNOWN_TERMINATOR.test(text)) {
       return {status: "AUTO", end: line.start, reason: "Recognized section terminator.", entriesFound};
-    }
-    if (isLikelySectionHeading(lines, i, start, source)) {
-      return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
     }
 
     if (entriesFound > 0 &&
