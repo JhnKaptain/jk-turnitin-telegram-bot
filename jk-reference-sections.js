@@ -301,37 +301,27 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
 }
 
 function isVisualReferenceContinuation(line, previousLine, entryLine) {
-  if (!line || !previousLine ||
-      !Number.isFinite(line.layoutY) || !Number.isFinite(previousLine.layoutY) ||
+  if (!line || !previousLine) return false;
+  if (!Number.isFinite(line.layoutY) || !Number.isFinite(previousLine.layoutY) ||
       !Number.isFinite(line.layoutHeight) || !Number.isFinite(previousLine.layoutHeight) ||
-      !Number.isFinite(line.layoutX) || !Number.isFinite(entryLine?.layoutX) ||
-      !line.layoutPage || !previousLine.layoutPage) return false;
-
-  const text = line.text.trim();
-  const previous = previousLine.text.trim();
-  const lineHeight = Math.max(line.layoutHeight, previousLine.layoutHeight, 1);
-  const hangingIndent = line.layoutX >= entryLine.layoutX + Math.max(3.5, lineHeight * 0.3);
-  const previousIsOpen = /(?:[,;:]|\b(?:in|of|and|for|with|from|by|the|a|an|to|on|at|as|ended|including|edited|translated|vol\.?|issue|pp\.?)|[-–—])\s*$/iu.test(previous);
-  const conventionalContinuation = /^(?:and\b|or\b|of\b|in\b|for\b|with\b|from\b|by\b|the\b|a\b|an\b|to\b|on\b|at\b|as\b|edited\s+by\b|translated\s+by\b|journal\b|proceedings\b|university\b|institute\b|volume\b|vol\.?\b|issue\b|no\.?\b|pp?\.?\b|pages?\b|publisher\b|retrieved\b|available\b|doi\b|https?:|www\.)/iu.test(text);
-
-  if (line.layoutPage !== previousLine.layoutPage) {
-    // Across a page break, only an explicitly unfinished citation may
-    // continue with the reference hanging-indent geometry. Do not treat a
-    // new unheaded body paragraph as bibliographic solely because of x.
-    return hangingIndent && previousIsOpen;
-  }
+      !line.layoutPage || line.layoutPage !== previousLine.layoutPage) return false;
 
   const baselineGap = Math.abs(previousLine.layoutY - line.layoutY);
-  if (baselineGap <= 0) return false;
-
-  // Critical: academic reference lists commonly use double line spacing.
-  // At 12pt text height, baseline gaps can be 27pt (2.3x). Earlier code
-  // rejected these BEFORE checking their unambiguous hanging indentation.
-  // Only continue at 3.25x when the paragraph's hanging indent is verified.
+  const lineHeight = Math.max(line.layoutHeight, previousLine.layoutHeight, 1);
+  const text = line.text.trim();
+  const previous = previousLine.text.trim();
+  const firstEntryX = Number.isFinite(entryLine?.layoutX) ? entryLine.layoutX : null;
+  const hangingIndent = firstEntryX !== null && Number.isFinite(line.layoutX) &&
+    line.layoutX >= firstEntryX + Math.max(3.5, lineHeight * 0.3);
+  const previousIsOpen = /(?:[,;:]|\b(?:in|of|and|for|with|from|by|the|a|an|to|on|at|as|ended|including|edited|translated|vol\.?|issue|pp\.?)|[-–—])\s*$/iu.test(previous);
+  const conventionalContinuation = /^(?:and\b|or\b|of\b|in\b|for\b|with\b|from\b|by\b|the\b|a\b|an\b|to\b|on\b|at\b|as\b|edited\s+by\b|translated\s+by\b|journal\b|proceedings\b|university\b|institute\b|volume\b|vol\.?\b|issue\b|no\.?\b|pp?\.?\b|pages?\b|publisher\b|retrieved\b|available\b|doi\b|https?:|www\.)/iu.test(text);
+  // Preserve the original ordinary-spacing evidence that passed earlier
+  // boundary regressions. Allow double-spaced lines only with the stronger
+  // positive proof of a hanging indent belonging to an active citation.
   if (hangingIndent && baselineGap <= lineHeight * 3.25) return true;
   if (baselineGap > lineHeight * 1.6) return false;
   const normalLineStep = baselineGap <= lineHeight * 1.35;
-  return previousIsOpen || conventionalContinuation || normalLineStep;
+  return hangingIndent || previousIsOpen || conventionalContinuation || normalLineStep;
 }
 
 function inspectBoundary(source, start, lines) {
