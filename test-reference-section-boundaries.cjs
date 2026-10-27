@@ -228,8 +228,40 @@ const assignmentOne = [
   "Cyber Security & Data Privacy",
   "Digital practices are transforming organisational practices as they depend on cybersecurity and data privacy for linking sensitive information to services."
 ].join("\n");
+const assignmentItems = [];
+let assignmentOffset = 0;
+let assignmentY = 750;
+for (const line of assignmentOne.split("\\n")) {
+  if (line.trim()) {
+    const continuationPrefixes = [
+      "framework:", "December 31,", "Healthcare cybersecurity",
+      "Senate Committee on Finance", "Committee: Hacking",
+      "of security control effectiveness"
+    ];
+    assignmentItems.push({
+      text: line,
+      start: assignmentOffset,
+      end: assignmentOffset + line.length,
+      pageNumber: 1,
+      x: continuationPrefixes.some(prefix => line.startsWith(prefix)) ? 94 :
+        (/^https?:/i.test(line) ? 94 : (line === "References" || line === "Cyber Security & Data Privacy" ? 220 : 72)),
+      y: assignmentY,
+      width: Math.max(20, line.length * 5),
+      height: 10
+    });
+    assignmentY -= 12;
+  } else {
+    assignmentY -= 12;
+  }
+  assignmentOffset += line.length + 1;
+}
+const assignmentLayout = {
+  text: assignmentOne,
+  pageCount: 1,
+  pages: [{pageNumber: 1, width: 612, height: 792, items: assignmentItems}]
+};
 const assignmentInspection = require("./jk-reference-sections.js")
-  .inspectReferenceSections(assignmentOne);
+  .inspectReferenceSections(assignmentOne, -1, [], assignmentLayout);
 const secondTitleOffset = assignmentOne.indexOf("Cyber Security & Data Privacy");
 assert.equal(assignmentInspection.reviews.length, 0,
   "The known second essay heading should end the bibliography without admin review.");
@@ -239,7 +271,7 @@ assert.equal(assignmentInspection.ranges[0].end, secondTitleOffset,
   "Reference exclusion must stop exactly before the second essay title.");
 const assignmentPrepared = prepareWithoutReferences(assignmentOne, source => ({
   text: source, map: Array.from({length: source.length}, (_, i) => i)
-}));
+}), -1, [], assignmentLayout);
 for (const reference of [
   "Sutton, A., & Tompson, L.",
   "UnitedHealth Group. (2026)",
