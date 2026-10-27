@@ -109,16 +109,20 @@ function isLikelySectionHeading(lines, index, start, source) {
   let nextIndex = index + 1;
   while (nextIndex < lines.length && !lines[nextIndex].text.trim()) nextIndex++;
   const next = nextIndex < lines.length ? lines[nextIndex].text.trim() : "";
-  const previous = index > 0 ? lines[index - 1].text.trim() : "";
+  const previousLine = index > 0 ? lines[index - 1] : null;
+  const previous = previousLine?.text.trim() || "";
   const blankBefore = !previous;
   const blankAfter = nextIndex > index + 1 ||
     (index + 1 < lines.length && !lines[index + 1].text.trim());
   const nextLine = lines[nextIndex];
-  const visualGap = line.layoutY !== undefined && nextLine?.layoutY !== undefined
-    ? Math.abs(line.layoutY - nextLine.layoutY)
-    : 0;
-  const visualHeight = Math.max(Number(line.layoutHeight || 0), Number(nextLine?.layoutHeight || 0), 1);
-  const separatedVisually = Boolean(line.layoutPage && line.layoutPage === nextLine?.layoutPage && visualGap >= visualHeight * 1.45);
+  const visualHeight = Math.max(Number(line.layoutHeight || 0), Number(previousLine?.layoutHeight || 0), Number(nextLine?.layoutHeight || 0), 1);
+  const visualGapBefore = previousLine && line.layoutY !== undefined && previousLine.layoutY !== undefined
+    ? Math.abs(line.layoutY - previousLine.layoutY) : 0;
+  const visualGapAfter = nextLine && line.layoutY !== undefined && nextLine.layoutY !== undefined
+    ? Math.abs(line.layoutY - nextLine.layoutY) : 0;
+  const visualBreakBefore = Boolean(previousLine?.layoutPage && previousLine.layoutPage === line.layoutPage && visualGapBefore >= visualHeight * 1.5);
+  const visualBreakAfter = Boolean(nextLine?.layoutPage && nextLine.layoutPage === line.layoutPage && visualGapAfter >= visualHeight * 1.35);
+  const separatedVisually = visualBreakAfter;
   const words = text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) || [];
   const meaningful = words.filter(word => !SECTION_STOPWORDS.has(word.toLowerCase()));
   const titleCase = meaningful.length > 0 && meaningful.every(word => /^\p{Lu}/u.test(word));
@@ -216,23 +220,63 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
     if (!Number.isInteger(offset) || offset <= start || offset >= source.length) return;
     if (!offsets.includes(offset)) offsets.push(offset);
   };
-  add(firstCandidateOffset);
   let entries = 0;
-  for (const line of lines) {
+  let activeEntryLine = null;
+  let previousNonblankLine = lines.find(line => line.start <= start && start <= line.end) || null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (line.start <= start || !line.text.trim()) continue;
     const text = line.text.trim();
     if (REFERENCE_HEADING.test(text)) break;
-    if (isReferenceEntryParagraph(text)) {
-      entries++;
+
+    if (isLikelySectionHeading(lines, i, start, source)) {
+      if (entries > 0) {
+        add(line.start);
+        break;
+      }
       continue;
     }
-    if (entries > 0 && (KNOWN_TERMINATOR.test(text) ||
-        isLikelySectionHeading(lines, lines.indexOf(line), start, source) ||
-        looksLikeSubstantiveBody(text) || looksLikeUnheadedBodyLine(text))) {
-      add(line.start);
+
+    if (isReferenceEntryStart(text)) {
+      entries++;
+      activeEntryLine = line;
+      previousNonblankLine = line;
+      continue;
     }
-    if (offsets.length >= 3) break;
+
+    if (entries > 0 &&
+        (looksLikeReferenceContinuation(text) ||
+         isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
+      previousNonblankLine = line;
+      continue;
+    }
+
+    if (entries > 0 && KNOWN_TERMINATOR.test(text)) {
+      add(line.start);
+      break;
+    }
+
+    const baselineGap = previousNonblankLine &&
+      Number.isFinite(line.layoutY) && Number.isFinite(previousNonblankLine.layoutY)
+      ? Math.abs(line.layoutY - previousNonblankLine.layoutY) : 0;
+    const lineHeight = Math.max(Number(line.layoutHeight || 0), Number(previousNonblankLine?.layoutHeight || 0), 1);
+    const visualParagraphBreak = Boolean(line.layoutPage && line.layoutPage === previousNonblankLine?.layoutPage &&
+      baselineGap >= lineHeight * 1.5);
+    if (entries > 0 && visualParagraphBreak &&
+        (looksLikeSubstantiveBody(text) || looksLikeUnheadedBodyLine(text))) {
+      add(line.start);
+      break;
+    }
+
+    // Never trust firstCandidateOffset blindly: it can be a wrapped title,
+    // publisher/date line, URL, or corporate-reference continuation.
+    if (entries === 0 && line.start === firstCandidateOffset) {
+      previousNonblankLine = line;
+      continue;
+    }
+    previousNonblankLine = line;
   }
+
   return offsets.slice(0, 3).map((offset, index) => ({
     id: index + 1,
     offset,
