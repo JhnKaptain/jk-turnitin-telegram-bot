@@ -1,6 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const {findReferenceSections,prepareWithoutReferences}=require("./jk-reference-sections.js");
+const scan = require("./jk-scan-text.js");
 
 const sample = [
   "Introductory material that is long enough to pass the early-heading guard. ".repeat(6),
@@ -171,6 +172,19 @@ for (const citation of [
 ]) assert(!visualPrepared.text.includes(citation), "Reference continuation leaked into prepared input: " + citation);
 assert(visualPrepared.text.includes("Opening essay content establishes"));
 assert(visualPrepared.text.includes("I used OpenAI's ChatGPT"));
+const visualAi = scan.buildAiInput(wrappedLines, visualDoc);
+const visualSimilarity = scan.buildSimilarityInput(
+  wrappedLines, scan.FILTER_MODE_FILTERED, [], visualDoc
+);
+for (const citation of ["Appadurai, Arjun.", "Culture and Public Action:",
+  "Publications.", "Elliott, Anthony", "Ellis, Carolyn", "Xiang, Biao. 2021."]) {
+  assert(!visualAi.text.includes(citation), "AI input retained wrapped reference: " + citation);
+  assert(!visualSimilarity.text.includes(citation), "Similarity input retained wrapped reference: " + citation);
+}
+assert(visualAi.text.includes("Opening essay content establishes"));
+assert(visualSimilarity.text.includes("Opening essay content establishes"));
+assert(visualAi.text.includes("I used OpenAI's ChatGPT"));
+assert(visualSimilarity.text.includes("I used OpenAI's ChatGPT"));
 assert.equal(visualPrepared.map.length, visualPrepared.text.length);
 for (let i=0;i<visualPrepared.map.length;i++) {
   if (Number.isInteger(visualPrepared.map[i])) {
