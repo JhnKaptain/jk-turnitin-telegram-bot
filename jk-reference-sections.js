@@ -103,6 +103,8 @@ function isLikelySectionHeading(lines, index, start, source) {
   if (/^(?:https?:\/\/|doi\s*:|www\.)/i.test(text)) return false;
   if (/\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|doi\s*:/i.test(text)) return false;
   if (/^[A-Z][\p{L}'’.-]{1,50},\s/u.test(text)) return false;
+  // Bibliographic publication titles sometimes resemble title-case section headings.
+  if (/^(?:international\s+)?(?:journal\s+of\b|journal\b|proceedings\b|review\s+of\b)/iu.test(text)) return false;
   if (line.start < start + 24) return false;
   if (!hasReferenceEvidence(source.slice(start, line.start))) return false;
 
@@ -133,7 +135,10 @@ function isLikelySectionHeading(lines, index, start, source) {
     (titleCase && words.length <= 12 && (blankBefore || visualBreakBefore) &&
       (blankAfter || separatedVisually || followsWithSubstantiveBody));
   if (!headingShape || /[,:;]\s*$/.test(text) || !next) return false;
-  if (REFERENCE_ENTRY_START.test(next)) return false;
+  // A DOI, URL, new reference entry, or citation metadata following the title
+  // strongly suggests a wrapped bibliographic entry, not a new essay section.
+  if (REFERENCE_ENTRY_START.test(next) || isReferenceEntryParagraph(next) ||
+      /^(?:https?:\/\/|www\.|doi\b|(?:international\s+)?journal\s+of\b|(?:vol\.?|volume|pp?\.?|article\s+\d+)\b)/iu.test(next)) return false;
   return STRUCTURAL_FOLLOWER.test(next) || next.length >= 18;
 }
 
@@ -172,7 +177,7 @@ function looksLikeReferenceContinuation(value) {
   if (!text) return true;
   if (/^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return true;
   if (/^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(?:19|20)\d{2}\b/iu.test(text)) return true;
-  if (/^(?:journal(?: of)?|proceedings|university|institute|volume|vol\.?|issue|no\.?|pp?\.?|edition|publisher|retrieved(?: from)?|available at|doi\b|https?:|www\.)/iu.test(text)) return true;
+  if (/^(?:(?:international\s+)?journal(?:\s+of)?|proceedings|university|institute|volume|vol\.?|issue|no\.?|pp?\.?|edition|publisher|retrieved(?: from)?|available at|doi\b|https?:|www\.)/iu.test(text)) return true;
   if (/^\d+\s*[-–]\s*\d+\s*\.?$/u.test(text)) return true;
   if (/^[a-z]/u.test(text) && text.length <= 180 && !/[.!?]\s+[A-Z]/u.test(text)) return true;
   if (/^(?:annual report|form 10-k|year ended|article\s+\d+|review of|edited by|translated by|edited\b|in\s+.+\(\s*eds?\.?\))/iu.test(text)) return true;
@@ -321,28 +326,42 @@ function inspectBoundary(source, start, lines) {
   let activeEntryLine = null;
   let previousNonblankLine = lines[index];
 
+  // A citation can span many extracted PDF visual lines or cross a page.
+  // Do not raise a review at the FIRST unfamiliar line: keep examining
+  // subsequent reference entries and an independently recognizable boundary.
   for (let i = index + 1; i < lines.length; i++) {
     const line = lines[i];
     const text = line.text.trim();
     if (!text) continue;
 
-    // Reference-entry starts take priority over section-heading heuristics.
     if (isReferenceEntryStart(text)) {
       entriesFound++;
       activeEntryLine = line;
       previousNonblankLine = line;
+      // An ambiguous short line between two independently recognized
+      // reference starts was a continuation, not proven resumed prose.
+      if (firstCandidate !== null) firstCandidate = null;
       continue;
     }
 
-    // A true section heading after a visible boundary takes priority over
-    // continuation detection. Citation titles such as "Introduction to..." are
-    // protected because they lack a paragraph/visual break before them.
+    // The appendix/glossary belongs to the ORIGINAL document and resumes
+    // analysis. It is never removed from the report or original file.
+    if (entriesFound > 0 && KNOWN_TERMINATOR.test(text)) {
+      if (firstCandidate !== null && entriesFound < 2) {
+        return {status: "REVIEW", reason: "Insufficient evidence to resolve the final reference continuation before the following section.", candidateOffset: firstCandidate, entriesFound};
+      }
+      return {status: "AUTO", end: line.start, reason: "Recognized section terminator.", entriesFound};
+    }
+
     if (entriesFound > 0 && isLikelySectionHeading(lines, i, start, source)) {
+      // If an unresolved line immediately precedes a heading, do not
+      // silently swallow a potentially substantive paragraph.
+      if (firstCandidate !== null) {
+        return {status: "REVIEW", reason: "Text between the last reference and the following heading remains ambiguous.", candidateOffset: firstCandidate, entriesFound};
+      }
       return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
     }
 
-    // Wrapped titles, corporate author continuation, date/publisher lines,
-    // links and DOI lines must never be treated as the end of the bibliography.
     if (entriesFound > 0 &&
         (looksLikeReferenceContinuation(text) ||
          isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
@@ -350,7 +369,6 @@ function inspectBoundary(source, start, lines) {
       continue;
     }
 
-    // A bibliography can begin with a bare URL or DOI.
     if (entriesFound === 0 && isReferenceEntryParagraph(text)) {
       entriesFound++;
       activeEntryLine = line;
@@ -358,39 +376,37 @@ function inspectBoundary(source, start, lines) {
       continue;
     }
 
-    if (KNOWN_TERMINATOR.test(text)) {
-      return {status: "AUTO", end: line.start, reason: "Recognized section terminator.", entriesFound};
-    }
-
-    if (entriesFound > 0 &&
+    // A substantive paragraph without a heading can restart scanning,
+    // provided the immediately following text does not indicate that the
+    // paragraph is actually a wrapped reference title.
+    const next = lines.slice(i + 1).find(record => record.text.trim())?.text.trim() || "";
+    const nextIsBibliographic = Boolean(next &&
+      (isReferenceEntryParagraph(next) ||
+       /^(?:https?:\/\/|www\.|doi\b|(?:international\s+)?journal\s+of\b|vol\.?\b|pp?\.?\b)/iu.test(next)));
+    if (entriesFound > 0 && !nextIsBibliographic &&
         (looksLikeUnheadedBodyLine(text) ||
          (looksLikeSubstantiveBody(text) && !looksLikeReferenceContinuation(text)))) {
+      if (firstCandidate !== null) {
+        return {status: "REVIEW", reason: "Substantive text may resume after an uncertain bibliography continuation.", candidateOffset: firstCandidate, entriesFound};
+      }
       return {status: "AUTO", end: line.start, reason: "Substantive prose resumes.", entriesFound};
     }
 
-    if (looksLikeReferenceContinuation(text)) {
-      previousNonblankLine = line;
-      continue;
-    }
-
-    firstCandidate = line.start;
-    return {
-      status: "REVIEW",
-      reason: entriesFound
-        ? "Text after the last recognizable reference entry is ambiguous."
-        : "The reference heading is present, but the following entries or ending boundary could not be verified.",
-      candidateOffset: firstCandidate,
-      entriesFound
-    };
+    // Unknown line: remember it, but do not interrupt a bibliography just
+    // because one wrapped publisher/title/author line is unrecognized.
+    if (firstCandidate === null) firstCandidate = line.start;
+    previousNonblankLine = line;
   }
 
-  if (entriesFound > 0) {
+  if (entriesFound > 0 && firstCandidate === null) {
     return {status: "AUTO", end: source.length, reason: "Verified reference entries continue to end of document.", entriesFound};
   }
 
   return {
     status: "REVIEW",
-    reason: "No recognizable reference entries or safe section boundary were found.",
+    reason: entriesFound
+      ? "The final bibliography continuation is ambiguous and has no verified ending."
+      : "No recognizable reference entries or safe section boundary were found.",
     candidateOffset: firstCandidate,
     entriesFound
   };
