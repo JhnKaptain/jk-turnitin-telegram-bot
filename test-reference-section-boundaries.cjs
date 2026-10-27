@@ -263,6 +263,7 @@ const assignmentLayout = {
 const assignmentInspection = require("./jk-reference-sections.js")
   .inspectReferenceSections(assignmentOne, -1, [], assignmentLayout);
 const secondTitleOffset = assignmentOne.indexOf("Cyber Security & Data Privacy");
+console.log("REFERENCE_ASSIGNMENT_DIAGNOSTIC",JSON.stringify(assignmentInspection.reviews.map(r=>({reason:r.reason,entriesFound:r.entriesFound,candidates:r.candidates}))));
 assert.equal(assignmentInspection.reviews.length, 0,
   "The known second essay heading should end the bibliography without admin review.");
 assert.equal(assignmentInspection.ranges.length, 1,

@@ -122,6 +122,8 @@ function isLikelySectionHeading(lines, index, start, source) {
     ? Math.abs(line.layoutY - previousLine.layoutY) : 0;
   const visualGapAfter = nextLine && line.layoutY !== undefined && nextLine.layoutY !== undefined
     ? Math.abs(line.layoutY - nextLine.layoutY) : 0;
+  const pageBreakBefore = Boolean(previousLine?.layoutPage && line.layoutPage &&
+    previousLine.layoutPage !== line.layoutPage);
   const visualBreakBefore = Boolean(previousLine?.layoutPage && previousLine.layoutPage === line.layoutPage && visualGapBefore >= visualHeight * 1.5);
   const visualBreakAfter = Boolean(nextLine?.layoutPage && nextLine.layoutPage === line.layoutPage && visualGapAfter >= visualHeight * 1.35);
   const separatedVisually = visualBreakAfter;
@@ -131,7 +133,10 @@ function isLikelySectionHeading(lines, index, start, source) {
   const knownHeading = COMMON_SECTION_HEADING.test(text) ||
     /^\d+(?:\.\d+)*[.)]?\s+[A-Z]/u.test(text);
   const followsWithSubstantiveBody = looksLikeSubstantiveBody(next) || looksLikeUnheadedBodyLine(next);
-  const headingShape = (knownHeading && (blankBefore || visualBreakBefore || KNOWN_TERMINATOR.test(text))) ||
+  const headingShape = (knownHeading && (blankBefore || visualBreakBefore ||
+      (pageBreakBefore && (/^(?:date|context|children|apst)\s*:/iu.test(next) ||
+        STRUCTURAL_FOLLOWER.test(next) || followsWithSubstantiveBody)) ||
+      KNOWN_TERMINATOR.test(text))) ||
     (titleCase && words.length <= 12 && (blankBefore || visualBreakBefore) &&
       (blankAfter || separatedVisually || followsWithSubstantiveBody));
   if (!headingShape || /[,:;]\s*$/.test(text) || !next) return false;
@@ -303,19 +308,18 @@ function isVisualReferenceContinuation(line, previousLine, entryLine) {
 
   const baselineGap = Math.abs(previousLine.layoutY - line.layoutY);
   const lineHeight = Math.max(line.layoutHeight, previousLine.layoutHeight, 1);
-  if (baselineGap > lineHeight * 1.6) return false;
-
   const text = line.text.trim();
   const previous = previousLine.text.trim();
   const firstEntryX = Number.isFinite(entryLine?.layoutX) ? entryLine.layoutX : null;
-  const hangingIndent = firstEntryX !== null &&
+  const hangingIndent = firstEntryX !== null && Number.isFinite(line.layoutX) &&
     line.layoutX >= firstEntryX + Math.max(3.5, lineHeight * 0.3);
   const previousIsOpen = /(?:[,;:]|\b(?:in|of|and|for|with|from|by|the|a|an|to|on|at|as|ended|including|edited|translated|vol\.?|issue|pp\.?)|[-–—])\s*$/iu.test(previous);
   const conventionalContinuation = /^(?:and\b|or\b|of\b|in\b|for\b|with\b|from\b|by\b|the\b|a\b|an\b|to\b|on\b|at\b|as\b|edited\s+by\b|translated\s+by\b|journal\b|proceedings\b|university\b|institute\b|volume\b|vol\.?\b|issue\b|no\.?\b|pp?\.?\b|pages?\b|publisher\b|retrieved\b|available\b|doi\b|https?:|www\.)/iu.test(text);
-
-  // Within the same reference entry, wrapped lines normally have ordinary
-  // line spacing. New bibliography entries are identified before this helper,
-  // so ordinary visual spacing is positive continuation evidence.
+  // Preserve the original ordinary-spacing evidence that passed earlier
+  // boundary regressions. Allow double-spaced lines only with the stronger
+  // positive proof of a hanging indent belonging to an active citation.
+  if (hangingIndent && baselineGap <= lineHeight * 3.25) return true;
+  if (baselineGap > lineHeight * 1.6) return false;
   const normalLineStep = baselineGap <= lineHeight * 1.35;
   return hangingIndent || previousIsOpen || conventionalContinuation || normalLineStep;
 }
@@ -336,7 +340,7 @@ function inspectBoundary(source, start, lines) {
   for (let i = index + 1; i < lines.length; i++) {
     const line = lines[i];
     const text = line.text.trim();
-    if (!text) continue;
+    if (!text || /^(?:\d{1,4}|Page\s+\d{1,4}(?:\s+of\s+\d{1,4})?)$/iu.test(text)) continue;
 
     if (isReferenceEntryStart(text)) {
       // A substantial, unexplained paragraph between citation entries might
