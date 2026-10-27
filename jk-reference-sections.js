@@ -231,24 +231,26 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
     const text = line.text.trim();
     if (REFERENCE_HEADING.test(text)) break;
 
-    if (isLikelySectionHeading(lines, i, start, source)) {
-      if (entries > 0) {
-        add(line.start);
-        break;
-      }
-      continue;
-    }
-
+    // First identify new reference entries and their continuation lines.
+    // Do not test headings before this: a cited work may itself be titled "Introduction".
     if (isReferenceEntryStart(text)) {
       entries++;
       activeEntryLine = line;
       previousNonblankLine = line;
       continue;
     }
-
     if (entries > 0 &&
         (looksLikeReferenceContinuation(text) ||
          isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
+      previousNonblankLine = line;
+      continue;
+    }
+
+    if (isLikelySectionHeading(lines, i, start, source)) {
+      if (entries > 0) {
+        add(line.start);
+        break;
+      }
       previousNonblankLine = line;
       continue;
     }
@@ -270,15 +272,11 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
       break;
     }
 
-    // Never trust firstCandidateOffset blindly: it can be a wrapped title,
-    // publisher/date line, URL, or corporate-reference continuation.
-    if (entries === 0 && line.start === firstCandidateOffset) {
-      previousNonblankLine = line;
-      continue;
-    }
     previousNonblankLine = line;
   }
 
+  // Never offer an arbitrary first ambiguous offset. An empty option list is
+  // safer than allowing the admin to resume inside a citation or URL.
   return offsets.slice(0, 3).map((offset, index) => ({
     id: index + 1,
     offset,
@@ -320,17 +318,13 @@ function inspectBoundary(source, start, lines) {
   let firstCandidate = null;
   let activeEntryLine = null;
   let previousNonblankLine = lines[index];
+
   for (let i = index + 1; i < lines.length; i++) {
     const line = lines[i];
     const text = line.text.trim();
     if (!text) continue;
 
-    if (KNOWN_TERMINATOR.test(text)) {
-      return {status: "AUTO", end: line.start, reason: "Recognized section terminator.", entriesFound};
-    }
-    if (isLikelySectionHeading(lines, i, start, source)) {
-      return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
-    }
+    // Reference-entry starts take priority over section-heading heuristics.
     if (isReferenceEntryStart(text)) {
       entriesFound++;
       activeEntryLine = line;
@@ -338,8 +332,8 @@ function inspectBoundary(source, start, lines) {
       continue;
     }
 
-    // Links/DOIs and other citation continuations belong to the active entry;
-    // they must not reset the author/entry anchor or be offered as resume points.
+    // Wrapped titles, corporate author continuation, date/publisher lines,
+    // links and DOI lines must never be treated as the end of the bibliography.
     if (entriesFound > 0 &&
         (looksLikeReferenceContinuation(text) ||
          isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
@@ -347,12 +341,19 @@ function inspectBoundary(source, start, lines) {
       continue;
     }
 
-    // Some reference lists begin with a standalone URL rather than an author.
+    // A bibliography can begin with a bare URL or DOI.
     if (entriesFound === 0 && isReferenceEntryParagraph(text)) {
       entriesFound++;
       activeEntryLine = line;
       previousNonblankLine = line;
       continue;
+    }
+
+    if (KNOWN_TERMINATOR.test(text)) {
+      return {status: "AUTO", end: line.start, reason: "Recognized section terminator.", entriesFound};
+    }
+    if (isLikelySectionHeading(lines, i, start, source)) {
+      return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
     }
 
     if (entriesFound > 0 &&
