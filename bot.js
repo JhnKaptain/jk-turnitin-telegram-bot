@@ -9975,8 +9975,15 @@ async function submitPaidJobToProviders(
         try {
           await notifyReferenceBoundaryReview(job, file, err.referenceReview || {});
         } catch (notifyError) {
-          file.referenceBoundaryReviewStatus = "NOTIFICATION_FAILED";
-          file.referenceBoundaryReviewNotifyError = safeText(notifyError?.message || notifyError).slice(0, 300);
+          // Keep the pending state so the persisted ten-minute fallback still
+          // resolves it if Telegram delivery failed. Record failure without
+          // resetting the deadline or attempting a second review notification.
+          file.referenceBoundaryReviewStatus = "PENDING_ADMIN";
+          if (file.referenceBoundaryReview) {
+            file.referenceBoundaryReview.notificationFailureAt = Date.now();
+            file.referenceBoundaryReview.notificationFailureReason =
+              safeText(notifyError?.message || notifyError).slice(0, 300);
+          }
           savePaidJobs();
           try {
             await sendAdminMessage(
