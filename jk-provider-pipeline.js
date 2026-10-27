@@ -730,6 +730,10 @@ async function runProviderPipeline({
   const aiPrepared =
     buildAiInput(document.text, document, referenceBoundaryOverrides);
 
+  const referenceIntegrity = require("./jk-reference-integrity.cjs");
+  referenceIntegrity.validateExcludedSourceMappings(similarityPrepared, "Similarity");
+  referenceIntegrity.validateExcludedSourceMappings(aiPrepared, "AI");
+
   const eligibility =
     aiEligibility(
       aiPrepared
@@ -1242,6 +1246,13 @@ async function runProviderPipeline({
         eligibility.characters
     };
   }
+
+  // Do not issue a finished report if any returned highlight crosses an
+  // excluded reference. This is a hard failure, never visual-only suppression.
+  referenceIntegrity.validateReturnedExclusions(
+    result.similarityDetection, similarityPrepared, "Similarity");
+  referenceIntegrity.validateReturnedExclusions(
+    result.aiDetection, aiPrepared, "AI");
 
   if (
     outputPath

@@ -3,7 +3,7 @@
 const crypto = require("node:crypto");
 
 const REFERENCE_HEADING = /^(reference list|references?|bibliography|works cited|table of cases|table of legislation)\s*:?\s*$/i;
-const KNOWN_TERMINATOR = /^(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits)(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
+const KNOWN_TERMINATOR = /^(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
 const STRUCTURAL_FOLLOWER = /^(?:date|context|children|apst|purpose|overview|learning objectives|introduction|background|stimulus behaviour|strategies used|reflection|references|appendix|appendices|table of contents)\s*:?\s*$|^\d+(?:\.\d+)*[.)]?\s+[A-Z]/i;
 
 const SECTION_STOPWORDS = new Set([
@@ -156,6 +156,10 @@ function isReferenceEntryStart(value) {
 
   // Chicago-style references commonly place the year outside parentheses.
   if (/^.{2,140}\.\s+(?:19|20)\d{2}[a-z]?\.\s/u.test(text)) return true;
+
+  // Chicago author-year citations place the year immediately after an author
+  // name without a preceding period (e.g. "Elliott, Anthony. 2010.").
+  if (/^[\p{Lu}][\p{L}\p{M}'’.-]+,\s+.{2,130}?\.\s+(?:19|20)\d{2}[a-z]?\.\s/u.test(text)) return true;
 
   // Numbered references are common in technical and medical documents.
   if (/^(?:\[\d+\]|\d+[.)])\s+.{8,}/u.test(text) &&
@@ -385,6 +389,16 @@ function inspectBoundary(source, start, lines) {
           candidateOffset: line.start, entriesFound
         };
       }
+    }
+
+    // A Chicago chapter title may begin in title case while the previous
+    // citation line ends with "In". Keep the wrapped title with the reference.
+    const preceding = String(previousNonblankLine?.text || "").trim();
+    if (entriesFound > 0 &&
+        /\b(?:in|of|and|for|with|from|by|the|a|an|to|at|as)\s*$/iu.test(preceding) &&
+        !KNOWN_TERMINATOR.test(text) && !isReferenceEntryStart(text)) {
+      previousNonblankLine = line;
+      continue;
     }
 
     if (entriesFound > 0 &&
