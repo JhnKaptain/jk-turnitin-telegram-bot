@@ -335,11 +335,22 @@ function inspectBoundary(source, start, lines) {
     if (!text) continue;
 
     if (isReferenceEntryStart(text)) {
+      // A substantial, unexplained paragraph between citation entries might
+      // be a genuine body section. Never silently swallow it just because
+      // another citation follows. Request review instead.
+      if (firstCandidate !== null &&
+          looksLikeSubstantiveBody(source.slice(firstCandidate, line.start))) {
+        return {
+          status: "REVIEW",
+          reason: "Potential substantive writing occurs between reference entries.",
+          candidateOffset: firstCandidate, entriesFound
+        };
+      }
       entriesFound++;
       activeEntryLine = line;
       previousNonblankLine = line;
-      // An ambiguous short line between two independently recognized
-      // reference starts was a continuation, not proven resumed prose.
+      // A brief unrecognized fragment between consecutive entries is
+      // consistent with wrapped bibliographic metadata, not proof of prose.
       if (firstCandidate !== null) firstCandidate = null;
       continue;
     }
@@ -360,6 +371,20 @@ function inspectBoundary(source, start, lines) {
         return {status: "REVIEW", reason: "Text between the last reference and the following heading remains ambiguous.", candidateOffset: firstCandidate, entriesFound};
       }
       return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
+    }
+
+    // Even when a new citation immediately follows, a long independent
+    // prose sentence is not safe to erase as a bibliography continuation.
+    // It may be a body segment separating two reference blocks.
+    if (entriesFound > 0 && looksLikeUnheadedBodyLine(text)) {
+      const nextText = lines.slice(i + 1).find(record => record.text.trim())?.text.trim() || "";
+      if (isReferenceEntryStart(nextText)) {
+        return {
+          status: "REVIEW",
+          reason: "A possible substantive paragraph appears before another reference entry.",
+          candidateOffset: line.start, entriesFound
+        };
+      }
     }
 
     if (entriesFound > 0 &&
