@@ -87,6 +87,55 @@ function openingCoverBlock(lines, page, source) {
   if (!tail.some(l => !metadata(l) && words(l.text).length >= 8)) return [];
   return prefix;
 }
+// A dedicated essay cover can contain a supplied assignment question rather
+// than an institution/student identity block. Exclude only a verifiable full
+// cover page; never exclude a mixed first page containing original prose.
+function standaloneEssayPromptCover(lines, page, pageCount) {
+  if (pageCount < 2 || !Array.isArray(lines)) return null;
+  const content = lines.filter(line =>
+    line.y > page.height * 0.07 && line.y < page.height * 0.96 &&
+    !/^\s*(?:\d+|Page\s+\d+(?:\s+of\s+\d+)?)\s*$/iu.test(line.text)
+  );
+  if (content.length < 6 || content.length > 20 ||
+      content.some((line, i) => !line.isolated ||
+        (i > 0 && line.y >= content[i - 1].y))) return null;
+
+  const centered = line =>
+    Math.abs(line.x + line.width / 2 - page.width / 2) <=
+    Math.max(28, line.height * 3);
+  const assignment = /^(?:(?:research|critical|reflective)\s+)?(?:essay|assignment|assessment|paper)\s*[-–—:]\s*(?:question|task)\s*(?:no\.?\s*)?[\dA-Z]+$/iu;
+  const count = /^word\s*count\s*(?:\([^)]{0,90}\))?\s*:\s*\d[\d,]*(?:\s*words?)?$/iu;
+  const date = /^(?:(?:\d{1,2}\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})$/iu;
+  const taskAt = content.findIndex(line => assignment.test(norm(line.text)));
+  const countAt = content.findIndex(line => count.test(norm(line.text)));
+  const dateAt = content.findIndex(line => date.test(norm(line.text)));
+  if (taskAt < 1 || taskAt > 3 || countAt < taskAt + 2 ||
+      countAt > content.length - 2 || dateAt !== content.length - 1 ||
+      dateAt !== countAt + 1) return null;
+
+  const title = content.slice(0, taskAt);
+  const questionLines = content.slice(taskAt + 1, countAt);
+  const question = norm(questionLines.map(line => line.text).join(" "));
+  if (!title.every(line => centered(line) &&
+        words(line.text).length >= 1 && words(line.text).length <= 20) ||
+      !centered(content[taskAt]) || !centered(content[countAt]) ||
+      !centered(content[dateAt]) || questionLines.length > 10 ||
+      words(content.map(line => line.text).join(" ")).length > 190 ||
+      !/^(?:what|how|why|to what extent|in what ways)\b/iu.test(question) ||
+      !/\?/u.test(question)) return null;
+
+  // Require a genuinely separated question block followed by the two final
+  // administrative lines. Even one extra essay paragraph invalidates this
+  // full-page exclusion rather than silently discarding prose.
+  if (content[taskAt].y - questionLines[0].y <
+        Math.max(content[taskAt].height, questionLines[0].height) ||
+      questionLines.at(-1).y - content[countAt].y <
+        Math.max(questionLines.at(-1).height, content[countAt].height) * 1.4 ||
+      content[countAt].y - content[dateAt].y <
+        Math.max(content[countAt].height, content[dateAt].height)) return null;
+  return {lines: content, wholePage: true};
+}
+
 // Recognise a common assessment cover with a course code and explicit word count.
 // Only its centred identity block is excluded on mixed pages. A trailing quoted
 // research question is excluded only when it completes a separate sparse cover.
@@ -160,7 +209,8 @@ function classifyAiStructuralText(document) {
     const content = lines.filter(l => l.y > page.height * 0.1 && l.y < page.height * 0.92 &&
       !/^\s*(?:\d+|Page\s+\d+(?:\s+of\s+\d+)?)\s*$/iu.test(l.text));
     const centered = line => Math.abs(line.x + line.width / 2 - page.width / 2) <= Math.max(12, line.height * 1.8);
-    const assessment = p === 0 ? assessmentCoverBlock(lines, page, document.pages.length) : null;
+    const essayPromptCover = p === 0 ? standaloneEssayPromptCover(lines, page, document.pages.length) : null;
+    const assessment = essayPromptCover || (p === 0 ? assessmentCoverBlock(lines, page, document.pages.length) : null);
     if (assessment?.wholePage) {
       for (const line of assessment.lines) spans.push({ start: line.start, end: line.end, text: line.text,
         pageNumber: page.pageNumber || p + 1, reason: "SEPARATE_COVER_PAGE" });
