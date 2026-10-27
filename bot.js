@@ -7987,18 +7987,41 @@ function findPendingReferenceBoundaryReview(token) {
 }
 
 async function notifyReferenceBoundaryReview(job, file, review) {
-  file.referenceBoundaryReview = {
-    ...review,
-    requestedAt: Date.now()
-  };
+  const now = Date.now();
+  const previous = file.referenceBoundaryReview;
+  const sameReview = previous &&
+    previous.sourceTextSha256 === review.sourceTextSha256 &&
+    Number(previous.start) === Number(review.start);
+
+  // Persist one notification attempt and one ten-minute deadline. Re-entering
+  // the provider loop must not reset the deadline or send duplicate messages.
+  file.referenceBoundaryReview = sameReview
+    ? {
+        ...previous,
+        ...review,
+        requestedAt: previous.requestedAt || now,
+        autoResolveAt: previous.autoResolveAt ||
+          (now + require("./jk-reference-review-timeout.cjs").REFERENCE_BOUNDARY_AUTO_RESOLVE_MS)
+      }
+    : {
+        ...review,
+        requestedAt: now,
+        autoResolveAt: now +
+          require("./jk-reference-review-timeout.cjs").REFERENCE_BOUNDARY_AUTO_RESOLVE_MS,
+        notificationAttemptedAt: now
+      };
+
   file.referenceBoundaryReviewStatus = "PENDING_ADMIN";
   file.providerStatus = "MANUAL_REQUIRED";
   file.manualReviewRequired = true;
   file.manualReviewReason = "Reference/bibliography boundary requires administrator review.";
   file.providerError = null;
   file.referenceReviewNoProviderRequests = true;
+  const shouldNotify = !sameReview && !file.referenceBoundaryReview.notificationAttemptedAt;
+  if (shouldNotify) file.referenceBoundaryReview.notificationAttemptedAt = now;
   savePaidJobs();
 
+  if (sameReview || !shouldNotify) return;
   const token = referenceBoundaryToken(job, file, file.referenceBoundaryReview);
   const lines = [
     "REFERENCE / BIBLIOGRAPHY BOUNDARY REVIEW",
@@ -8085,6 +8108,8 @@ bot.action(/^JK_REF_BOUNDARY_(END|\d{1,2})_([a-f0-9]{20})$/, async ctx => {
   });
   file.referenceBoundaryOverrides = overrides;
   file.referenceBoundaryReviewStatus = "APPROVED";
+  file.referenceBoundaryAutoResolveCancelledAt = Date.now();
+  file.referenceBoundaryReview.autoResolveCancelledAt = Date.now();
   file.referenceBoundaryReviewedAt = Date.now();
   file.referenceBoundaryReviewedBy = String(ctx.from.id);
   file.referenceReviewNoProviderRequests = false;
@@ -8105,6 +8130,106 @@ bot.action(/^JK_REF_BOUNDARY_(END|\d{1,2})_([a-f0-9]{20})$/, async ctx => {
       safeText(file.file_name || "N/A") + ": " + safeText(error.message));
   }));
 });
+
+// JK_REFERENCE_BOUNDARY_AUTO_RESOLVE_V1
+// One initial admin notification. After ten minutes, silently take the already
+// offered "Treat remainder as references" action, then resume the same job.
+// A persisted deadline plus a serial sweep makes this restart-safe/idempotent.
+let referenceBoundaryAutoResolveSweepRunning = false;
+
+async function autoResolveReferenceBoundaryReview(job, file, now = Date.now()) {
+  const timeout = require("./jk-reference-review-timeout.cjs");
+  if (!timeout.isAutoResolveDue(file, now)) return false;
+
+  const review = file.referenceBoundaryReview;
+  const resultPath = file.providerBundleFile
+    ? file.providerBundleFile + ".provider-results.json"
+    : null;
+
+  // Never auto-resubmit if any provider submission or saved result is visible.
+  if (!file.referenceReviewNoProviderRequests ||
+      file.providerAutoResubmitBlocked ||
+      file.providerQuetextReportId ||
+      file.providerSubmittedAt ||
+      file.providerResultsFile ||
+      (resultPath && fs.existsSync(resultPath))) {
+    review.autoResolveBlockedAt = review.autoResolveBlockedAt || now;
+    review.autoResolveBlockedReason = "Provider activity/results detected; automatic resume is unsafe.";
+    file.providerStatus = "MANUAL_REQUIRED";
+    file.manualReviewRequired = true;
+    file.manualReviewReason = review.autoResolveBlockedReason;
+    savePaidJobs();
+    return false;
+  }
+
+  const overrides = Array.isArray(file.referenceBoundaryOverrides)
+    ? file.referenceBoundaryOverrides.filter(item => Number(item.start) !== Number(review.start))
+    : [];
+  overrides.push(timeout.makeTreatRemainderAsReferencesOverride(review, now));
+
+  // Save the decision and clear the pending state before queuing work, so a
+  // timer tick or restart cannot trigger a second submission.
+  file.referenceBoundaryOverrides = overrides;
+  review.automaticDecision = "TREAT_REMAINDER_AS_REFERENCES";
+  review.autoResolvedAt = now;
+  file.referenceBoundaryReviewStatus = "AUTO_RESOLVED";
+  file.referenceBoundaryReviewedAt = now;
+  file.referenceBoundaryReviewedBy = "AUTO_TIMEOUT_TREAT_REMAINDER_AS_REFERENCES";
+  file.referenceReviewNoProviderRequests = false;
+  file.manualReviewRequired = false;
+  file.manualReviewReason = null;
+  file.providerError = null;
+  file.providerStatus = "QUEUED";
+  file.referenceBoundaryAutoResolveCancelledAt = null;
+  savePaidJobs();
+
+  setImmediate(() => submitPaidJobToActiveProvider(job.jobId).catch(error => {
+    sendAdminMessage("Automatic reference-review resume failed for " +
+      safeText(file.file_name || "N/A") + ": " + safeText(error.message));
+  }));
+  return true;
+}
+
+async function sweepTimedReferenceBoundaryReviews(now = Date.now()) {
+  if (referenceBoundaryAutoResolveSweepRunning) return;
+  referenceBoundaryAutoResolveSweepRunning = true;
+  try {
+    for (const [jobKey, job] of Object.entries(paidJobs)) {
+      if (!Array.isArray(job?.files)) continue;
+      for (const file of job.files) {
+        if (file?.referenceBoundaryReviewStatus !== "PENDING_ADMIN" ||
+            !file.referenceBoundaryReview ||
+            file.referenceReviewNoProviderRequests !== true) continue;
+
+        const timeout = require("./jk-reference-review-timeout.cjs");
+        if (!Number.isSafeInteger(Number(file.referenceBoundaryReview.autoResolveAt)) ||
+            Number(file.referenceBoundaryReview.autoResolveAt) <= 0) {
+          // Legacy pending reviews get a full ten-minute grace period from
+          // this deployment's first sweep, without a second notification.
+          file.referenceBoundaryReview.autoResolveAt =
+            timeout.getAutoResolveAt(null, now);
+          file.referenceBoundaryReview.timeoutInitializedAt = now;
+          savePaidJobs();
+          continue;
+        }
+        await autoResolveReferenceBoundaryReview(job, file, now);
+      }
+    }
+  } catch (error) {
+    console.error("Reference-boundary timeout sweep failed:", error?.message || error);
+  } finally {
+    referenceBoundaryAutoResolveSweepRunning = false;
+  }
+}
+
+setInterval(() => {
+  sweepTimedReferenceBoundaryReviews().catch(error =>
+    console.error("Reference-boundary timeout scheduler failed:", error?.message || error));
+}, 30 * 1000);
+setTimeout(() => {
+  sweepTimedReferenceBoundaryReviews().catch(error =>
+    console.error("Reference-boundary startup recovery failed:", error?.message || error));
+}, 5 * 1000);
 
 // JK_SIMILARITY_API_APPROVAL_V1
 // Approval is per paid file, persistent, and never triggers a new provider
