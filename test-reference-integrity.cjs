@@ -1,0 +1,10 @@
+"use strict";
+const assert=require("node:assert/strict");
+const {validateExcludedSourceMappings,validateReturnedExclusions}=require("./jk-reference-integrity.cjs");
+const good={text:"BODY\nPOST",map:[0,1,2,3,NaN,15,16,17,18],removedReferenceRanges:[{start:4,end:15}]};
+assert.equal(validateExcludedSourceMappings(good,"AI"),true);
+assert.equal(validateReturnedExclusions({ranges:[{start:0,end:4},{start:15,end:19}]},good,"AI"),true);
+assert.throws(()=>validateExcludedSourceMappings({...good,map:[0,1,2,3,NaN,8,16,17,18]},"AI"),/leaked/);
+assert.throws(()=>validateReturnedExclusions({ranges:[{start:13,end:16}]},good,"AI"),/overlaps/);
+assert.throws(()=>validateExcludedSourceMappings({...good,map:good.map.slice(1)},"AI"),/invalid/);
+console.log("PASS: fail-closed input/source mappings and returned AI/Similarity highlight exclusions.");
