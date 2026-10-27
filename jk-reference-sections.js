@@ -128,8 +128,10 @@ function isLikelySectionHeading(lines, index, start, source) {
   const titleCase = meaningful.length > 0 && meaningful.every(word => /^\p{Lu}/u.test(word));
   const knownHeading = COMMON_SECTION_HEADING.test(text) ||
     /^\d+(?:\.\d+)*[.)]?\s+[A-Z]/u.test(text);
+  const followsWithSubstantiveBody = looksLikeSubstantiveBody(next) || looksLikeUnheadedBodyLine(next);
   const headingShape = knownHeading ||
-    (titleCase && words.length <= 12 && blankBefore && (blankAfter || separatedVisually));
+    (titleCase && words.length <= 12 && (blankBefore || visualBreakBefore) &&
+      (blankAfter || separatedVisually || followsWithSubstantiveBody));
   if (!headingShape || /[,:;]\s*$/.test(text) || !next) return false;
   if (REFERENCE_ENTRY_START.test(next)) return false;
   return STRUCTURAL_FOLLOWER.test(next) || next.length >= 18;
