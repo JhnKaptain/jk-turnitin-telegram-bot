@@ -372,6 +372,23 @@ function inspectBoundary(source, start, lines) {
       return {status: "AUTO", end: line.start, reason: "Recognized section terminator.", entriesFound};
     }
 
+    // A hanging-indented citation title can look like a title-case heading.
+    // Check the strong active-entry continuation geometry BEFORE deciding
+    // that a bibliographic title starts a new academic section.
+    if (entriesFound > 0 &&
+        !KNOWN_TERMINATOR.test(text) &&
+        !COMMON_SECTION_HEADING.test(text) &&
+        !STRUCTURAL_FOLLOWER.test(text) &&
+        !isReferenceEntryStart(text) &&
+        isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine) &&
+        Number.isFinite(line.layoutX) &&
+        Number.isFinite(activeEntryLine?.layoutX) &&
+        line.layoutX >= activeEntryLine.layoutX +
+          Math.max(3.5, Number(line.layoutHeight || 0) * 0.3)) {
+      previousNonblankLine = line;
+      continue;
+    }
+
     if (entriesFound > 0 && isLikelySectionHeading(lines, i, start, source)) {
       // If an unresolved line immediately precedes a heading, do not
       // silently swallow a potentially substantive paragraph.
