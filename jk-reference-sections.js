@@ -13,7 +13,7 @@ const SECTION_STOPWORDS = new Set([
 const COMMON_SECTION_HEADING = /^(?:abstract|introduction(?:\s+(?:of|to)\b.*)?|background|overview(?:\s+of\b.*)?|basic overview(?:\s+of\b.*)?|purpose|objective(?:s)?|literature review|related work|method(?:s|ology)?|results?|discussion|conclusion|summary|police|courts|corrections|structure of\b.*|origin of\b.*|current issues and concerns|legal philosophy|type of system|alternatives to incarceration|handling juveniles|guiding children(?:['’]s)? behaviour|teaching resources(?:,?\s+strategies)?(?:\s+and transitions)?|main point\s+\d+|chapter\s+\d+.*|part\s+\d+.*)$/i;
 const REFERENCE_ENTRY_START = /^(?:\[\d+\]\s*)?(?:[A-Z][\p{L}'’.-]{1,50},\s*[A-Z]|\S.{0,100}\((?:19|20)\d{2}[a-z]?\)\s*[.,]|https?:\/\/|www\.|doi\s*:)/u;
 
-function lineRecords(source) {
+function lineRecords(source, layoutDocument = null) {
   const out = [];
   const re = /[^\r\n]*(?:\r\n|\n|\r|$)/g;
   let match;
@@ -23,6 +23,42 @@ function lineRecords(source) {
     const text = full.replace(/(?:\r\n|\n|\r)$/, "");
     out.push({text, start: match.index, end: match.index + text.length,
       next: match.index + full.length});
+  }
+
+  // Attach PDF-layout evidence to each canonical visual line. This lets the
+  // bibliography detector distinguish a hanging-indent citation continuation
+  // from a genuine new prose paragraph without changing canonical text offsets.
+  const items = [];
+  for (const page of layoutDocument?.pages || []) {
+    for (const item of page.items || []) {
+      if (!Number.isInteger(item?.start) || !Number.isInteger(item?.end) ||
+          item.end <= item.start || !Number.isFinite(item.x) ||
+          !Number.isFinite(item.y) || !Number.isFinite(item.height)) continue;
+      items.push({
+        start: item.start, end: item.end, x: item.x, y: item.y,
+        height: item.height, pageNumber: Number(item.pageNumber || page.pageNumber || 0)
+      });
+    }
+  }
+  items.sort((a, b) => a.start - b.start);
+  if (items.length) {
+    let cursor = 0;
+    for (const line of out) {
+      const first = line.start + (line.text.match(/^\s*/u)?.[0].length || 0);
+      while (cursor < items.length && items[cursor].end <= first) cursor++;
+      const item = items[cursor];
+      if (item && item.start <= first && first < item.end) {
+        line.layoutX = item.x;
+        line.layoutY = item.y;
+        line.layoutHeight = item.height;
+        line.layoutPage = item.pageNumber;
+      } else if (item && item.start >= first && item.start <= line.end) {
+        line.layoutX = item.x;
+        line.layoutY = item.y;
+        line.layoutHeight = item.height;
+        line.layoutPage = item.pageNumber;
+      }
+    }
   }
   return out;
 }
@@ -178,6 +214,34 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
   }));
 }
 
+function isVisualReferenceContinuation(line, previousLine, entryLine) {
+  if (!line || !previousLine) return false;
+  if (!Number.isFinite(line.layoutY) || !Number.isFinite(previousLine.layoutY) ||
+      !Number.isFinite(line.layoutHeight) || !Number.isFinite(previousLine.layoutHeight) ||
+      !line.layoutPage || line.layoutPage !== previousLine.layoutPage) return false;
+
+  const baselineGap = Math.abs(previousLine.layoutY - line.layoutY);
+  const lineHeight = Math.max(line.layoutHeight, previousLine.layoutHeight, 1);
+  // A new paragraph normally has a noticeably larger vertical gap than two
+  // adjacent wrapped lines. Keep wrapped reference lines within that baseline.
+  if (baselineGap > lineHeight * 1.75) return false;
+
+  const text = line.text.trim();
+  const previous = previousLine.text.trim();
+  const firstEntryX = Number.isFinite(entryLine?.layoutX) ? entryLine.layoutX : null;
+  const hangingIndent = firstEntryX !== null &&
+    line.layoutX >= firstEntryX + Math.max(3.5, lineHeight * 0.3);
+
+  const previousIsOpen = /(?:[,;:]|\b(?:in|of|and|for|with|from|by|the|a|an|to|on|at|as|edited|translated|including|vol\.?|issue|pp?\.?)|[-–—])\s*$/iu.test(previous);
+  const conventionalContinuation = /^(?:and\b|or\b|of\b|in\b|for\b|with\b|from\b|by\b|the\b|a\b|an\b|to\b|on\b|at\b|as\b|edited\s+by\b|translated\s+by\b|journal\b|proceedings\b|university\b|institute\b|volume\b|vol\.?\b|issue\b|no\.?\b|pp?\.?\b|pages?\b|publisher\b|retrieved\b|available\b|doi\b|https?:|www\.)/iu.test(text);
+
+  // An actual new citation has its own author/date/URL evidence and is caught
+  // before this helper is called. For the remaining lines, hanging indent,
+  // unfinished previous line, or a known citation continuation is strong
+  // evidence that the line still belongs to the current reference.
+  return hangingIndent || previousIsOpen || conventionalContinuation;
+}
+
 function inspectBoundary(source, start, lines) {
   const index = lines.findIndex(line => line.start <= start && start <= line.end);
   if (index < 0) {
@@ -185,6 +249,8 @@ function inspectBoundary(source, start, lines) {
   }
   let entriesFound = 0;
   let firstCandidate = null;
+  let activeEntryLine = null;
+  let previousNonblankLine = lines[index];
   for (let i = index + 1; i < lines.length; i++) {
     const line = lines[i];
     const text = line.text.trim();
@@ -198,6 +264,14 @@ function inspectBoundary(source, start, lines) {
     }
     if (isReferenceEntryParagraph(text)) {
       entriesFound++;
+      activeEntryLine = line;
+      previousNonblankLine = line;
+      continue;
+    }
+
+    if (entriesFound > 0 &&
+        isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine)) {
+      previousNonblankLine = line;
       continue;
     }
 
@@ -207,7 +281,10 @@ function inspectBoundary(source, start, lines) {
       return {status: "AUTO", end: line.start, reason: "Substantive prose resumes.", entriesFound};
     }
 
-    if (looksLikeReferenceContinuation(text)) continue;
+    if (looksLikeReferenceContinuation(text)) {
+      previousNonblankLine = line;
+      continue;
+    }
 
     firstCandidate = line.start;
     return {
@@ -232,9 +309,9 @@ function inspectBoundary(source, start, lines) {
   };
 }
 
-function inspectReferenceSections(source, fallbackStart = -1, overrides = []) {
+function inspectReferenceSections(source, fallbackStart = -1, overrides = [], layoutDocument = null) {
   source = String(source || "");
-  const lines = lineRecords(source);
+  const lines = lineRecords(source, layoutDocument);
   const sourceTextSha256 = crypto.createHash("sha256").update(source, "utf8").digest("hex");
   const starts = [];
   const seen = new Set();
@@ -301,8 +378,8 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = []) {
   return {ranges, reviews, sourceTextSha256, sourceLength: source.length};
 }
 
-function findReferenceSections(source, fallbackStart = -1) {
-  return inspectReferenceSections(source, fallbackStart).ranges;
+function findReferenceSections(source, fallbackStart = -1, layoutDocument = null) {
+  return inspectReferenceSections(source, fallbackStart, [], layoutDocument).ranges;
 }
 
 function makeReferenceReviewError(review) {
@@ -314,9 +391,9 @@ function makeReferenceReviewError(review) {
   return error;
 }
 
-function prepareWithoutReferences(rawText, builder, fallbackStart = -1, overrides = []) {
+function prepareWithoutReferences(rawText, builder, fallbackStart = -1, overrides = [], layoutDocument = null) {
   const source = String(rawText || "");
-  const inspection = inspectReferenceSections(source, fallbackStart, overrides);
+  const inspection = inspectReferenceSections(source, fallbackStart, overrides, layoutDocument);
   if (inspection.reviews.length) {
     throw makeReferenceReviewError(inspection.reviews[0]);
   }

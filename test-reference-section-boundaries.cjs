@@ -1,6 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const {findReferenceSections,prepareWithoutReferences}=require("./jk-reference-sections.js");
+const scan = require("./jk-scan-text.js");
 
 const sample = [
   "Introductory material that is long enough to pass the early-heading guard. ".repeat(6),
@@ -106,6 +107,90 @@ const earlyPrepared = prepareWithoutReferences(earlyBib, source => ({
 assert(earlyPrepared.text.includes("This is a table-of-contents continuation"));
 assert(!earlyPrepared.text.includes("Research design and analysis"));
 assert(earlyPrepared.text.includes("The criminal justice system continues here as body prose"));
+
+// Regression from Going Ashore report: PDF visual lines split references across
+// lines. Continuation lines must not be mistaken for body prose and highlighted.
+const wrappedLines = [
+  "Opening essay content establishes the student's argument and theoretical context before its bibliography.",
+  "The essay discusses mobility, institutions, and changing aspirations through a personal example.",
+  "References",
+  "",
+  "Appadurai, Arjun. 2004. The Capacity to Aspire: Culture and the Terms of Recognition. In",
+  "Culture and Public Action: A Cross-Disciplinary Dialogue on Development Policy,",
+  "edited by Vijayendra Rao and Michael Walton, 59-84. Washington, DC: World Bank",
+  "Publications.",
+  "",
+  "Elliott, Anthony, and John Urry. 2010. Mobile Lives. London: Routledge.",
+  "",
+  "Ellis, Carolyn, Tony E. Adams, and Arthur P. Bochner. 2011. Autoethnography: An Overview.",
+  "Forum Qualitative Sozialforschung / Forum: Qualitative Social Research 12 (1): Article",
+  "10. https://doi.org/10.17169/fqs-12.1.1589.",
+  "",
+  "Xiang, Biao. 2021. The Nearby: A Scope of Seeing. Journal of Contemporary Chinese Art 8",
+  "(2-3): 147-165. https://doi.org/10.1386/jcca_00042_1.",
+  "",
+  "AI Use Declaration",
+  "",
+  "I used OpenAI's ChatGPT to help develop and revise the argument, organization, source integration, wording, and references in response to course guidance and feedback."
+].join("\n");
+const visualItems = [];
+let offset = 0;
+let y = 750;
+for (const line of wrappedLines.split("\n")) {
+  if (line.trim()) {
+    const isReferenceHeading = line === "References";
+    const isContinuation = [
+      "Culture and Public Action:",
+      "edited by Vijayendra",
+      "Publications.",
+      "Forum Qualitative",
+      "10. https://",
+      "(2-3):"
+    ].some(prefix => line.startsWith(prefix));
+    const x = isReferenceHeading || line === "AI Use Declaration" ? 220 : isContinuation ? 92 : 72;
+    visualItems.push({text: line, start: offset, end: offset + line.length,
+      pageNumber: 1, x, y, width: Math.max(20, line.length * 5), height: 10});
+    y -= 12;
+  } else {
+    y -= 12;
+  }
+  offset += line.length + 1;
+}
+const visualDoc = {text: wrappedLines, pageCount: 1,
+  pages: [{pageNumber: 1, width: 612, height: 792, items: visualItems}]};
+const visualRanges = findReferenceSections(wrappedLines, -1, visualDoc);
+assert.equal(visualRanges.length, 1, JSON.stringify(visualRanges));
+const visualPrepared = prepareWithoutReferences(wrappedLines, source => ({
+  text: source, map: Array.from({length: source.length}, (_, i) => i)
+}), -1, [], visualDoc);
+for (const citation of [
+  "Appadurai, Arjun.", "Culture and Public Action:",
+  "edited by Vijayendra", "Publications.",
+  "Elliott, Anthony", "Ellis, Carolyn", "Forum Qualitative",
+  "Xiang, Biao. 2021.", "10. https://doi.org/10.17169",
+  "(2-3): 147-165."
+]) assert(!visualPrepared.text.includes(citation), "Reference continuation leaked into prepared input: " + citation);
+assert(visualPrepared.text.includes("Opening essay content establishes"));
+assert(visualPrepared.text.includes("I used OpenAI's ChatGPT"));
+const visualAi = scan.buildAiInput(wrappedLines, visualDoc);
+const visualSimilarity = scan.buildSimilarityInput(
+  wrappedLines, scan.FILTER_MODE_FILTERED, [], visualDoc
+);
+for (const citation of ["Appadurai, Arjun.", "Culture and Public Action:",
+  "Publications.", "Elliott, Anthony", "Ellis, Carolyn", "Xiang, Biao. 2021."]) {
+  assert(!visualAi.text.includes(citation), "AI input retained wrapped reference: " + citation);
+  assert(!visualSimilarity.text.includes(citation), "Similarity input retained wrapped reference: " + citation);
+}
+assert(visualAi.text.includes("Opening essay content establishes"));
+assert(visualSimilarity.text.includes("Opening essay content establishes"));
+assert(visualAi.text.includes("I used OpenAI's ChatGPT"));
+assert(visualSimilarity.text.includes("I used OpenAI's ChatGPT"));
+assert.equal(visualPrepared.map.length, visualPrepared.text.length);
+for (let i=0;i<visualPrepared.map.length;i++) {
+  if (Number.isInteger(visualPrepared.map[i])) {
+    assert.equal(visualPrepared.text[i], wrappedLines[visualPrepared.map[i]]);
+  }
+}
 
 const proseOnly="This is substantial text. The article references Smith for a useful example. The author discusses bibliography design in the final discussion.";
 assert.equal(findReferenceSections(proseOnly).length,0);

@@ -1120,7 +1120,7 @@ function summarizePreparedInput(
 
 // JK_AI_RUNNING_METADATA_EXCLUSION_V1
 function buildAiInput(rawText, document, referenceBoundaryOverrides = []) {
-  const prepared = buildAiInputWithoutRunningMetadata(rawText, referenceBoundaryOverrides);
+  const prepared = buildAiInputWithoutRunningMetadata(rawText, referenceBoundaryOverrides, document);
   const excluded = require("./jk-ai-running-metadata.js")
     .excludeAiRunningMetadata(prepared, document);
 
@@ -1133,7 +1133,7 @@ function buildAiInput(rawText, document, referenceBoundaryOverrides = []) {
 }
 
 // JK_COMPLETE_REFERENCE_SECTIONS_V1
-function buildSimilarityInput(rawText, mode, referenceBoundaryOverrides = []) {
+function buildSimilarityInput(rawText, mode, referenceBoundaryOverrides = [], document = null) {
   const normalized = safeText(mode).trim().toUpperCase();
 
   if (normalized !== FILTER_MODE_FILTERED) {
@@ -1145,17 +1145,19 @@ function buildSimilarityInput(rawText, mode, referenceBoundaryOverrides = []) {
       rawText,
       (text, options) => buildSimilarityInputBeforeReferenceSections(text, mode, options),
       findBibliographyStart(safeText(rawText)),
-      referenceBoundaryOverrides
+      referenceBoundaryOverrides,
+      document
     );
 }
 
-function buildAiInputWithoutRunningMetadata(rawText, referenceBoundaryOverrides = []) {
+function buildAiInputWithoutRunningMetadata(rawText, referenceBoundaryOverrides = [], document = null) {
   return require("./jk-reference-sections.js")
     .prepareWithoutReferences(
       rawText,
       (text, options) => buildAiInputBeforeReferenceSections(text, options),
       findBibliographyStart(safeText(rawText)),
-      referenceBoundaryOverrides
+      referenceBoundaryOverrides,
+      document
     );
 }
 
