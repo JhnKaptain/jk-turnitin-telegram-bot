@@ -8032,7 +8032,8 @@ async function notifyReferenceBoundaryReview(job, file, review) {
     "Reference entries detected: " + String(review.entriesFound || 0),
     "",
     "No Quetext or Sapling request was made for this file.",
-    "Choose the first text that should be INCLUDED after the references."
+    "Choose the first text that should be INCLUDED after the references.",
+    "If you do not choose within 10 minutes, the remainder will automatically be treated as references and processing will resume."
   ];
   const keyboard = [];
   for (const candidate of (review.candidates || []).slice(0, 3)) {
