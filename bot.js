@@ -8007,8 +8007,7 @@ async function notifyReferenceBoundaryReview(job, file, review) {
         ...review,
         requestedAt: now,
         autoResolveAt: now +
-          require("./jk-reference-review-timeout.cjs").REFERENCE_BOUNDARY_AUTO_RESOLVE_MS,
-        notificationAttemptedAt: now
+          require("./jk-reference-review-timeout.cjs").REFERENCE_BOUNDARY_AUTO_RESOLVE_MS
       };
 
   file.referenceBoundaryReviewStatus = "PENDING_ADMIN";
