@@ -192,6 +192,106 @@ for (let i=0;i<visualPrepared.map.length;i++) {
   }
 }
 
+// Regression based on the uploaded Assignment One DOCX. Institutional authors,
+// wrapped citation lines, dates, URLs, and multiple references must all remain
+// excluded before the second essay starts.
+const assignmentOne = [
+  "Opening research inquiry provides substantive discussion before the bibliography.",
+  "The report examines cybersecurity governance, access control, and privacy risks.",
+  "",
+  "References",
+  "",
+  "Sutton, A., & Tompson, L. (2025). Towards a cybersecurity culture-behaviour",
+  "framework: A rapid evidence review. Computers & Security, 148, Article 104110.",
+  "https://doi.org/10.1016/j.cose.2024.104110",
+  "",
+  "UnitedHealth Group. (2026). Annual report on Form 10-K for the year ended",
+  "December 31, 2025.",
+  "https://www.sec.gov/Archives/edgar/data/731766/000073176626000062/unh-20251231.htm",
+  "",
+  "U.S. Department of Health and Human Services. (2025, August 13). Change",
+  "Healthcare cybersecurity incident frequently asked questions.",
+  "https://www.hhs.gov/hipaa/for-professionals/special-topics/change-healthcare-cybersecurity-incident-frequently-asked-questions/index.html",
+  "",
+  "Witty, A. (2024a). Responses to questions for the record for Andrew Witty. U.S.",
+  "Senate Committee on Finance.",
+  "https://www.finance.senate.gov/download/responses-for-questions-for-the-record-to-andrew-witty",
+  "",
+  "Witty, A. (2024b, May 1). Testimony of Andrew Witty before the Senate Finance",
+  "Committee: Hacking America's health care - Assessing the Change Healthcare cyber attack.",
+  "https://www.finance.senate.gov/download/0501-witty-testimony",
+  "",
+  "Woods, D. W., & Seymour, S. (2023). Evidence-based cybersecurity policy? A meta-review",
+  "of security control effectiveness. Journal of Cyber Policy, 8(3), 365-383.",
+  "https://doi.org/10.1080/23738871.2024.2335461",
+  "",
+  "Cyber Security & Data Privacy",
+  "Digital practices are transforming organisational practices as they depend on cybersecurity and data privacy for linking sensitive information to services."
+].join("\n");
+const assignmentItems = [];
+let assignmentOffset = 0;
+let assignmentY = 750;
+for (const line of assignmentOne.split("\\n")) {
+  if (line.trim()) {
+    const continuationPrefixes = [
+      "framework:", "December 31,", "Healthcare cybersecurity",
+      "Senate Committee on Finance", "Committee: Hacking",
+      "of security control effectiveness"
+    ];
+    assignmentItems.push({
+      text: line,
+      start: assignmentOffset,
+      end: assignmentOffset + line.length,
+      pageNumber: 1,
+      x: continuationPrefixes.some(prefix => line.startsWith(prefix)) ? 94 :
+        (/^https?:/i.test(line) ? 94 : (line === "References" || line === "Cyber Security & Data Privacy" ? 220 : 72)),
+      y: assignmentY,
+      width: Math.max(20, line.length * 5),
+      height: 10
+    });
+    assignmentY -= 12;
+  } else {
+    assignmentY -= 12;
+  }
+  assignmentOffset += line.length + 1;
+}
+const assignmentLayout = {
+  text: assignmentOne,
+  pageCount: 1,
+  pages: [{pageNumber: 1, width: 612, height: 792, items: assignmentItems}]
+};
+const assignmentInspection = require("./jk-reference-sections.js")
+  .inspectReferenceSections(assignmentOne, -1, [], assignmentLayout);
+const secondTitleOffset = assignmentOne.indexOf("Cyber Security & Data Privacy");
+assert.equal(assignmentInspection.reviews.length, 0,
+  "The known second essay heading should end the bibliography without admin review.");
+assert.equal(assignmentInspection.ranges.length, 1,
+  "The single bibliography block should be excluded as one range.");
+console.log("ASSIGNMENT REFERENCE DEBUG", JSON.stringify({
+  titleOffset: secondTitleOffset,
+  ranges: assignmentInspection.ranges,
+  reviews: assignmentInspection.reviews.map(x => ({start:x.start, reason:x.reason, entriesFound:x.entriesFound, candidates:x.candidates})),
+  endingText: assignmentOne.slice(Math.max(0, assignmentInspection.ranges[0]?.end - 90), assignmentInspection.ranges[0]?.end + 100)
+}));
+assert.equal(assignmentInspection.ranges[0].end, secondTitleOffset,
+  "Reference exclusion must stop exactly before the second essay title.");
+const assignmentPrepared = prepareWithoutReferences(assignmentOne, source => ({
+  text: source, map: Array.from({length: source.length}, (_, i) => i)
+}), -1, [], assignmentLayout);
+for (const reference of [
+  "Sutton, A., & Tompson, L.",
+  "UnitedHealth Group. (2026)",
+  "U.S. Department of Health and Human Services.",
+  "Witty, A. (2024a)",
+  "Witty, A. (2024b",
+  "Woods, D. W., & Seymour, S.",
+  "https://www.sec.gov/",
+  "https://www.hhs.gov/"
+]) assert(!assignmentPrepared.text.includes(reference),
+  "Reference content leaked into prepared input: " + reference);
+assert(assignmentPrepared.text.includes("Cyber Security & Data Privacy"));
+assert(assignmentPrepared.text.includes("Digital practices are transforming"));
+
 const proseOnly="This is substantial text. The article references Smith for a useful example. The author discusses bibliography design in the final discussion.";
 assert.equal(findReferenceSections(proseOnly).length,0);
 console.log("PASS: multiple bibliography blocks excluded independently.");

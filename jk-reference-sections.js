@@ -10,7 +10,7 @@ const SECTION_STOPWORDS = new Set([
   "a","an","and","as","at","by","for","from","in","into","of","on","or",
   "the","to","with","without","vs","versus"
 ]);
-const COMMON_SECTION_HEADING = /^(?:abstract|introduction(?:\s+(?:of|to)\b.*)?|background|overview(?:\s+of\b.*)?|basic overview(?:\s+of\b.*)?|purpose|objective(?:s)?|literature review|related work|method(?:s|ology)?|results?|discussion|conclusion|summary|police|courts|corrections|structure of\b.*|origin of\b.*|current issues and concerns|legal philosophy|type of system|alternatives to incarceration|handling juveniles|guiding children(?:['’]s)? behaviour|teaching resources(?:,?\s+strategies)?(?:\s+and transitions)?|main point\s+\d+|chapter\s+\d+.*|part\s+\d+.*)$/i;
+const COMMON_SECTION_HEADING = /^(?:cyber security(?:\s*&\s*data privacy)?|abstract|introduction(?:\s+(?:of|to)\b.*)?|background|overview(?:\s+of\b.*)?|basic overview(?:\s+of\b.*)?|purpose|objective(?:s)?|literature review|related work|method(?:s|ology)?|results?|discussion|conclusion|summary|police|courts|corrections|structure of\b.*|origin of\b.*|current issues and concerns|legal philosophy|type of system|alternatives to incarceration|handling juveniles|guiding children(?:['’]s)? behaviour|teaching resources(?:,?\s+strategies)?(?:\s+and transitions)?|main point\s+\d+|chapter\s+\d+.*|part\s+\d+.*)$/i;
 const REFERENCE_ENTRY_START = /^(?:\[\d+\]\s*)?(?:[A-Z][\p{L}'’.-]{1,50},\s*[A-Z]|\S.{0,100}\((?:19|20)\d{2}[a-z]?\)\s*[.,]|https?:\/\/|www\.|doi\s*:)/u;
 
 function lineRecords(source, layoutDocument = null) {
@@ -109,20 +109,54 @@ function isLikelySectionHeading(lines, index, start, source) {
   let nextIndex = index + 1;
   while (nextIndex < lines.length && !lines[nextIndex].text.trim()) nextIndex++;
   const next = nextIndex < lines.length ? lines[nextIndex].text.trim() : "";
-  const previous = index > 0 ? lines[index - 1].text.trim() : "";
+  const previousLine = index > 0 ? lines[index - 1] : null;
+  const previous = previousLine?.text.trim() || "";
   const blankBefore = !previous;
   const blankAfter = nextIndex > index + 1 ||
     (index + 1 < lines.length && !lines[index + 1].text.trim());
+  const nextLine = lines[nextIndex];
+  const visualHeight = Math.max(Number(line.layoutHeight || 0), Number(previousLine?.layoutHeight || 0), Number(nextLine?.layoutHeight || 0), 1);
+  const visualGapBefore = previousLine && line.layoutY !== undefined && previousLine.layoutY !== undefined
+    ? Math.abs(line.layoutY - previousLine.layoutY) : 0;
+  const visualGapAfter = nextLine && line.layoutY !== undefined && nextLine.layoutY !== undefined
+    ? Math.abs(line.layoutY - nextLine.layoutY) : 0;
+  const visualBreakBefore = Boolean(previousLine?.layoutPage && previousLine.layoutPage === line.layoutPage && visualGapBefore >= visualHeight * 1.5);
+  const visualBreakAfter = Boolean(nextLine?.layoutPage && nextLine.layoutPage === line.layoutPage && visualGapAfter >= visualHeight * 1.35);
+  const separatedVisually = visualBreakAfter;
   const words = text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) || [];
   const meaningful = words.filter(word => !SECTION_STOPWORDS.has(word.toLowerCase()));
   const titleCase = meaningful.length > 0 && meaningful.every(word => /^\p{Lu}/u.test(word));
   const knownHeading = COMMON_SECTION_HEADING.test(text) ||
     /^\d+(?:\.\d+)*[.)]?\s+[A-Z]/u.test(text);
-  const headingShape = knownHeading ||
-    (titleCase && words.length <= 12 && blankBefore && blankAfter);
+  const followsWithSubstantiveBody = looksLikeSubstantiveBody(next) || looksLikeUnheadedBodyLine(next);
+  const headingShape = (knownHeading && (blankBefore || visualBreakBefore || KNOWN_TERMINATOR.test(text))) ||
+    (titleCase && words.length <= 12 && (blankBefore || visualBreakBefore) &&
+      (blankAfter || separatedVisually || followsWithSubstantiveBody));
   if (!headingShape || /[,:;]\s*$/.test(text) || !next) return false;
   if (REFERENCE_ENTRY_START.test(next)) return false;
   return STRUCTURAL_FOLLOWER.test(next) || next.length >= 18;
+}
+
+function isReferenceEntryStart(value) {
+  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  if (!text || /^(?:\[\d+\]\s*)?(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return false;
+
+  // Conventional author-first entries, including personal author lists.
+  if (/^(?:\[\d+\]\s*)?[A-Z][\p{L}'’.-]{1,50},\s*(?:[A-Z]\.?|[A-Z][\p{L}'’.-]+)\b/u.test(text)) return true;
+
+  // Corporate/institutional authors may contain internal periods ("U.S.")
+  // before the year. Match the period directly attached to a publication year,
+  // rather than stopping at the first abbreviation period.
+  if (/^.{2,140}\.\s*\((?:19|20)\d{2}[a-z]?(?:,\s*[^)]*)?\)/u.test(text)) return true;
+
+  // Chicago-style references commonly place the year outside parentheses.
+  if (/^.{2,140}\.\s+(?:19|20)\d{2}[a-z]?\.\s/u.test(text)) return true;
+
+  // Numbered references are common in technical and medical documents.
+  if (/^(?:\[\d+\]|\d+[.)])\s+.{8,}/u.test(text) &&
+      /\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|doi\b/iu.test(text)) return true;
+
+  return false;
 }
 
 function isReferenceEntryParagraph(value) {
@@ -130,20 +164,18 @@ function isReferenceEntryParagraph(value) {
   if (!text) return false;
   if (/^(?:\[\d+\]\s*)?(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return true;
   if (/\b(?:https?:\/\/|doi\s*:\s*10\.\d{4,9}\/)/iu.test(text)) return true;
-  if (/^(?:\[\d+\]\s*)?[A-Z][\p{L}'’.-]{1,50},\s*(?:[A-Z]\.?|[A-Z][\p{L}'’.-]+)\b/u.test(text)) return true;
-  if (/^[A-Z][^.!?]{1,100}\.\s*\((?:19|20)\d{2}[a-z]?\)/u.test(text)) return true;
-  if (/^[A-Z][^.!?]{1,100}\s+\((?:19|20)\d{2}[a-z]?\)/u.test(text)) return true;
-  if (/^(?:\[\d+\]|\d+[.)])\s+.{8,}/u.test(text) &&
-      /\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|doi\b/iu.test(text)) return true;
-  return false;
+  return isReferenceEntryStart(text);
 }
 
 function looksLikeReferenceContinuation(value) {
   const text = String(value || "").replace(/\s+/gu, " ").trim();
-  if (!text || isReferenceEntryParagraph(text)) return true;
-  if (/^(?:journal(?: of)?|proceedings|university|institute|volume|vol\.?|issue|no\.?|pp?\.?|edition|publisher|retrieved(?: from)?|available at|doi\b|https?:|www\.)\b/iu.test(text)) return true;
+  if (!text) return true;
+  if (/^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return true;
+  if (/^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(?:19|20)\d{2}\b/iu.test(text)) return true;
+  if (/^(?:journal(?: of)?|proceedings|university|institute|volume|vol\.?|issue|no\.?|pp?\.?|edition|publisher|retrieved(?: from)?|available at|doi\b|https?:|www\.)/iu.test(text)) return true;
   if (/^\d+\s*[-–]\s*\d+\s*\.?$/u.test(text)) return true;
-  if (/^[a-z]/u.test(text) && text.length <= 140 && !/[.!?]\s+[A-Z]/u.test(text)) return true;
+  if (/^[a-z]/u.test(text) && text.length <= 180 && !/[.!?]\s+[A-Z]/u.test(text)) return true;
+  if (/^(?:annual report|form 10-k|year ended|article\s+\d+|review of|edited by|translated by|edited\b|in\s+.+\(\s*eds?\.?\))/iu.test(text)) return true;
   return false;
 }
 
@@ -190,23 +222,63 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
     if (!Number.isInteger(offset) || offset <= start || offset >= source.length) return;
     if (!offsets.includes(offset)) offsets.push(offset);
   };
-  add(firstCandidateOffset);
   let entries = 0;
-  for (const line of lines) {
+  let activeEntryLine = null;
+  let previousNonblankLine = lines.find(line => line.start <= start && start <= line.end) || null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (line.start <= start || !line.text.trim()) continue;
     const text = line.text.trim();
     if (REFERENCE_HEADING.test(text)) break;
-    if (isReferenceEntryParagraph(text)) {
+
+    // First identify new reference entries and their continuation lines.
+    // Do not test headings before this: a cited work may itself be titled "Introduction".
+    if (isReferenceEntryStart(text)) {
       entries++;
+      activeEntryLine = line;
+      previousNonblankLine = line;
       continue;
     }
-    if (entries > 0 && (KNOWN_TERMINATOR.test(text) ||
-        isLikelySectionHeading(lines, lines.indexOf(line), start, source) ||
-        looksLikeSubstantiveBody(text) || looksLikeUnheadedBodyLine(text))) {
-      add(line.start);
+    // After a real visual/structural break, a section heading takes priority.
+    // Citation titles like "Introduction to..." without a break remain continuations.
+    if (isLikelySectionHeading(lines, i, start, source)) {
+      if (entries > 0) {
+        add(line.start);
+        break;
+      }
+      previousNonblankLine = line;
+      continue;
     }
-    if (offsets.length >= 3) break;
+
+    if (entries > 0 &&
+        (looksLikeReferenceContinuation(text) ||
+         isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
+      previousNonblankLine = line;
+      continue;
+    }
+
+    if (entries > 0 && KNOWN_TERMINATOR.test(text)) {
+      add(line.start);
+      break;
+    }
+
+    const baselineGap = previousNonblankLine &&
+      Number.isFinite(line.layoutY) && Number.isFinite(previousNonblankLine.layoutY)
+      ? Math.abs(line.layoutY - previousNonblankLine.layoutY) : 0;
+    const lineHeight = Math.max(Number(line.layoutHeight || 0), Number(previousNonblankLine?.layoutHeight || 0), 1);
+    const visualParagraphBreak = Boolean(line.layoutPage && line.layoutPage === previousNonblankLine?.layoutPage &&
+      baselineGap >= lineHeight * 1.5);
+    if (entries > 0 && visualParagraphBreak &&
+        (looksLikeSubstantiveBody(text) || looksLikeUnheadedBodyLine(text))) {
+      add(line.start);
+      break;
+    }
+
+    previousNonblankLine = line;
   }
+
+  // Never offer an arbitrary first ambiguous offset. An empty option list is
+  // safer than allowing the admin to resume inside a citation or URL.
   return offsets.slice(0, 3).map((offset, index) => ({
     id: index + 1,
     offset,
@@ -222,24 +294,21 @@ function isVisualReferenceContinuation(line, previousLine, entryLine) {
 
   const baselineGap = Math.abs(previousLine.layoutY - line.layoutY);
   const lineHeight = Math.max(line.layoutHeight, previousLine.layoutHeight, 1);
-  // A new paragraph normally has a noticeably larger vertical gap than two
-  // adjacent wrapped lines. Keep wrapped reference lines within that baseline.
-  if (baselineGap > lineHeight * 1.75) return false;
+  if (baselineGap > lineHeight * 1.6) return false;
 
   const text = line.text.trim();
   const previous = previousLine.text.trim();
   const firstEntryX = Number.isFinite(entryLine?.layoutX) ? entryLine.layoutX : null;
   const hangingIndent = firstEntryX !== null &&
     line.layoutX >= firstEntryX + Math.max(3.5, lineHeight * 0.3);
-
-  const previousIsOpen = /(?:[,;:]|\b(?:in|of|and|for|with|from|by|the|a|an|to|on|at|as|edited|translated|including|vol\.?|issue|pp?\.?)|[-–—])\s*$/iu.test(previous);
+  const previousIsOpen = /(?:[,;:]|\b(?:in|of|and|for|with|from|by|the|a|an|to|on|at|as|ended|including|edited|translated|vol\.?|issue|pp\.?)|[-–—])\s*$/iu.test(previous);
   const conventionalContinuation = /^(?:and\b|or\b|of\b|in\b|for\b|with\b|from\b|by\b|the\b|a\b|an\b|to\b|on\b|at\b|as\b|edited\s+by\b|translated\s+by\b|journal\b|proceedings\b|university\b|institute\b|volume\b|vol\.?\b|issue\b|no\.?\b|pp?\.?\b|pages?\b|publisher\b|retrieved\b|available\b|doi\b|https?:|www\.)/iu.test(text);
 
-  // An actual new citation has its own author/date/URL evidence and is caught
-  // before this helper is called. For the remaining lines, hanging indent,
-  // unfinished previous line, or a known citation continuation is strong
-  // evidence that the line still belongs to the current reference.
-  return hangingIndent || previousIsOpen || conventionalContinuation;
+  // Within the same reference entry, wrapped lines normally have ordinary
+  // line spacing. New bibliography entries are identified before this helper,
+  // so ordinary visual spacing is positive continuation evidence.
+  const normalLineStep = baselineGap <= lineHeight * 1.35;
+  return hangingIndent || previousIsOpen || conventionalContinuation || normalLineStep;
 }
 
 function inspectBoundary(source, start, lines) {
@@ -251,28 +320,46 @@ function inspectBoundary(source, start, lines) {
   let firstCandidate = null;
   let activeEntryLine = null;
   let previousNonblankLine = lines[index];
+
   for (let i = index + 1; i < lines.length; i++) {
     const line = lines[i];
     const text = line.text.trim();
     if (!text) continue;
 
-    if (KNOWN_TERMINATOR.test(text)) {
-      return {status: "AUTO", end: line.start, reason: "Recognized section terminator.", entriesFound};
-    }
-    if (isLikelySectionHeading(lines, i, start, source)) {
-      return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
-    }
-    if (isReferenceEntryParagraph(text)) {
+    // Reference-entry starts take priority over section-heading heuristics.
+    if (isReferenceEntryStart(text)) {
       entriesFound++;
       activeEntryLine = line;
       previousNonblankLine = line;
       continue;
     }
 
+    // A true section heading after a visible boundary takes priority over
+    // continuation detection. Citation titles such as "Introduction to..." are
+    // protected because they lack a paragraph/visual break before them.
+    if (entriesFound > 0 && isLikelySectionHeading(lines, i, start, source)) {
+      return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
+    }
+
+    // Wrapped titles, corporate author continuation, date/publisher lines,
+    // links and DOI lines must never be treated as the end of the bibliography.
     if (entriesFound > 0 &&
-        isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine)) {
+        (looksLikeReferenceContinuation(text) ||
+         isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
       previousNonblankLine = line;
       continue;
+    }
+
+    // A bibliography can begin with a bare URL or DOI.
+    if (entriesFound === 0 && isReferenceEntryParagraph(text)) {
+      entriesFound++;
+      activeEntryLine = line;
+      previousNonblankLine = line;
+      continue;
+    }
+
+    if (KNOWN_TERMINATOR.test(text)) {
+      return {status: "AUTO", end: line.start, reason: "Recognized section terminator.", entriesFound};
     }
 
     if (entriesFound > 0 &&

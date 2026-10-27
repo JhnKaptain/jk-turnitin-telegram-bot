@@ -11,7 +11,9 @@ const source = [
   "",
   "Barker, T. (2021). Research design and analysis. Journal of Academic Methods, 12(2), 44-58.",
   "",
-  "Professional standards specify the applicable editorial format.",
+  "Standards and policy.",
+  "",
+  "Introduction",
   "The criminal justice system serves as the backbone of societal order and explains how law enforcement, courts, and corrections work together."
 ].join("\n");
 
@@ -21,9 +23,8 @@ const review = inspection.reviews[0];
 assert.equal(review.status, undefined);
 assert.equal(typeof review.sourceTextSha256, "string");
 assert(review.candidates.length >= 1);
-assert(source.slice(review.candidates[0].offset).startsWith(
-  "Professional standards specify the applicable editorial format."
-));
+assert(source.slice(review.candidates[0].offset).startsWith("Introduction"),
+  "The selectable boundary must be the next substantive section, not a citation continuation.");
 
 assert.throws(
   () => scan.buildAiInput(source),
@@ -46,12 +47,14 @@ const selected = {
 };
 const ai = scan.buildAiInput(source, undefined, [selected]);
 const similarity = scan.buildSimilarityInput(source, scan.FILTER_MODE_FILTERED, [selected]);
-assert(ai.text.includes("Professional standards specify"));
+assert(ai.text.includes("Introduction"));
 assert(ai.text.includes("The criminal justice system serves as the backbone"));
-assert(similarity.text.includes("Professional standards specify"));
+assert(similarity.text.includes("Introduction"));
 assert(similarity.text.includes("The criminal justice system serves as the backbone"));
 assert(!ai.text.includes("Research design and analysis"));
+assert(!ai.text.includes("Standards and policy"));
 assert(!similarity.text.includes("Research design and analysis"));
+assert(!similarity.text.includes("Standards and policy"));
 
 const phrase = "The criminal justice system serves as the backbone";
 const aiAt = ai.text.indexOf(phrase);
