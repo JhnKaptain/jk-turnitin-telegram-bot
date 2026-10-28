@@ -55,7 +55,7 @@ function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
       ? Math.round(Number(value)) + "%"
       : "unavailable";
 
-  lines.push("Similarity: " + percent(file.providerSimilarityPercent));
+  lines.push("Similarity: " + (job?.adminFreeScan === true && file?.adminAiOnly === true ? "not requested" : percent(file.providerSimilarityPercent)));
   lines.push(
     "AI: " + (
       !runAi ? "not requested" :
