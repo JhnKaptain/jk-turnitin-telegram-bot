@@ -331,6 +331,8 @@ async function buildProviderJobBundle({
     serviceType:
       serviceType,
 
+    adminAiOnly: file.adminFreeScan === true && file.adminAiOnly === true && serviceType === "CHECK",
+
     submittedAt,
 
     paidAt:
