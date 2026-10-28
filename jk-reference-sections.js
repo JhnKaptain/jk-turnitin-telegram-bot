@@ -155,9 +155,9 @@ function isReferenceEntryStart(value) {
   if (/^(?:\[\d+\]\s*)?[A-Z][\p{L}'’.-]{1,50},\s*(?:[A-Z]\.?|[A-Z][\p{L}'’.-]+)\b/u.test(text)) return true;
 
   // Corporate/institutional authors may contain internal periods ("U.S.")
-  // before the year. Match the period directly attached to a publication year,
+  // before the date. Match the period directly attached to a publication year
   // rather than stopping at the first abbreviation period.
-  if (/^.{2,140}\.\s*\((?:19|20)\d{2}[a-z]?(?:,\s*[^)]*)?\)/u.test(text)) return true;
+  if (/^.{2,140}\.\s*\((?:(?:19|20)\d{2}[a-z]?(?:,\s*[^)]*)?|n\.\s*d\.)\)/iu.test(text)) return true;
 
   // Chicago-style references commonly place the year outside parentheses.
   if (/^.{2,140}\.\s+(?:19|20)\d{2}[a-z]?\.\s/u.test(text)) return true;
