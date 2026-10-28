@@ -2770,6 +2770,7 @@ function adminFreeScanServiceKeyboard() {
         "ADMIN_FREE_SCAN_SIMILARITY"
       )
     ],
+    [Markup.button.callback("🤖 AI REPORT ONLY", "ADMIN_FREE_SCAN_AI_ONLY")],
     [
       Markup.button.callback(
         "❌ Cancel",
@@ -6682,6 +6683,28 @@ bot.action(
   }
 );
 
+bot.action("ADMIN_FREE_SCAN_AI_ONLY", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  adminFreeScanSession = {
+    type: "CHECK",
+    adminAiOnly: true,
+    similarityFilter: FILTER_MODE_FILTERED,
+    stage: "WAIT_DOCUMENT",
+    startedAt: Date.now()
+  };
+  await ctx.answerCbQuery("AI report only selected");
+  await showAdminScreen(ctx, [
+    "🧪 ADMIN AI REPORT ONLY",
+    "",
+    "Service: AI ONLY (SAPLING)",
+    "Similarity API: NOT REQUESTED",
+    "References excluded from AI analysis.",
+    "",
+    "Send 1–10 PDF, DOCX, DOC or PPTX documents, then tap Review Batch.",
+    "No bot payment will be requested."
+  ].join("\n"), adminFreeScanWaitingKeyboard(), true);
+});
+
 bot.action(
   "ADMIN_FREE_SCAN_FILTERED",
   async (ctx) => {
@@ -6808,8 +6831,8 @@ bot.action("ADMIN_FREE_SCAN_REVIEW", async (ctx) => {
   await showAdminScreen(ctx, [
     "🧪 ADMIN FREE BATCH - REVIEW",
     "Files: " + session.files.length + " / 10",
-    "Service: " + adminReportTypeLabel(session.type),
-    "Filter: " + similarityFilterLabel(session.similarityFilter),
+    "Service: " + (session.adminAiOnly ? "AI REPORT ONLY" : adminReportTypeLabel(session.type)),
+    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : similarityFilterLabel(session.similarityFilter)),
     "",
     ...session.files.map((file, index) =>
       (index + 1) + ". " + safeText(file.file_name || "Document")),
@@ -8357,6 +8380,7 @@ bot.on("document", async (ctx) => {
     storedFile.similarityFilter = session.similarityFilter;
     storedFile.pendingType = null;
     storedFile.adminFreeScan = true;
+    storedFile.adminAiOnly = session.adminAiOnly === true;
     storedFile.sourceChatId = ctx.chat.id;
     storedFile.sourceMessageId = ctx.message.message_id;
     storedFile.sourceUsername = user.username || "N/A";
