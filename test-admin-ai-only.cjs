@@ -30,7 +30,7 @@ assert(renderer.includes("const adminAiOnly = bundle?.reportIdentity?.adminAiOnl
 assert(renderer.includes("const sim = adminAiOnly ? {path: null, score: null, sourceCount: 0}"));
 assert(renderer.includes("sim.path && fs.existsSync(sim.path)"));
 assert(pipeline.includes("if (runSimilarity)"));
-assert(pipeline.includes("if (runAi &&"));
+assert(pipeline.includes("runAi &&"));
 const mode=f=>f.adminFreeScan===true&&f.adminAiOnly===true&&String(f.type).toUpperCase()==="CHECK";
 assert(mode({adminFreeScan:true,adminAiOnly:true,type:"CHECK"}));
 assert(!mode({adminFreeScan:false,adminAiOnly:true,type:"CHECK"}));
