@@ -6902,7 +6902,7 @@ bot.action("ADMIN_FREE_SCAN_START", async (ctx) => {
     "🧪 ADMIN FREE BATCH STARTED",
     "Files: " + session.files.length + " / 10",
     "Service: " + (session.adminAiOnly ? "AI REPORT ONLY" : adminReportTypeLabel(session.type)),
-    "Filter: " + similarityFilterLabel(session.similarityFilter),
+    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : similarityFilterLabel(session.similarityFilter)),
     "Payment: BYPASSED (ADMIN)",
     "Provider API usage: LIVE",
     "Reports will be delivered to your admin account."
