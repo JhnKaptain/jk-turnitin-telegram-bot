@@ -6510,14 +6510,10 @@ async function renderJkReports({
   const aiName =
     `${base} (1).pdf`;
 
-  const sim =
-    await renderSimilarity(
-      bundle,
-      path.join(
-        outputDir,
-        simName
-      )
-    );
+  const adminAiOnly = bundle?.reportIdentity?.adminAiOnly === true &&
+    String(bundle?.reportIdentity?.serviceType || "").toUpperCase() === "CHECK";
+  const sim = adminAiOnly ? {path: null, score: null, sourceCount: 0} :
+    await renderSimilarity(bundle, path.join(outputDir, simName));
 
   let ai = {
     path: null,
@@ -6550,7 +6546,7 @@ async function renderJkReports({
   if (
     ai.path &&
     fs.existsSync(ai.path) &&
-    fs.existsSync(sim.path)
+    sim.path && fs.existsSync(sim.path)
   ) {
     const crypto =
       require("crypto");
