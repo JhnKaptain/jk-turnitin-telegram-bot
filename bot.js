@@ -6901,7 +6901,7 @@ bot.action("ADMIN_FREE_SCAN_START", async (ctx) => {
   await ctx.reply([
     "🧪 ADMIN FREE BATCH STARTED",
     "Files: " + session.files.length + " / 10",
-    "Service: " + adminReportTypeLabel(session.type),
+    "Service: " + (session.adminAiOnly ? "AI REPORT ONLY" : adminReportTypeLabel(session.type)),
     "Filter: " + similarityFilterLabel(session.similarityFilter),
     "Payment: BYPASSED (ADMIN)",
     "Provider API usage: LIVE",
@@ -9854,7 +9854,7 @@ async function submitPaidJobToProviders(
           similarityMode,
 
           runSimilarity:
-            true,
+            !(job.adminFreeScan === true && file.adminFreeScan === true && file.adminAiOnly === true),
 
           runAi:
             shouldRunAiForFile(
@@ -9932,13 +9932,8 @@ async function submitPaidJobToProviders(
         );
 
       if (
-        result
-          ?.similarityDetection
-          ?.available !==
-          true ||
-        !Number.isFinite(
-          similarityPercent
-        )
+        !(job.adminFreeScan === true && file.adminFreeScan === true && file.adminAiOnly === true) &&
+        (result?.similarityDetection?.available !== true || !Number.isFinite(similarityPercent))
       ) {
         const similarityReason =
           safeText(
