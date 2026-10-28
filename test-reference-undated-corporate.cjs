@@ -13,12 +13,10 @@ const entries=[
 ["Black, J., & Barney, R. D. (1985). The case against mass media codes of ethics."],
 ["Boerman, S. C., Willemsen, L. M., & van der Aa, E. P. (2017). This post is sponsored."],
 ["Booth, H. (2026, March 30). Tropeaka advert probed by standards agency."],
-["Competition and Consumer Act 2010 (Cth) sch 2 (Australian Consumer Law), ss 18, 29."],
 ["Dunn, A. (2003). Ethics impossible? Advertising and the infomercial."],
 ["Evans, N. J., Phua, J., Lim, J., & Jun, H. (2017). Disclosing Instagram influencer advertising."],
 ["Friestad, M., & Wright, P. (1994). The persuasion knowledge model."],
 ["Hudders, L., De Jans, S., & De Veirman, M. (2021). Commercialization of media stars."],
-["Interactive Gambling Amendment (Gambling Reform) Act 2026 (Cth) No. 72."],
 ["LBB Editorial. (2025, October 8). AANA to launch public review of code of ethics."],
 ["Liquor & Gaming NSW. (2026, March 4). Social media influencer gambling products."],
 ["Lou, C., & Yuan, S. (2019). Influencer marketing and credibility."],
@@ -26,7 +24,7 @@ const entries=[
 ["Spence, E. H., & Quinn, A. (2008). Information ethics as a guide for new media."],
 ["Victorian Auditor-General. (2026, October). Government advertising and communications."]
 ];
-assert.equal(entries.length,22);
+assert.equal(entries.length,20);
 const sourceLines=[
   ...Array.from({length:22},()=> "The discussion explores influencer advertising regulation, accountability and ethical implications."),
   "References"
@@ -54,4 +52,4 @@ for(const p of [scan.buildAiInput(source,layout),scan.buildSimilarityInput(sourc
   assert(!p.text.includes("Best practice."),"second n.d. citation leaked");
   assert(p.text.includes("influencer advertising regulation"),"essay body lost");
 }
-console.log("PASS: 22 APA bibliography items including two undated corporate authors; no boundary reviews, zero leakage in AI and filtered similarity.");
+console.log("PASS: 20 APA author-date bibliography items including two undated corporate authors; no boundary reviews, zero leakage in AI and filtered similarity.");
