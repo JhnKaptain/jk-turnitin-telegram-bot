@@ -8065,10 +8065,12 @@ async function notifyReferenceBoundaryReview(job, file, review) {
       callback_data: "JK_REF_BOUNDARY_" + String(candidate.id) + "_" + token
     }]);
   }
-  keyboard.push([{
-    text: "Treat remainder as references (exclude to end)",
-    callback_data: "JK_REF_BOUNDARY_END_" + token
-  }]);
+  if (!review.hasFollowingReferenceSection && !review.hasFollowingSubstantiveSection) {
+    keyboard.push([{
+      text: "Treat remainder as references (exclude to end)",
+      callback_data: "JK_REF_BOUNDARY_END_" + token
+    }]);
+  }
   await bot.telegram.sendMessage(ADMIN_ID, lines.join("\n"), {
     reply_markup: {inline_keyboard: keyboard}
   });
@@ -8101,6 +8103,8 @@ bot.action(/^JK_REF_BOUNDARY_(END|\d{1,2})_([a-f0-9]{20})$/, async ctx => {
 
   let end;
   if (choice === "END") {
+    if (review.hasFollowingReferenceSection || review.hasFollowingSubstantiveSection)
+      return ctx.answerCbQuery("Later assignment content must be preserved.", {show_alert: true});
     end = Number(review.sourceLength);
   } else {
     const candidate = (review.candidates || []).find(c => String(c.id) === choice);
@@ -8163,7 +8167,8 @@ let referenceBoundaryAutoResolveSweepRunning = false;
 async function autoResolveReferenceBoundaryReview(job, file, now = Date.now()) {
   const timeout = require("./jk-reference-review-timeout.cjs");
   if (!timeout.isAutoResolveDue(file, now)) return false;
-  if (file.referenceBoundaryReview?.hasFollowingReferenceSection === true) {
+  if (file.referenceBoundaryReview?.hasFollowingReferenceSection === true ||
+      file.referenceBoundaryReview?.hasFollowingSubstantiveSection === true) {
     file.referenceBoundaryReviewStatus = "MANUAL_REQUIRED";
     file.manualReviewReason = "Later references exist; manual boundary resolution required.";
     savePaidJobs();

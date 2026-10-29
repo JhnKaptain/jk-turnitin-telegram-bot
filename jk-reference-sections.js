@@ -558,6 +558,8 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
         heading: (headingLine?.text || "References").trim().slice(0, 80),
         // Never allow a timeout to swallow another assignment and its references.
         hasFollowingReferenceSection: starts.some(otherStart => otherStart > start),
+        hasFollowingSubstantiveSection: lines.some((record, index) =>
+          record.start > start && isIndependentAssignmentHeading(lines, index)),
         sourceTextSha256,
         sourceLength: source.length,
         reason: decision.reason,
