@@ -95,11 +95,24 @@ function hasReferenceEvidence(source) {
     /\b(?:journal|volume|edition|pp?\.\s*\d|et al\.)\b/i.test(source);
 }
 
+// Explicit labels for independent assignments, not generic publication titles.
+// The following text must actually introduce prose, rather than a new citation.
+function isIndependentAssignmentHeading(lines, index) {
+  const text = String(lines[index]?.text || "").trim();
+  if (!/^(?:Task\s+\d{1,3}(?:\s*[:.\-]\s*|\s+)[^\n]{3,90}|Study\s*:\s*[^\n]{3,75})$/iu.test(text)) return false;
+  const subsequent = lines.slice(index + 1).filter(line => line.text.trim()).slice(0, 3);
+  if (!subsequent.length || isReferenceEntryStart(subsequent[0].text)) return false;
+  const prose = subsequent.map(line => line.text.trim()).join(" ");
+  return looksLikeSubstantiveBody(prose) && prose.length >= 55;
+}
+
 function isLikelySectionHeading(lines, index, start, source) {
   const line = lines[index];
   const text = line.text.trim();
   if (!text || text.length < 3 || text.length > 100) return false;
   if (REFERENCE_HEADING.test(text) || KNOWN_TERMINATOR.test(text)) return false;
+  // Task and Study headings can contain publication years, e.g. Study: Milgram (1963).
+  if (isIndependentAssignmentHeading(lines, index)) return true;
   if (/^(?:https?:\/\/|doi\s*:|www\.)/i.test(text)) return false;
   if (/\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|doi\s*:/i.test(text)) return false;
   if (/^[A-Z][\p{L}'’.-]{1,50},\s/u.test(text)) return false;
@@ -158,6 +171,10 @@ function isReferenceEntryStart(value) {
   // before the date. Match the period directly attached to a publication year
   // rather than stopping at the first abbreviation period.
   if (/^.{2,140}\.\s*\((?:(?:19|20)\d{2}[a-z]?(?:,\s*[^)]*)?|n\.\s*d\.)\)/iu.test(text)) return true;
+
+  // Harvard corporate authors need not put a period before the date:
+  // British Psychological Society (2021) BPS Code of Human Research Ethics.
+  if (/^[A-Z][\p{L}'’.-]+(?:\s+[A-Z][\p{L}'’.-]+){1,9}\s+\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.)\)\s+\S/iu.test(text)) return true;
 
   // Chicago-style references commonly place the year outside parentheses.
   if (/^.{2,140}\.\s+(?:19|20)\d{2}[a-z]?\.\s/u.test(text)) return true;
@@ -539,6 +556,8 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
       reviews.push({
         start,
         heading: (headingLine?.text || "References").trim().slice(0, 80),
+        // Never allow a timeout to swallow another assignment and its references.
+        hasFollowingReferenceSection: starts.some(otherStart => otherStart > start),
         sourceTextSha256,
         sourceLength: source.length,
         reason: decision.reason,
