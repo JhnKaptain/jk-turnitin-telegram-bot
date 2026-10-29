@@ -187,6 +187,10 @@ function looksLikeReferenceContinuation(value) {
   if (/^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return true;
   if (/^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(?:19|20)\d{2}\b/iu.test(text)) return true;
   if (/^(?:(?:international\s+)?journal(?:\s+of)?|proceedings|university|institute|volume|vol\.?|issue|no\.?|pp?\.?|edition|publisher|retrieved(?: from)?|available at|doi\b|https?:|www\.)/iu.test(text)) return true;
+  // A justified APA citation can wrap without a hanging indent. Translator,
+  // editor and publication-number metadata are strong citation continuation
+  // evidence even when abbreviations contain ". Capitalized" punctuation.
+  if (/(?:\([^)]{0,110}\b(?:Trans|Eds?|Publication\s+No)\.[^)]*\)|\[(?:Doctoral\s+dissertation|Master(?:'s|’s)?\s+thesis)\b[^\]]*\])/iu.test(text)) return true;
   if (/^\d+\s*[-–]\s*\d+\s*\.?$/u.test(text)) return true;
   if (/^[a-z]/u.test(text) && text.length <= 180 && !/[.!?]\s+[A-Z]/u.test(text)) return true;
   if (/^(?:annual report|form 10-k|year ended|article\s+\d+|review of|edited by|translated by|edited\b|in\s+.+\(\s*eds?\.?\))/iu.test(text)) return true;
@@ -253,6 +257,11 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
       previousNonblankLine = line;
       continue;
     }
+    // Never mistake a known end-of-bibliography section for an entry continuation.
+    if (entries > 0 && KNOWN_TERMINATOR.test(text)) {
+      add(line.start);
+      break;
+    }
     // After a real visual/structural break, a section heading takes priority.
     // Citation titles like "Introduction to..." without a break remain continuations.
     if (isLikelySectionHeading(lines, i, start, source)) {
@@ -271,19 +280,23 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
       continue;
     }
 
-    if (entries > 0 && KNOWN_TERMINATOR.test(text)) {
-      add(line.start);
-      break;
-    }
-
     const baselineGap = previousNonblankLine &&
       Number.isFinite(line.layoutY) && Number.isFinite(previousNonblankLine.layoutY)
       ? Math.abs(line.layoutY - previousNonblankLine.layoutY) : 0;
     const lineHeight = Math.max(Number(line.layoutHeight || 0), Number(previousNonblankLine?.layoutHeight || 0), 1);
     const visualParagraphBreak = Boolean(line.layoutPage && line.layoutPage === previousNonblankLine?.layoutPage &&
       baselineGap >= lineHeight * 1.5);
+    // Do not offer a publisher/title fragment as the beginning of body text.
+    // Prose must start like an independent paragraph and not lead straight
+    // into another citation. Ambiguous lines have no clickable resume point.
+    const nextText = lines.slice(i + 1).find(record => record.text.trim())?.text.trim() || "";
+    const nextIsCitation = isReferenceEntryStart(nextText) ||
+      /^(?:https?:\/\/|www\.|doi\s*:)/iu.test(nextText);
     if (entries > 0 && visualParagraphBreak &&
-        (looksLikeSubstantiveBody(text) || looksLikeUnheadedBodyLine(text))) {
+        looksLikeUnheadedBodyLine(text) &&
+        !looksLikeReferenceContinuation(text) &&
+        !isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine) &&
+        !nextIsCitation) {
       add(line.start);
       break;
     }
