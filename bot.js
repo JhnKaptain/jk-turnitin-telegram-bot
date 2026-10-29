@@ -8163,6 +8163,12 @@ let referenceBoundaryAutoResolveSweepRunning = false;
 async function autoResolveReferenceBoundaryReview(job, file, now = Date.now()) {
   const timeout = require("./jk-reference-review-timeout.cjs");
   if (!timeout.isAutoResolveDue(file, now)) return false;
+  if (file.referenceBoundaryReview?.hasFollowingReferenceSection === true) {
+    file.referenceBoundaryReviewStatus = "MANUAL_REQUIRED";
+    file.manualReviewReason = "Later references exist; manual boundary resolution required.";
+    savePaidJobs();
+    return false;
+  }
 
   const review = file.referenceBoundaryReview;
   const resultPath = file.providerBundleFile
