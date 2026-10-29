@@ -191,6 +191,7 @@ function looksLikeReferenceContinuation(value) {
   // editor and publication-number metadata are strong citation continuation
   // evidence even when abbreviations contain ". Capitalized" punctuation.
   if (/(?:\([^)]{0,110}\b(?:Trans|Eds?|Publication\s+No)\.[^)]*\)|\[(?:Doctoral\s+dissertation|Master(?:'s|’s)?\s+thesis)\b[^\]]*\])/iu.test(text)) return true;
+  if (/^(?:dissertation|thesis),\s+.{6,180}\]\.?\s+[A-Z][^\n]{5,180}$/iu.test(text)) return true;
   if (/^\d+\s*[-–]\s*\d+\s*\.?$/u.test(text)) return true;
   if (/^[a-z]/u.test(text) && text.length <= 180 && !/[.!?]\s+[A-Z]/u.test(text)) return true;
   if (/^(?:annual report|form 10-k|year ended|article\s+\d+|review of|edited by|translated by|edited\b|in\s+.+\(\s*eds?\.?\))/iu.test(text)) return true;
