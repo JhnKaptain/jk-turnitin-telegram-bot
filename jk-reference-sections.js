@@ -2,8 +2,8 @@
 
 const crypto = require("node:crypto");
 
-const REFERENCE_HEADING = /^(reference list|references?|bibliography|works cited|table of cases|table of legislation)\s*:?\s*$/i;
-const KNOWN_TERMINATOR = /^(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
+const REFERENCE_HEADING = /^(?:\d{1,3}[.)]\s+)?(?:harvard\s+reference\s+list|apa\s+reference\s+list|reference list|references?|bibliography|works cited|table of cases|table of legislation)\s*:?\s*$/i;
+const KNOWN_TERMINATOR = /^(?:\d{1,3}[.)]\s+)?(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
 const STRUCTURAL_FOLLOWER = /^(?:date|context|children|apst|purpose|overview|learning objectives|introduction|background|stimulus behaviour|strategies used|reflection|references|appendix|appendices|table of contents)\s*:?\s*$|^\d+(?:\.\d+)*[.)]?\s+[A-Z]/i;
 
 const SECTION_STOPWORDS = new Set([
@@ -185,11 +185,21 @@ function isReferenceEntryStart(value) {
   // Corporate/institutional authors may contain internal periods ("U.S.")
   // before the date. Match the period directly attached to a publication year
   // rather than stopping at the first abbreviation period.
-  if (/^.{2,140}\.\s*\((?:(?:19|20)\d{2}[a-z]?(?:,\s*[^)]*)?|n\.\s*d\.)\)/iu.test(text)) return true;
+  if (/^.{2,140}\.\s*\((?:(?:19|20)\d{2}[a-z]?(?:,\s*[^)]*)?|n\.\s*d\.(?:-[a-z])?)\)/iu.test(text)) return true;
 
   // Harvard corporate authors need not put a period before the date:
   // British Psychological Society (2021) BPS Code of Human Research Ethics.
-  if (/^[A-Z][\p{L}'’.-]+(?:\s+[A-Z][\p{L}'’.-]+){1,9}\s+\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.)\)\s+\S/iu.test(text)) return true;
+  if (/^[A-Z][\p{L}'’.-]+(?:\s+[A-Z][\p{L}'’.-]+){1,9}\s+\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.(?:-[a-z])?)\)\s+\S/iu.test(text)) return true;
+
+  // Institutional Harvard authors often have no period before the date, may
+  // include a comma in their name, and may use n.d.-a / n.d.-b suffixes.
+  // Restrict this shape to title-case name tokens to avoid absorbing prose.
+  if (/^[\p{Lu}][\p{L}\p{M}\p{N}&.'’\-]{1,60}(?:\s+(?:of|and|for|the|[\p{Lu}][\p{L}\p{M}\p{N}&.'’\-]{1,60})|,\s*[\p{Lu}][\p{L}\p{M}\p{N}&.'’\-]{1,60}){1,15}\s+\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.(?:-[a-z])?)\)\s+\S/iu.test(text)) return true;
+  // Legal company suffixes are lower-case in many Harvard bibliographies.
+  // This covers, for example, Greggs plc (2026), without treating prose as an author.
+  if (/^[\p{Lu}][\p{L}\p{M}\p{N}&.'’\-]{1,60}\s+(?:plc|ltd|inc\.?|llc)\s+\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.(?:-[a-z])?)\)\s+\S/iu.test(text)) return true;
+  // Single-token institutional/organization author, e.g. StataCorp (n.d.-a).
+  if (/^[\p{Lu}][\p{L}\p{M}\p{N}&]{2,65}\s+\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.(?:-[a-z])?)\)\s+\S/iu.test(text)) return true;
 
   // Chicago-style references commonly place the year outside parentheses.
   if (/^.{2,140}\.\s+(?:19|20)\d{2}[a-z]?\.\s/u.test(text)) return true;
@@ -297,6 +307,10 @@ function isStrongPostReferenceProse(lines, index, previousLine, activeEntryLine)
   return !isVisualReferenceContinuation(line, previousLine, activeEntryLine);
 }
 
+function isPageMarkerLine(line) {
+  return /^(?:\d{1,4}|Page\s+\d{1,4}(?:\s+of\s+\d{1,4})?)$/iu.test(String(line?.text || "").trim());
+}
+
 function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
   const offsets = [];
   const add = offset => {
@@ -312,8 +326,12 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
   const candidateIndex = lines.findIndex(line => line.start === firstCandidateOffset);
   if (candidateIndex > 0) {
     const candidate = lines[candidateIndex];
-    const prior = lines.slice(0, candidateIndex).reverse().find(line => line.text.trim());
-    const next = lines.slice(candidateIndex + 1).find(line => line.text.trim());
+    const prior = lines.slice(0, candidateIndex).reverse().find(line => line.text.trim() && !isPageMarkerLine(line));
+    const next = lines.slice(candidateIndex + 1).find(line => line.text.trim() && !isPageMarkerLine(line));
+    const samePageGap = prior && candidate.layoutPage && candidate.layoutPage === prior.layoutPage &&
+      Number.isFinite(candidate.layoutY) && Number.isFinite(prior.layoutY) &&
+      Math.abs(candidate.layoutY - prior.layoutY) >=
+        4 * Math.max(Number(candidate.layoutHeight || 0), Number(prior.layoutHeight || 0), 1);
     const referencesBefore = lines.slice(0, candidateIndex)
       .filter(line => line.start > start && isReferenceEntryStart(line.text)).length;
     const lineText = candidate.text.trim();
@@ -324,7 +342,7 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
     const textLooksLikeProse = (looksLikeSubstantiveBody(lineText) || wordCount >= 10) &&
       /^[A-Z][a-z]/u.test(lineText) &&
       /\b(?:plays?|demonstrates?|shows?|explains?|argues?|provides?|influences?|supports?|requires?|creates?|promotes?|encourages?|enables?|prioritizes?|examines?|helps?)\b/iu.test(lineText);
-    if (referencesBefore >= 2 && (pageBreak || blankBefore) &&
+    if (referencesBefore >= 2 && (pageBreak || blankBefore || samePageGap) &&
         textLooksLikeProse &&
         !isReferenceEntryStart(lineText) &&
         !looksLikeReferenceContinuation(lineText) &&
@@ -341,6 +359,7 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
     const line = lines[i];
     if (line.start <= start || !line.text.trim()) continue;
     const text = line.text.trim();
+    if (isPageMarkerLine(line)) continue;
     if (REFERENCE_HEADING.test(text)) break;
 
     // First identify new reference entries and their continuation lines.
@@ -595,13 +614,50 @@ function inspectBoundary(source, start, lines) {
   };
 }
 
+// Repeated multi-page documents may appear after their own bibliography
+// (for example a PDF with the entire slide deck appended a second time).
+// Require three consecutive, materially populated pages matching an earlier
+// triple before auto-resolving a replayed document boundary. A loose heading guess must
+// never hide the first pages of the repeated document.
+function replayedDocumentStart(start, lines, layoutDocument) {
+  const pages = Array.isArray(layoutDocument?.pages) ? layoutDocument.pages : [];
+  if (pages.length < 5) return null;
+  const heading = lines.find(line => line.start <= start && start <= line.end);
+  const headingPage = Number(heading?.layoutPage || 0);
+  const index = pages.findIndex((page, i) =>
+    Number(page?.pageNumber || i + 1) === headingPage);
+  if (index < 3 || index + 3 >= pages.length) return null;
+  const signatures = pages.map(page => (page?.items || [])
+    .filter(item => Number.isInteger(item?.start) && typeof item?.text === "string")
+    .sort((a, b) => a.start - b.start)
+    .map(item => item.text.trim())
+    .filter(text => text && !/^\d{1,4}$/u.test(text))
+    .join(" ").replace(/\s+/gu, " ").toLowerCase().trim());
+  const a = signatures[index + 1];
+  const b = signatures[index + 2];
+  const c = signatures[index + 3];
+  // Three independent matching pages, not merely a shared title template.
+  if (a.length < 70 || b.length < 100 || c.length < 70 ||
+      a === b || a === c || b === c) return null;
+  for (let prior = 0; prior + 2 < index; prior++) {
+    if (signatures[prior] !== a || signatures[prior + 1] !== b ||
+        signatures[prior + 2] !== c) continue;
+    const offsets = (pages[index + 1].items || [])
+      .map(item => item?.start).filter(Number.isInteger);
+    if (!offsets.length) return null;
+    const offset = Math.min(...offsets);
+    if (offset > start) return offset;
+  }
+  return null;
+}
+
 function inspectReferenceSections(source, fallbackStart = -1, overrides = [], layoutDocument = null) {
   source = String(source || "");
   const lines = lineRecords(source, layoutDocument);
   const sourceTextSha256 = crypto.createHash("sha256").update(source, "utf8").digest("hex");
   const starts = [];
   const seen = new Set();
-  const re = /(^|\n)[ \t]*(reference list|references?|bibliography|works cited|table of cases|table of legislation)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
+  const re = /(^|\n)[ \t]*(?:\d{1,3}[.)][ \t]+)?(harvard[ \t]+reference[ \t]+list|apa[ \t]+reference[ \t]+list|reference list|references?|bibliography|works cited|table of cases|table of legislation)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
   let match;
   while ((match = re.exec(source))) {
     const start = match.index + match[1].length;
@@ -639,6 +695,13 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
       }
       ranges.push({start, end: override.end, manual: true});
       excludedUntil = override.end;
+      continue;
+    }
+
+    const replayStart = replayedDocumentStart(start, lines, layoutDocument);
+    if (Number.isInteger(replayStart)) {
+      ranges.push({start, end: replayStart, manual: false});
+      excludedUntil = replayStart;
       continue;
     }
 
