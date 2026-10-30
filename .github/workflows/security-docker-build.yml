@@ -6,6 +6,7 @@ on:
       - Dockerfile
       - jk-document-extractor.js
       - jk-original-layout.js
+      - test-office-equation-fidelity.cjs
       - jk-pptx-fidelity.cjs
       - .github/workflows/security-docker-build.yml
 
@@ -20,6 +21,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build patched container without modifying Render
         run: docker build --pull --no-cache -t jk-turnitin-security-check .
+      - name: Verify actual Word equations survive conversion and PDF embedding
+        run: docker run --rm --entrypoint node jk-turnitin-security-check test-office-equation-fidelity.cjs
       - name: Confirm exact runtime and CA bundle
         run: |
           docker run --rm --entrypoint node jk-turnitin-security-check --version | grep -Fx v22.23.4
