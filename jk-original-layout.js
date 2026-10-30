@@ -288,11 +288,11 @@ function convertOfficeToPdf(
       profile
     ).href;
 
-  // WPS compatibility is isolated to a temporary copy of eligible DOCX files.
+  // WPS spacing and OMML leading-equals compatibility use a temporary DOCX copy.
   // Unaffected files and all other file formats retain their original paths.
   let compatibilityDir = null;
   let inputPath = originalPath;
-  if (ext === ".docx" && process.env.JK_OFFICE_BLANK_COMPAT !== "0") {
+  if (ext === ".docx" && (process.env.JK_OFFICE_BLANK_COMPAT !== "0" || process.env.JK_OFFICE_MATH_EQUALS_COMPAT !== "0")) {
     try {
       compatibilityDir = fs.mkdtempSync(path.join(os.tmpdir(), "jk-office-layout-"));
       const compatibilityPath = path.join(compatibilityDir, path.basename(originalPath));
