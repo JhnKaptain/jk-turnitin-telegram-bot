@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize WPS blank paragraph sizes in a temporary DOCX copy only.
+"""Normalize selected Office conversion compatibility issues in a temporary DOCX copy.
 
 Use byte-range XML insertions, never XML-tree reserialization, so unfamiliar
 Office namespaces, markup-compatibility instructions and metadata survive.
@@ -13,6 +13,7 @@ from xml.etree import ElementTree as ET
 from xml.parsers.expat import ParserCreate
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+M = '{http://schemas.openxmlformats.org/officeDocument/2006/math}'
 
 
 def explicit_size(paragraph):
@@ -118,6 +119,66 @@ def repair_document(data):
     return result, len(edits)
 
 
+
+def math_ranges(data):
+    """Map m:oMath byte ranges without changing unrelated OOXML."""
+    parser = ParserCreate()
+    opened = []
+    ranges = []
+
+    def start(name, _attributes):
+        if name == 'm:oMath':
+            opened.append(parser.CurrentByteIndex)
+
+    def end(name):
+        if name == 'm:oMath':
+            at = parser.CurrentByteIndex
+            stop = data.find(b'>', at) + 1
+            if stop <= 0 or data[at:stop] != b'</m:oMath>':
+                raise ValueError('Unexpected OMML closing tag')
+            ranges.append((opened.pop(), stop))
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.Parse(data, True)
+    return sorted(ranges)
+
+
+def repair_leading_equation_equals(data):
+    """Prevent LibreOffice Math interpreting a leading = as a missing left operand.
+
+    The invisible U+2060 WORD JOINER remains inside a *temporary* OMML text run.
+    This lets LibreOffice display and extract the original '=' rather than '¿'.
+    Limit edits to the first direct m:r/m:t of an OMML equation; do not alter
+    embedded fractions, later equals signs, prose, formatting or original bytes.
+    """
+    if b'<m:oMath>' not in data or b'=' not in data:
+        return data, 0
+    root = ET.fromstring(data)
+    equations = list(root.iter(M + 'oMath'))
+    ranges = math_ranges(data)
+    if len(equations) != len(ranges):
+        raise ValueError('OMML byte-range mapping mismatch')
+    edits = []
+    for equation, (start, stop) in zip(equations, ranges):
+        parts = list(equation)
+        if not parts or parts[0].tag != M + 'r':
+            continue
+        token = parts[0].find(M + 't')
+        if token is None or not (token.text or '').startswith('='):
+            continue
+        first = re.search(rb'<m:t(?:\s[^>]*)?>(.*?)</m:t>', data[start:stop], re.S)
+        if first is not None and first.group(1).startswith(b'='):
+            edits.append(start + first.start(1))
+    if not edits:
+        return data, 0
+    result = data
+    for offset in reversed(edits):
+        result = result[:offset] + b'\xe2\x81\xa0' + result[offset:]
+    ET.fromstring(result)
+    return result, len(edits)
+
+
 def main():
     if len(sys.argv) != 3:
         raise ValueError('Usage: script.py source.docx temporary-copy.docx')
@@ -127,9 +188,16 @@ def main():
     with zipfile.ZipFile(src, 'r') as archive:
         if 'word/document.xml' not in archive.namelist():
             raise ValueError('Missing Word document part')
-        fixed_xml, changed = repair_document(archive.read('word/document.xml'))
-        if not changed:
-            print(json.dumps({'normalized_blank_paragraphs': 0}))
+        original_xml = archive.read('word/document.xml')
+        fixed_xml, changed = (repair_document(original_xml)
+                              if os.environ.get('JK_OFFICE_BLANK_COMPAT') != '0'
+                              else (original_xml, 0))
+        fixed_xml, math_changed = (repair_leading_equation_equals(fixed_xml)
+                                   if os.environ.get('JK_OFFICE_MATH_EQUALS_COMPAT') != '0'
+                                   else (fixed_xml, 0))
+        if not changed and not math_changed:
+            print(json.dumps({'normalized_blank_paragraphs': 0,
+                              'normalized_math_leading_equals': 0}))
             return
         # Never change the base directory of relative external resources.
         for item in archive.namelist():
@@ -146,7 +214,8 @@ def main():
             for entry in archive.infolist():
                 content = fixed_xml if entry.filename == 'word/document.xml' else archive.read(entry.filename)
                 output.writestr(entry, content)
-    print(json.dumps({'normalized_blank_paragraphs': changed}))
+    print(json.dumps({'normalized_blank_paragraphs': changed,
+                      'normalized_math_leading_equals': math_changed}))
 
 
 if __name__ == '__main__':
