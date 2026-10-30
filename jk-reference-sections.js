@@ -99,6 +99,21 @@ function hasReferenceEvidence(source) {
 // The following text must actually introduce prose, rather than a new citation.
 function isIndependentAssignmentHeading(lines, index) {
   const text = String(lines[index]?.text || "").trim();
+  // A new mini-case often begins with numbered questions and formula images,
+  // not a prose paragraph. Recognize its explicit title only when the next
+  // text is a question and the layout proves a separate section.
+  if (/^mini[\s-]*case\s+\d{1,3}(?:\s*[:.\-]\s*[^\n]{1,80})?$/iu.test(text)) {
+    const headingLine = lines[index];
+    const next = lines.slice(index + 1).find(line => line.text.trim());
+    const previous = lines.slice(0, index).reverse().find(line => line.text.trim());
+    if (!next || !/^question\s+\d{1,3}\b/iu.test(next.text.trim())) return false;
+    const startsNewPage = Number(headingLine?.layoutPage || 0) > 0 &&
+      Number(previous?.layoutPage || 0) > 0 &&
+      headingLine.layoutPage !== previous.layoutPage;
+    const isCenteredHeading = Number.isFinite(headingLine?.layoutX) &&
+      Number.isFinite(next.layoutX) && headingLine.layoutX >= next.layoutX + 45;
+    return startsNewPage || isCenteredHeading;
+  }
   if (!/^(?:Task\s+\d{1,3}(?:\s*[:.\-]\s*|\s+)[^\n]{3,90}|Study\s*:\s*[^\n]{3,75})$/iu.test(text)) return false;
   const subsequent = lines.slice(index + 1).filter(line => line.text.trim()).slice(0, 3);
   if (!subsequent.length || isReferenceEntryStart(subsequent[0].text)) return false;
