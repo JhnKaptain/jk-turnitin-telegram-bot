@@ -8056,7 +8056,8 @@ async function notifyReferenceBoundaryReview(job, file, review) {
     "",
     "No Quetext or Sapling request was made for this file.",
     "Choose the first text that should be INCLUDED after the references.",
-    "After 10 minutes, the file will stay paused for manual review. No provider requests will be made automatically."
+    "You have 10 minutes to select the correct inclusion point or cancel this file.",
+    "Otherwise the remaining text will automatically be treated as references, and provider submission will resume."
   ];
   const keyboard = [];
   for (const candidate of (review.candidates || []).slice(0, 3)) {
@@ -8232,17 +8233,55 @@ let referenceBoundaryAutoResolveSweepRunning = false;
 async function autoResolveReferenceBoundaryReview(job, file, now = Date.now()) {
   const timeout = require("./jk-reference-review-timeout.cjs");
   if (!timeout.isAutoResolveDue(file, now)) return false;
+
   const review = file.referenceBoundaryReview;
-  review.timeoutExpiredAt = now;
-  review.autoResolveBlockedReason = "Manual boundary selection is required; no automatic provider submission.";
-  file.manualReviewRequired = true;
-  file.manualReviewReason = review.autoResolveBlockedReason;
-  file.providerStatus = "MANUAL_REQUIRED";
-  // Keep PENDING_ADMIN so the existing review buttons remain actionable.
+  const resultPath = file.providerBundleFile
+    ? file.providerBundleFile + ".provider-results.json"
+    : null;
+
+  // Only resume a file with a genuinely unanswered review and no provider
+  // submission or saved results. A cancelled file is never eligible.
+  if (file.referenceBoundaryReviewStatus !== "PENDING_ADMIN" ||
+      file.referenceReviewNoProviderRequests !== true ||
+      file.providerAutoResubmitBlocked ||
+      file.providerQuetextReportId ||
+      file.providerSubmittedAt ||
+      file.providerResultsFile ||
+      (resultPath && fs.existsSync(resultPath))) {
+    review.autoResolveBlockedAt = review.autoResolveBlockedAt || now;
+    review.autoResolveBlockedReason = "Existing provider activity or cancelled file prevents automatic submission.";
+    file.providerStatus = "MANUAL_REQUIRED";
+    file.manualReviewRequired = true;
+    file.manualReviewReason = review.autoResolveBlockedReason;
+    savePaidJobs();
+    return false;
+  }
+
+  const overrides = Array.isArray(file.referenceBoundaryOverrides)
+    ? file.referenceBoundaryOverrides.filter(item => Number(item.start) !== Number(review.start))
+    : [];
+  overrides.push(timeout.makeTreatRemainderAsReferencesOverride(review, now));
+
+  // Persist the decision and clear the pending status BEFORE scheduling any
+  // provider work. This prevents timer ticks or restarts submitting twice.
+  file.referenceBoundaryOverrides = overrides;
+  review.automaticDecision = "TREAT_REMAINDER_AS_REFERENCES";
+  review.autoResolvedAt = now;
+  file.referenceBoundaryReviewStatus = "AUTO_RESOLVED";
+  file.referenceBoundaryReviewedAt = now;
+  file.referenceBoundaryReviewedBy = "AUTO_TIMEOUT_TREAT_REMAINDER_AS_REFERENCES";
+  file.referenceReviewNoProviderRequests = false;
+  file.manualReviewRequired = false;
+  file.manualReviewReason = null;
+  file.providerError = null;
+  file.providerStatus = "QUEUED";
+  file.referenceBoundaryAutoResolveCancelledAt = null;
   savePaidJobs();
-  await sendAdminMessage("REFERENCE REVIEW STILL PAUSED\nFile: " +
-    safeText(file.file_name || "N/A") +
-    "\nTen-minute review period expired. No provider request was made. Use the original review buttons to select or cancel.");
+
+  setImmediate(() => submitPaidJobToActiveProvider(job.jobId).catch(error => {
+    sendAdminMessage("Automatic reference-review resume failed for " +
+      safeText(file.file_name || "N/A") + ": " + safeText(error.message));
+  }));
   return true;
 }
 
