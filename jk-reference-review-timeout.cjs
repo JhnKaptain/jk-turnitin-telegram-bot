@@ -13,7 +13,6 @@ function getAutoResolveAt(review, now = Date.now()) {
 function isAutoResolveDue(file, now = Date.now()) {
   if (String(file?.referenceBoundaryReviewStatus || "") !== "PENDING_ADMIN") return false;
   if (file?.referenceReviewNoProviderRequests !== true) return false;
-  if (file?.referenceBoundaryReview?.timeoutExpiredAt) return false;
   const review = file?.referenceBoundaryReview;
   if (!review ||
       !Number.isInteger(review.start) ||

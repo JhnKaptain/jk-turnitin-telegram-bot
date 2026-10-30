@@ -8,10 +8,10 @@ const inspected=inspectReferenceSections(source);
 const bot=fs.readFileSync(require.resolve("./bot.js"),"utf8");
 assert(bot.includes("if (!review.hasFollowingReferenceSection && !review.hasFollowingSubstantiveSection)"));
 assert(bot.includes('return ctx.answerCbQuery("Later assignment content must be preserved."'));
-assert(bot.includes("review.timeoutExpiredAt = now"));
-assert(!bot.includes('timeout.makeTreatRemainderAsReferencesOverride(review, now)'));
+assert(bot.includes("review.autoResolvedAt = now"));
+assert(bot.includes('timeout.makeTreatRemainderAsReferencesOverride(review, now)'));
 const ambiguities=inspected.reviews;
 for(const review of ambiguities){
  assert(review.hasFollowingSubstantiveSection===true,"Later Task section should block exclude-to-end");
 }
-console.log("PASS: later task headings guard review actions and timeout; client scan types unchanged.");
+console.log("PASS: later task headings guard manual end action; pending timeout still resumes as configured.");
