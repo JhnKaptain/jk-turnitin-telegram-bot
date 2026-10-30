@@ -616,8 +616,8 @@ function inspectBoundary(source, start, lines) {
 
 // Repeated multi-page documents may appear after their own bibliography
 // (for example a PDF with the entire slide deck appended a second time).
-// Only two consecutive, materially populated pages matching an earlier page
-// pair justify a VERIFIED new document boundary. A loose heading guess must
+// Require three consecutive, materially populated pages matching an earlier
+// triple before auto-resolving a replayed document boundary. A loose heading guess must
 // never hide the first pages of the repeated document.
 function replayedDocumentStart(start, lines, layoutDocument) {
   const pages = Array.isArray(layoutDocument?.pages) ? layoutDocument.pages : [];
@@ -626,7 +626,7 @@ function replayedDocumentStart(start, lines, layoutDocument) {
   const headingPage = Number(heading?.layoutPage || 0);
   const index = pages.findIndex((page, i) =>
     Number(page?.pageNumber || i + 1) === headingPage);
-  if (index < 2 || index + 2 >= pages.length) return null;
+  if (index < 3 || index + 3 >= pages.length) return null;
   const signatures = pages.map(page => (page?.items || [])
     .filter(item => Number.isInteger(item?.start) && typeof item?.text === "string")
     .sort((a, b) => a.start - b.start)
@@ -635,10 +635,13 @@ function replayedDocumentStart(start, lines, layoutDocument) {
     .join(" ").replace(/\s+/gu, " ").toLowerCase().trim());
   const a = signatures[index + 1];
   const b = signatures[index + 2];
-  // Both matching pages must be substantive and distinct.
-  if (a.length < 70 || b.length < 100 || a === b) return null;
-  for (let prior = 0; prior + 1 < index; prior++) {
-    if (signatures[prior] !== a || signatures[prior + 1] !== b) continue;
+  const c = signatures[index + 3];
+  // Three independent matching pages, not merely a shared title template.
+  if (a.length < 70 || b.length < 100 || c.length < 70 ||
+      a === b || a === c || b === c) return null;
+  for (let prior = 0; prior + 2 < index; prior++) {
+    if (signatures[prior] !== a || signatures[prior + 1] !== b ||
+        signatures[prior + 2] !== c) continue;
     const offsets = (pages[index + 1].items || [])
       .map(item => item?.start).filter(Number.isInteger);
     if (!offsets.length) return null;
