@@ -7,6 +7,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates \
        libreoffice-writer \
+       libreoffice-math \
        libreoffice-impress \
        python3 \
        fontconfig \
