@@ -8091,6 +8091,8 @@ bot.command("cancelref", async ctx => {
   if (pending.length !== 1)
     return ctx.reply("Job must have exactly one pending reference review.");
   const file = pending[0];
+  if (Date.now() >= Number(file.referenceBoundaryReview?.autoResolveAt || 0))
+    return ctx.reply("Ten-minute review window elapsed. Automatic submission is pending.");
   const resultPath = file.providerBundleFile
     ? file.providerBundleFile + ".provider-results.json" : null;
   if (!file.referenceReviewNoProviderRequests || file.providerSubmittedAt ||
@@ -8117,6 +8119,8 @@ bot.action(/^JK_REF_BOUNDARY_CANCEL_([a-f0-9]{20})$/, async ctx => {
   const found = findPendingReferenceBoundaryReview(ctx.match[1]);
   if (!found) return ctx.answerCbQuery("Review already handled or expired.", {show_alert: true});
   const {job, file, review} = found;
+  if (Date.now() >= Number(review.autoResolveAt || 0))
+    return ctx.answerCbQuery("Ten-minute review window elapsed.", {show_alert: true});
   const resultPath = file.providerBundleFile
     ? file.providerBundleFile + ".provider-results.json" : null;
   if (!file.referenceReviewNoProviderRequests ||
