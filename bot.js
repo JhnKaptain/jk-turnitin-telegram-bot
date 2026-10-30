@@ -8090,8 +8090,11 @@ bot.command("cancelref", async ctx => {
   if (pending.length !== 1)
     return ctx.reply("Job must have exactly one pending reference review.");
   const file = pending[0];
+  const resultPath = file.providerBundleFile
+    ? file.providerBundleFile + ".provider-results.json" : null;
   if (!file.referenceReviewNoProviderRequests || file.providerSubmittedAt ||
-      file.providerQuetextReportId || file.providerResultsFile)
+      file.providerQuetextReportId || file.providerResultsFile ||
+      (resultPath && fs.existsSync(resultPath)))
     return ctx.reply("Provider work already started or review is unavailable.");
   file.referenceBoundaryReviewStatus = "CANCELLED";
   file.providerStatus = "CANCELLED";
