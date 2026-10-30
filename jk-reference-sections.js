@@ -261,6 +261,37 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
   let entries = 0;
   let activeEntryLine = null;
   let previousNonblankLine = lines.find(line => line.start <= start && start <= line.end) || null;
+  // An unheaded essay may restart on the page after a long bibliography.
+  // Check the detector's original ambiguous offset for sustained prose;
+  // offer it for manual approval, but never silently choose it.
+  const candidateIndex = lines.findIndex(line => line.start === firstCandidateOffset);
+  if (candidateIndex > 0) {
+    const candidate = lines[candidateIndex];
+    const prior = lines.slice(0, candidateIndex).reverse().find(line => line.text.trim());
+    const next = lines.slice(candidateIndex + 1).find(line => line.text.trim());
+    const referencesBefore = lines.slice(0, candidateIndex)
+      .filter(line => line.start > start && isReferenceEntryStart(line.text)).length;
+    const lineText = candidate.text.trim();
+    const pageBreak = prior && candidate.layoutPage && prior.layoutPage &&
+      candidate.layoutPage !== prior.layoutPage;
+    const blankBefore = !lines[candidateIndex - 1].text.trim();
+    const wordCount = (lineText.match(/[\p{L}\p{N}]+/gu) || []).length;
+    const textLooksLikeProse = (looksLikeSubstantiveBody(lineText) || wordCount >= 10) &&
+      /^[A-Z][a-z]/u.test(lineText) &&
+      /\b(?:plays?|demonstrates?|shows?|explains?|argues?|provides?|influences?|supports?|requires?|creates?|promotes?|encourages?|enables?|prioritizes?|examines?|helps?)\b/iu.test(lineText);
+    if (referencesBefore >= 2 && (pageBreak || blankBefore) &&
+        textLooksLikeProse &&
+        !isReferenceEntryStart(lineText) &&
+        !looksLikeReferenceContinuation(lineText) &&
+        next && next.text.trim().length >= 25 &&
+        !isReferenceEntryStart(next.text.trim())) {
+      add(candidate.start);
+      return offsets.map((offset, index) => ({
+        id: index + 1, offset, preview: candidatePreview(source, offset)
+      }));
+    }
+  }
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.start <= start || !line.text.trim()) continue;
