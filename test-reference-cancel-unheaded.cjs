@@ -32,6 +32,7 @@ const report=inspectReferenceSections(text,-1,[],layout);
 assert.equal(report.ranges.length,0,"Ambiguous end must not be silently removed");
 assert.equal(report.reviews.length,1,JSON.stringify(report.reviews));
 assert.equal(report.reviews[0].entriesFound,14);
+console.log("CANDIDATE_DIAG",JSON.stringify(report.reviews.map(x=>({reason:x.reason,entries:x.entriesFound,candidates:x.candidates?.map(y=>({offset:y.offset,preview:y.preview})),expected:text.indexOf(restart)}))));
 assert.equal(report.reviews[0].candidates[0]?.offset,text.indexOf(restart),
   "Offer beginning of actual prose, not last reference or a missing option");
 assert.throws(()=>scan.buildAiInput(text,layout),e=>e?.code==="REFERENCE_BOUNDARY_REVIEW_REQUIRED");
