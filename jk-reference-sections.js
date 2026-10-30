@@ -275,7 +275,8 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
     const pageBreak = prior && candidate.layoutPage && prior.layoutPage &&
       candidate.layoutPage !== prior.layoutPage;
     const blankBefore = !lines[candidateIndex - 1].text.trim();
-    const textLooksLikeProse = looksLikeSubstantiveBody(lineText) &&
+    const wordCount = (lineText.match(/[\p{L}\p{N}]+/gu) || []).length;
+    const textLooksLikeProse = (looksLikeSubstantiveBody(lineText) || wordCount >= 10) &&
       /^[A-Z][a-z]/u.test(lineText) &&
       /\b(?:plays?|demonstrates?|shows?|explains?|argues?|provides?|influences?|supports?|requires?|creates?|promotes?|encourages?|enables?|prioritizes?|examines?|helps?)\b/iu.test(lineText);
     if (referencesBefore >= 2 && (pageBreak || blankBefore) &&
