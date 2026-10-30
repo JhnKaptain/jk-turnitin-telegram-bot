@@ -252,6 +252,36 @@ function candidatePreview(source, offset) {
     .replace(/\s+/gu, " ").trim().slice(0, 180);
 }
 
+// A reference list can end mid-page, with substantial whitespace before a
+// new unheaded paragraph.  Detect the transition using actual PDF geometry.
+// The start must be a complete prose sentence after bibliographic metadata;
+// this is used for an admin REVIEW, never an automatic exclusion.
+function isStrongPostReferenceProse(lines, index, previousLine, activeEntryLine) {
+  const line = lines[index];
+  const text = String(line?.text || "").trim();
+  if (!line || !previousLine || !activeEntryLine ||
+      isReferenceEntryStart(text) || looksLikeReferenceContinuation(text) ||
+      !/^[A-Z][a-z]/u.test(text)) return false;
+  const words = text.match(/[\\p{L}\\p{N}]+/gu) || [];
+  if (words.length < 9 ||
+      !/\\b(?:plays?|demonstrates?|shows?|explains?|argues?|provides?|influences?|supports?|requires?|creates?|promotes?|encourages?|enables?|prioritizes?|examines?|helps?|sets?|involves?|affects?)\\b/iu.test(text)) return false;
+  const next = lines.slice(index + 1).find(item => item.text.trim());
+  if (!next || next.text.trim().length < 25 ||
+      isReferenceEntryStart(next.text.trim()) ||
+      /^(?:https?:\\/\\/|www\\.|doi\\s*:)/iu.test(next.text.trim())) return false;
+  const pageGap = Number(line.layoutPage || 0) !== Number(previousLine.layoutPage || 0) &&
+    Number(line.layoutPage || 0) > 0 && Number(previousLine.layoutPage || 0) > 0;
+  const height = Math.max(Number(line.layoutHeight || 0), Number(previousLine.layoutHeight || 0), 1);
+  const hugeSamePageGap = Number(line.layoutPage || 0) > 0 &&
+    line.layoutPage === previousLine.layoutPage &&
+    Number.isFinite(line.layoutY) && Number.isFinite(previousLine.layoutY) &&
+    Math.abs(line.layoutY - previousLine.layoutY) >= height * 4;
+  if (!pageGap && !hugeSamePageGap) return false;
+  const precedingText = previousLine.text.trim();
+  if (!/(?:https?:\\/\\/|doi\\b|\\bAvailable at\\b|\\d[.)]\\s*$)/iu.test(precedingText)) return false;
+  return !isVisualReferenceContinuation(line, previousLine, activeEntryLine);
+}
+
 function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
   const offsets = [];
   const add = offset => {
@@ -320,6 +350,12 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
       }
       previousNonblankLine = line;
       continue;
+    }
+
+    if (entries >= 2 &&
+        isStrongPostReferenceProse(lines, i, previousNonblankLine, activeEntryLine)) {
+      add(line.start);
+      break;
     }
 
     if (entries > 0 &&
@@ -458,6 +494,16 @@ function inspectBoundary(source, start, lines) {
         return {status: "REVIEW", reason: "Text between the last reference and the following heading remains ambiguous.", candidateOffset: firstCandidate, entriesFound};
       }
       return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
+    }
+
+    // A same-page multi-paragraph whitespace gap after the final DOI may
+    // introduce new unheaded substantive writing, even with no blank lines.
+    // Require administrator review at the EXACT first prose line.
+    if (entriesFound >= 2 &&
+        isStrongPostReferenceProse(lines, i, previousNonblankLine, activeEntryLine)) {
+      return {status: "REVIEW",
+        reason: "Substantive prose resumes after a large visual gap following references.",
+        candidateOffset: line.start, entriesFound};
     }
 
     // Even when a new citation immediately follows, a long independent
