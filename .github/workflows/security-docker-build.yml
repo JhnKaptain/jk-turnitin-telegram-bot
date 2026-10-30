@@ -6,6 +6,7 @@ on:
       - Dockerfile
       - jk-document-extractor.js
       - jk-original-layout.js
+      - jk-office-empty-paragraph-compat.py
       - test-office-equation-fidelity.cjs
       - jk-pptx-fidelity.cjs
       - .github/workflows/security-docker-build.yml
