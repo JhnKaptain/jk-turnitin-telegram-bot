@@ -8,7 +8,8 @@ const inspected=inspectReferenceSections(source);
 const bot=fs.readFileSync(require.resolve("./bot.js"),"utf8");
 assert(bot.includes("if (!review.hasFollowingReferenceSection && !review.hasFollowingSubstantiveSection)"));
 assert(bot.includes('return ctx.answerCbQuery("Later assignment content must be preserved."'));
-assert(bot.includes("file.referenceBoundaryReview?.hasFollowingSubstantiveSection === true"));
+assert(bot.includes("review.timeoutExpiredAt = now"));
+assert(!bot.includes('timeout.makeTreatRemainderAsReferencesOverride(review, now)'));
 const ambiguities=inspected.reviews;
 for(const review of ambiguities){
  assert(review.hasFollowingSubstantiveSection===true,"Later Task section should block exclude-to-end");
