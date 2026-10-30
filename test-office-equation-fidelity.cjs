@@ -29,6 +29,7 @@ document = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:body>
 <w:p><w:r><w:t>Source equation integrity test</w:t></w:r></w:p>
 <w:p><m:oMathPara><m:oMath><m:f><m:num><m:r><m:t>271828</m:t></m:r></m:num><m:den><m:r><m:t>314159</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara></w:p>
+<w:p><m:oMathPara><m:oMath><m:r><m:t>=620418</m:t></m:r></m:oMath></m:oMathPara></w:p>
 <w:p><w:r><w:t>End of test</w:t></w:r></w:p>
 <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
 </w:body></w:document>'''
@@ -53,6 +54,8 @@ async function run() {
     assert(text.includes("Sourceequationintegritytest"), "Normal prose was lost");
     assert(text.includes("271828"), "Word equation numerator was lost");
     assert(text.includes("314159"), "Word equation denominator was lost");
+    assert(text.includes("=620418"), "Leading equals sign was corrupted in canonical source PDF");
+    assert(!text.includes("¿"), "LibreOffice emitted inverted-question-mark math placeholder");
     assert(text.includes("Endoftest"), "Post-equation prose was lost");
 
     // The reports use pdf-lib embedPdf + drawPage. Guard this exact pathway too.
@@ -68,8 +71,10 @@ async function run() {
     const reportText = report.text.replace(/\s+/g, "");
     assert(reportText.includes("271828"), "Equation numerator missing after report PDF embedding");
     assert(reportText.includes("314159"), "Equation denominator missing after report PDF embedding");
+    assert(reportText.includes("=620418"), "Leading equals sign was corrupted after PDF embedding");
+    assert(!reportText.includes("¿"), "Math placeholder survived in embedded report");
     assert(reportText.includes("Endoftest"), "Normal prose missing after report PDF embedding");
-    console.log("PASS: Word OMML fraction and adjacent prose survive source conversion and report PDF embedding.");
+    console.log("PASS: Word OMML fraction, leading equals and prose survive source conversion and report PDF embedding.");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
