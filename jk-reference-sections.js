@@ -195,6 +195,9 @@ function isReferenceEntryStart(value) {
   // include a comma in their name, and may use n.d.-a / n.d.-b suffixes.
   // Restrict this shape to title-case name tokens to avoid absorbing prose.
   if (/^[\p{Lu}][\p{L}\p{M}\p{N}&.'’\-]{1,60}(?:\s+(?:of|and|for|the|[\p{Lu}][\p{L}\p{M}\p{N}&.'’\-]{1,60})|,\s*[\p{Lu}][\p{L}\p{M}\p{N}&.'’\-]{1,60}){1,15}\s+\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.(?:-[a-z])?)\)\s+\S/iu.test(text)) return true;
+  // Legal company suffixes are lower-case in many Harvard bibliographies.
+  // This covers, for example, Greggs plc (2026), without treating prose as an author.
+  if (/^[\p{Lu}][\p{L}\p{M}\p{N}&.'’\-]{1,60}\s+(?:plc|ltd|inc\.?|llc)\s+\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.(?:-[a-z])?)\)\s+\S/iu.test(text)) return true;
   // Single-token institutional/organization author, e.g. StataCorp (n.d.-a).
   if (/^[\p{Lu}][\p{L}\p{M}\p{N}&]{2,65}\s+\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.(?:-[a-z])?)\)\s+\S/iu.test(text)) return true;
 
