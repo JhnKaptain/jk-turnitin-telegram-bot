@@ -8080,6 +8080,32 @@ async function notifyReferenceBoundaryReview(job, file, review) {
   });
 }
 
+bot.command("cancelref", async ctx => {
+  if (Number(ctx.from?.id) !== ADMIN_ID) return;
+  const jobId = String(ctx.message?.text || "").trim().split(/\s+/u)[1];
+  const job = paidJobs[jobId];
+  if (!job) return ctx.reply("Usage: /cancelref JOB_ID");
+  const pending = (job.files || []).filter(file =>
+    file.referenceBoundaryReviewStatus === "PENDING_ADMIN");
+  if (pending.length !== 1)
+    return ctx.reply("Job must have exactly one pending reference review.");
+  const file = pending[0];
+  if (!file.referenceReviewNoProviderRequests || file.providerSubmittedAt ||
+      file.providerQuetextReportId || file.providerResultsFile)
+    return ctx.reply("Provider work already started or review is unavailable.");
+  file.referenceBoundaryReviewStatus = "CANCELLED";
+  file.providerStatus = "CANCELLED";
+  file.referenceReviewNoProviderRequests = false;
+  file.providerAutoResubmitBlocked = true;
+  file.referenceBoundaryAutoResolveCancelledAt = Date.now();
+  file.referenceBoundaryReview.cancelledAt = Date.now();
+  file.manualReviewRequired = false;
+  file.manualReviewReason = null;
+  savePaidJobs();
+  return ctx.reply("Reference review cancelled for " +
+    safeText(file.file_name || "file") + ". No API calls were made.");
+});
+
 // Administrator may stop an individual pending file before any paid API call.
 bot.action(/^JK_REF_BOUNDARY_CANCEL_([a-f0-9]{20})$/, async ctx => {
   if (Number(ctx.from?.id) !== ADMIN_ID)
