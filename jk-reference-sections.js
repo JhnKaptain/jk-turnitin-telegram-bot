@@ -262,13 +262,13 @@ function isStrongPostReferenceProse(lines, index, previousLine, activeEntryLine)
   if (!line || !previousLine || !activeEntryLine ||
       isReferenceEntryStart(text) || looksLikeReferenceContinuation(text) ||
       !/^[A-Z][a-z]/u.test(text)) return false;
-  const words = text.match(/[\\p{L}\\p{N}]+/gu) || [];
+  const words = text.match(/[\p{L}\p{N}]+/gu) || [];
   if (words.length < 9 ||
-      !/\\b(?:plays?|demonstrates?|shows?|explains?|argues?|provides?|influences?|supports?|requires?|creates?|promotes?|encourages?|enables?|prioritizes?|examines?|helps?|sets?|involves?|affects?)\\b/iu.test(text)) return false;
+      !/\b(?:plays?|demonstrates?|shows?|explains?|argues?|provides?|influences?|supports?|requires?|creates?|promotes?|encourages?|enables?|prioritizes?|examines?|helps?|sets?|involves?|affects?)\b/iu.test(text)) return false;
   const next = lines.slice(index + 1).find(item => item.text.trim());
   if (!next || next.text.trim().length < 25 ||
       isReferenceEntryStart(next.text.trim()) ||
-      /^(?:https?:\\/\\/|www\\.|doi\\s*:)/iu.test(next.text.trim())) return false;
+      /^(?:https?:\/\/|www\.|doi\s*:)/iu.test(next.text.trim())) return false;
   const pageGap = Number(line.layoutPage || 0) !== Number(previousLine.layoutPage || 0) &&
     Number(line.layoutPage || 0) > 0 && Number(previousLine.layoutPage || 0) > 0;
   const height = Math.max(Number(line.layoutHeight || 0), Number(previousLine.layoutHeight || 0), 1);
@@ -278,7 +278,7 @@ function isStrongPostReferenceProse(lines, index, previousLine, activeEntryLine)
     Math.abs(line.layoutY - previousLine.layoutY) >= height * 4;
   if (!pageGap && !hugeSamePageGap) return false;
   const precedingText = previousLine.text.trim();
-  if (!/(?:https?:\\/\\/|doi\\b|\\bAvailable at\\b|\\d[.)]\\s*$)/iu.test(precedingText)) return false;
+  if (!/(?:https?:\/\/|doi\b|\bAvailable at\b|\d[.)]\s*$)/iu.test(precedingText)) return false;
   return !isVisualReferenceContinuation(line, previousLine, activeEntryLine);
 }
 
