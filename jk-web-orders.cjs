@@ -379,7 +379,7 @@ function createWebOrders(d) {
       similarityFilter: f.type ? f.similarityFilter || null : null
     }));
     return {
-      orderId: order.id, stage, createdAt: order.createdAt,
+      orderId: order.id, stage, createdAt: order.createdAt, deleted: Boolean(order.deletedAt),
       amount: sub?.amount ?? order.amount ?? null, currency: "KES",
       summary: order.summary || null, files,
       payment: ref ? { status: ref.status || "PENDING", invoiceId: ref.invoiceId || null } : null,
@@ -466,6 +466,28 @@ function createWebOrders(d) {
     telegram.__jkWebOrdersRouted = true;
   }
 
+  // Customer-requested deletion of their documents and reports from the
+  // website storage. Refused while the bot still needs the files.
+  function deleteData(order) {
+    const stage = statusFor(order).stage;
+    if (!["DELIVERED", "CANCELLED", "DRAFT", "PAYMENT_FAILED"].includes(stage)) {
+      const e = new Error(stage === "PARTLY_DELIVERED" || stage === "PROCESSING"
+        ? "Your reports are still being prepared. You can delete your files once they are delivered."
+        : "Files can be deleted once your reports are delivered."); e.status = 409; throw e;
+    }
+    if (stage === "PAYMENT_FAILED" || stage === "DRAFT") cancel(order);
+    try { fs.rmSync(orderDir(order.id), { recursive: true, force: true }); } catch {}
+    for (const upload of order.uploads) { upload.removed = true; upload.name = "deleted"; }
+    for (const report of order.reports) { report.purged = true; report.name = "deleted"; }
+    const sub = d.submissions[order.uid];
+    if (sub) delete d.submissions[order.uid];
+    order.files = (order.files || []).map(f => ({ ...f, file_name: "deleted" }));
+    order.messages = [];
+    order.deletedAt = Date.now();
+    save();
+    return statusFor(order);
+  }
+
   function markDelivered(uid) {
     const order = orderByUid(uid);
     if (order && order.reports.length) { order.deliveredAt = Date.now(); save(); }
@@ -494,7 +516,7 @@ function createWebOrders(d) {
     return { file: path.join(orderDir(order.id), "reports", report.stored), name: report.name };
   }
 
-  return { newOrder, authorize, addUpload, removeUpload, checkout, resend, cancel, statusFor, reportFile,
+  return { newOrder, authorize, addUpload, removeUpload, checkout, resend, cancel, deleteData, statusFor, reportFile,
     readWebFile, installTelegramRouting, markDelivered, prune, orderById: id => store.orders[id] || null,
     orderByUid, uidForOrder: id => store.orders[String(id || "").trim()]?.uid || null };
 }
@@ -561,6 +583,10 @@ function installWebOrders(d) {
   app.post("/api/web/orders/:id/cancel", handle(async (req, res) => {
     const order = orders.authorize(req.params.id, token(req));
     res.json({ status: orders.cancel(order) });
+  }));
+  app.post("/api/web/orders/:id/delete", handle(async (req, res) => {
+    const order = orders.authorize(req.params.id, token(req));
+    res.json({ status: orders.deleteData(order) });
   }));
   app.get("/api/web/orders/:id", handle(async (req, res) => {
     const order = orders.authorize(req.params.id, token(req));
