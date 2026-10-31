@@ -208,6 +208,13 @@ function isReferenceEntryStart(value) {
   // name without a preceding period (e.g. "Elliott, Anthony. 2010.").
   if (/^[\p{Lu}][\p{L}\p{M}'’.-]+,\s+.{2,130}?\.\s+(?:19|20)\d{2}[a-z]?\.\s/u.test(text)) return true;
 
+  // IEEE-style numbered references may wrap the publication year / DOI
+  // onto a later visual line. Recognize the distinctive initial-plus-surname
+  // author list without requiring citation metadata on the FIRST line.
+  // Restrict this shape to bracketed numbers plus author punctuation; a
+  // numbered question or ordinary list item must not be treated as a citation.
+  if (/^\[\d{1,3}\]\s+(?:[A-Z]\.\s*){1,3}[\p{Lu}][\p{L}\p{M}'’-]+(?:\s+[\p{Lu}][\p{L}\p{M}'’-]+){0,3}(?:,|\s+and\s+[A-Z]\.)/u.test(text)) return true;
+
   // Numbered references are common in technical and medical documents.
   if (/^(?:\[\d+\]|\d+[.)])\s+.{8,}/u.test(text) &&
       /\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|doi\b/iu.test(text)) return true;
