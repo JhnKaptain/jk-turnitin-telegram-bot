@@ -535,6 +535,7 @@ If payment is not confirmed within *1 minute*, send the M-Pesa confirmation mess
 const bot = new Telegraf(BOT_TOKEN);
 const submissions = {};
 const pendingFileTargets = {};
+let webOrders = null; // JK_WEB_ORDERS_V1 (installed with the HTTP server)
 const activePollers = {};
 const supportRequests = {};
 const pendingAdminReplies = {};
@@ -6087,6 +6088,27 @@ bot.command("filebatch", async (ctx) => {
   await ctx.reply(batchOpenedMessage(userId));
 });
 
+// JK_WEB_ORDERS_V1: manual delivery to a website order, same as /filebatch.
+bot.command("webdeliver", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  const parts = (ctx.message.text || "").trim().split(/\s+/);
+  const orderId = parts[1];
+  const caption = parts.slice(2).join(" ");
+  const userId = webOrders && orderId ? webOrders.uidForOrder(orderId) : null;
+  if (!userId) return ctx.reply("Usage: /webdeliver <websiteOrderId> [caption]\nWebsite order not found.");
+
+  pendingFileTargets[ADMIN_ID] = {
+    userId: String(userId),
+    caption,
+    sentCount: 0,
+    sentItemKeys: {},
+    inProgressItemKeys: {}
+  };
+
+  await ctx.reply(batchOpenedMessage(String(userId)) + "\n\nWebsite order: " + orderId);
+});
+
 bot.command("donebatch", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
@@ -9612,6 +9634,11 @@ function makeCopyleaksScanId(
 async function downloadTelegramFileBuffer(
   fileId
 ) {
+  // JK_WEB_ORDERS_V1: website uploads are stored on disk, not on Telegram.
+  if (webOrders && require("./jk-web-orders.cjs").isWebFileId(fileId)) {
+    return webOrders.readWebFile(fileId);
+  }
+
   const link =
     await bot.telegram.getFileLink(
       fileId
@@ -13812,6 +13839,32 @@ app.use(
     }
   })
 );
+
+// JK_WEB_ORDERS_V1: website front door to the same report service.
+webOrders = require("./jk-web-orders.cjs").installWebOrders({
+  app, express, bot, DATA_DIR, ADMIN_ID, MAX_BATCH_FILES, submissions,
+  getPaidJobs: () => paidJobs,
+  getPaymentRef, updatePaymentRef,
+  // Newest payment attempt for a batch, including failed STK initiations
+  // (attemptStkPush only stores sub.api_ref after a successful push).
+  latestPaymentRefForBatch: batchId => Object.entries(paymentRefs)
+    .filter(([, ref]) => ref && String(ref.batchId || "") === String(batchId || ""))
+    .sort((a, b) => Number(b[1].createdAt || 0) - Number(a[1].createdAt || 0))
+    .map(([apiRef, ref]) => ({ apiRef, ...ref }))[0] || null,
+  webEnabled: () => readBoolEnv("WEB_ORDERS_ENABLED", true),
+  prices: () => ({ CHECK: CHECK_PRICE_KES, SIMILARITY: SIMILARITY_ONLY_PRICE_KES, RESALE: RESALE_PRICE_KES }),
+  priceFor: kind => ({ CHECK: CHECK_PRICE_KES, RECHECK: RECHECK_PRICE_KES,
+    SIMILARITY: SIMILARITY_ONLY_PRICE_KES, RESALE: RESALE_PRICE_KES })[kind],
+  flags: () => ({ SIMILARITY_ONLY_ENABLED, RESALE_ENABLED, RESALE_AMOUNT_VISIBLE, RESALE_LABEL_TITLE }),
+  isDiscountPublicActive, isPublicDiscountExclusiveMode, discountTimeText, resellerCodeMatches,
+  isBotInactivePeriod, inactiveText: () => MESSAGES.inactive(),
+  getFilterMode: () => reportSettings.filterMode,
+  FILTER_MODE_CLIENT, FILTER_MODE_FILTERED, FILTER_MODE_UNFILTERED,
+  STAGES: { WAIT_UPLOADS: STAGE_WAIT_UPLOADS, WAIT_PHONE: STAGE_WAIT_PHONE, WAIT_PAYMENT: STAGE_WAIT_PAYMENT },
+  createEmptySubmission, createStoredFileFromDocument, ensureFileReportIdentity, effectiveSimilarityFilter,
+  calculateSubmissionAmount, formatBatchSummary, makeBatchId, normalizePhoneTo254, attemptStkPush,
+  buildAdminDocumentCaption, adminActionKeyboard, supportedScanUpload, sendAdminMessage
+});
 
 app.post("/webhook", (req, res) => {
   res.status(200).send("OK");
