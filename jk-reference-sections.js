@@ -10,15 +10,29 @@ const crypto = require("node:crypto");
 function defragmentSmallCaps(value) {
   return String(value ?? "").replace(/(^|[^\p{L}\p{N}])(\p{Lu}) (?=\p{L}{2,})/gu, "$1$2");
 }
+// Letter-spaced headings ("R E F E R E N C E S", "W O R K S  C I T E D"):
+// single letters separated by single spaces, words separated by wider gaps.
+function collapseLetterSpacing(value) {
+  const text = String(value ?? "").trim();
+  if (!/^(?:\p{L} )+\p{L}[.:]?$|^(?:\p{L} )+\p{L}(?:\s{2,}(?:\p{L} )+\p{L})+[.:]?$/u.test(text)) return text;
+  return text.split(/\s{2,}/u).map(word => word.replace(/ /gu, "")).join(" ");
+}
 function fragmentTolerant(pattern) {
   return {
     source: pattern.source,
     test: value => pattern.test(String(value ?? "")) ||
-      pattern.test(defragmentSmallCaps(value))
+      pattern.test(defragmentSmallCaps(value)) ||
+      pattern.test(collapseLetterSpacing(value))
   };
 }
 
-const REFERENCE_HEADING = fragmentTolerant(/^(?:\d{1,3}[.)]\s+)?(?:harvard\s+reference\s+list|apa\s+reference\s+list|(?:list\s+of\s+references?|reference\s+list)|references?|bibliography|works cited|table of cases|table of legislation)\s*:?\s*$/i);
+// Bibliography heading vocabulary (APA, Harvard, Chicago, MLA, IEEE,
+// Vancouver, OSCOLA and common course variants, plus the main languages the
+// service receives). Optional "6.", "6.0", "Chapter 6:" prefixes and a
+// trailing period / colon. The whole line must be the heading.
+const REFERENCE_HEADING_WORDS = "harvard\\s+reference\\s+list|apa\\s+reference\\s+list|list\\s+of\\s+(?:references?|sources|works\\s+cited)|reference\\s+list|references?(?:\\s+(?:and|&)\\s+bibliography)?|references?\\s+cited|reference\\s+sources|bibliography(?:\\s+(?:and|&)\\s+references?)?|annotated\\s+bibliography|works\\s+cited|works\\s+consulted|sources(?:\\s+(?:cited|consulted|used))?|literature\\s+cited|citations|further\\s+reading|table\\s+of\\s+cases|table\\s+of\\s+legislation|table\\s+of\\s+authorities|marejeleo|referencias|bibliograf[ií]a|r[eé]f[eé]rences|bibliographie|literaturverzeichnis|quellenverzeichnis|referências";
+const REFERENCE_HEADING_PREFIX = "(?:(?:chapter|section|part)\\s+\\d{1,3}\\s*[:.\\-]?\\s+|\\d{1,3}(?:\\.\\d{1,2})*[.)]?\\s+)?";
+const REFERENCE_HEADING = fragmentTolerant(new RegExp("^" + REFERENCE_HEADING_PREFIX + "(?:" + REFERENCE_HEADING_WORDS + ")\\s*[.:]?\\s*$", "iu"));
 const KNOWN_TERMINATOR = fragmentTolerant(/^(?:\d{1,3}[.)]\s+)?(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|(?:generative\s+)?ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s*:\s*[^\n]*)?(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i);
 const STRUCTURAL_FOLLOWER = /^(?:date|context|children|apst|purpose|overview|learning objectives|introduction|background|stimulus behaviour|strategies used|reflection|references|appendix|appendices|table of contents)\s*:?\s*$|^\d+(?:\.\d+)*[.)]?\s+[A-Z]/i;
 
@@ -192,8 +206,32 @@ function isLikelySectionHeading(lines, index, start, source) {
 }
 
 function isReferenceEntryStart(value) {
-  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  const raw = String(value || "").replace(/\s+/gu, " ").trim();
+  // A stray opening quote (pasted entry) or an MLA title-first entry.
+  const text = raw.replace(/^[‘’'"“”]+/u, "");
   if (!text || /^(?:\[\d+\]\s*)?(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return false;
+
+  // MLA title-first entry: a quoted title, then the container and a year/URL.
+  if (/^["“‘'][^"”’']{3,200}["”’']\.?\s+[A-Z]/u.test(raw) &&
+      /\b(?:19|20)\d{2}\b|https?:\/\/|www\.|doi/iu.test(raw)) return true;
+
+  // Chicago bibliography / MLA with the year outside parentheses, including
+  // corporate authors: "World Health Organization. Musculoskeletal Health.
+  // Geneva: WHO, 2021." / "Elliott, Anthony. The Routledge Companion ... 2010."
+  if (/^(?:[\p{Lu}][\p{L}\p{M}&'’.-]*\s+){1,8}[\p{Lu}][\p{L}\p{M}&'’.-]*\.\s+[\p{Lu}][^\n]{5,}?(?:,\s*|\(|\s)(?:19|20)\d{2}[a-z]?(?:[.):;,]|$)/u.test(text) &&
+      !/\b(?:I|we|my|our)\b/u.test(text.split(". ")[0])) return true;
+
+  // Vancouver: "1. Brophy RH, Fillingham YA. Title..." (initials without periods;
+  // the year usually wraps to a later line).
+  if (/^\d{1,3}\.\s+[\p{Lu}][\p{L}\p{M}'’-]+(?:\s+[\p{Lu}][\p{L}\p{M}'’-]+)?\s+[A-Z]{1,3}(?:,\s+[\p{Lu}][\p{L}\p{M}'’-]+\s+[A-Z]{1,3})*(?:,\s+et\s+al)?\.\s+[\p{Lu}]/u.test(text)) return true;
+
+  // OSCOLA (law): cases, statutes, books, journal articles.
+  if (/^[\p{Lu}][\p{L}\p{M}'’-]+(?:\s+[\p{Lu}][\p{L}\p{M}'’.-]+){1,3},\s+['‘"“][\p{Lu}]/u.test(text)) return true; // Emily Jackson, 'Informed consent...'
+
+  if (/\bv\.?\s+[\p{Lu}][^\n]{0,120}?[\[(](?:19|20)\d{2}[\])]/u.test(text)) return true;           // Donoghue v Stevenson [1932] AC 562
+  if (/^[\p{Lu}][^\n]{2,100}?\b(?:Act|Regulations|Order|Rules|Code|Convention|Directive|Treaty)\s+(?:19|20)\d{2}\b/u.test(text)) return true; // Human Rights Act 1998, s 6
+  if (/\((?:\d+(?:st|nd|rd|th)\s+edn?,?\s+)?[^()]{0,80}?\b(?:19|20)\d{2}\)\.?$/u.test(text) && /^[\p{Lu}][\p{L}\p{M}'’-]+\s+[\p{Lu}]/u.test(text)) return true; // Jonathan Herring, Medical Law (9th edn, OUP 2022).
+  if (/\((?:19|20)\d{2}\)\s+\d{1,4}\s+[\p{Lu}]/u.test(text) || /\[(?:19|20)\d{2}\]\s+(?:\d+\s+)?[A-Z]{2,6}\b/u.test(text)) return true; // (2009) 17 Medical Law Review 76 / [2015] UKSC 11
 
   // Conventional author-first entries, including personal author lists.
   if (/^(?:\[\d+\]\s*)?[A-Z][\p{L}'’.-]{1,50},\s*(?:[A-Z]\.?|[A-Z][\p{L}'’.-]+)\b/u.test(text)) return true;
@@ -538,7 +576,32 @@ function inspectBoundary(source, start, lines) {
     const text = line.text.trim();
     if (!text || /^(?:\d{1,4}|Page\s+\d{1,4}(?:\s+of\s+\d{1,4})?)$/iu.test(text)) continue;
 
-    if (isReferenceEntryStart(text)) {
+    // A wrapped continuation line can itself begin like a citation
+    // ("Østerås, N. (2024). EULAR recommendations..."). With a hanging indent
+    // it sits at the continuation x, not the entry x: keep it in the entry.
+    const indentedContinuation = Boolean(activeEntryLine && previousNonblankLine &&
+      Number.isFinite(line.layoutX) && Number.isFinite(activeEntryLine.layoutX) &&
+      line.layoutPage && line.layoutPage === previousNonblankLine.layoutPage &&
+      line.layoutX >= activeEntryLine.layoutX + Math.max(3.5, Number(line.layoutHeight || 0) * 0.3) &&
+      Number.isFinite(line.layoutY) && Number.isFinite(previousNonblankLine.layoutY) &&
+      Math.abs(line.layoutY - previousNonblankLine.layoutY) <=
+        Math.max(Number(line.layoutHeight || 0), Number(previousNonblankLine.layoutHeight || 0), 1) * 3.25);
+    if (indentedContinuation && !KNOWN_TERMINATOR.test(text)) {
+      previousNonblankLine = line;
+      continue;
+    }
+
+    // Numbered lists (Vancouver, numbered APA): the next consecutive number
+    // after a recognized numbered entry starts the next entry, even when the
+    // year wraps to a later line.
+    const sequentialNumbered = Boolean(activeEntryLine && (() => {
+      const prev = /^(?:\[(\d{1,3})\]|(\d{1,3})[.)])\s/u.exec(String(activeEntryLine.text || "").trim());
+      const cur = /^(?:\[(\d{1,3})\]|(\d{1,3})[.)])\s+\S/u.exec(text);
+      if (!prev || !cur) return false;
+      return Number(prev[1] ?? prev[2]) + 1 === Number(cur[1] ?? cur[2]);
+    })());
+
+    if (isReferenceEntryStart(text) || sequentialNumbered) {
       // A substantial, unexplained paragraph between citation entries might
       // be a genuine body section. Never silently swallow it just because
       // another citation follows. Request review instead.
@@ -657,6 +720,12 @@ function inspectBoundary(source, start, lines) {
       if (firstCandidate !== null) {
         return {status: "REVIEW", reason: "Substantive text may resume after an uncertain bibliography continuation.", candidateOffset: firstCandidate, entriesFound};
       }
+      // Prose followed by further citation entries is mixed content: never
+      // leave those later entries in the provider input silently.
+      const upcoming = lines.slice(i + 1).filter(record => record.text.trim()).slice(0, 10);
+      if (upcoming.some(record => isReferenceEntryStart(record.text.trim()))) {
+        return {status: "REVIEW", reason: "Potential substantive writing occurs between reference entries.", candidateOffset: line.start, entriesFound};
+      }
       return {status: "AUTO", end: line.start, reason: "Substantive prose resumes.", entriesFound};
     }
 
@@ -668,6 +737,23 @@ function inspectBoundary(source, start, lines) {
 
   if (entriesFound > 0 && firstCandidate === null) {
     return {status: "AUTO", end: source.length, reason: "Verified reference entries continue to end of document.", entriesFound};
+  }
+
+  if (entriesFound > 0 && firstCandidate !== null) {
+    const tail = source.slice(firstCandidate);
+    // The unresolved tail is itself citation text (e.g. a corporate Chicago
+    // entry "World Health Organization. ... Geneva: WHO, 2021.").
+    if (isBibliographicGap(tail)) {
+      return {status: "AUTO", end: source.length, reason: "Bibliographic text continues to end of document.", entriesFound};
+    }
+    // Only short non-prose lines remain (word count, signature, "End").
+    // They are neither references nor substantive writing: stop before them.
+    const tailLines = tail.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+    const prose = tailLines.some(line => (line.match(/[\p{L}][\p{L}'’-]*/gu) || []).length >= 12 ||
+      looksLikeUnheadedBodyLine(line));
+    if (!prose && tailLines.length <= 6) {
+      return {status: "AUTO", end: firstCandidate, reason: "Short non-prose lines follow the references.", entriesFound};
+    }
   }
 
   return {
@@ -724,7 +810,7 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
   const starts = [];
   const verifiedExplicitList = require("./jk-ai-reference-proof.cjs").verifiedListOfReferences(source,layoutDocument);
   const seen = new Set();
-  const re = /(^|\n)[ \t]*(?:\d{1,3}[.)][ \t]+)?(harvard[ \t]+reference[ \t]+list|apa[ \t]+reference[ \t]+list|list[ \t]+of[ \t]+references?|reference list|references?|bibliography|works cited|table of cases|table of legislation)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
+  const re = new RegExp("(^|\\n)[ \\t]*" + REFERENCE_HEADING_PREFIX + "(?:" + REFERENCE_HEADING_WORDS + ")[ \\t]*[.:]?[ \\t]*(?=\\r?\\n|$)", "gimu");
   let match;
   while ((match = re.exec(source))) {
     const start = match.index + match[1].length;
@@ -733,12 +819,17 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
   // Same standalone headings when the PDF fragmented them (small caps,
   // per-letter runs). The heading line itself must still be nothing but a
   // recognized bibliography title, and real reference entries must follow.
+  // Generic words ("Sources", "Further Reading", "Citations") also title
+  // ordinary prose sections, so only an unmistakable bibliography heading
+  // may fail closed when its entries are not recognized.
+  const CORE_REFERENCE_HEADING = fragmentTolerant(new RegExp("^" + REFERENCE_HEADING_PREFIX +
+    "(?:list\\s+of\\s+references?|reference\\s+list|references?(?:\\s+(?:and|&)\\s+bibliography)?|bibliography(?:\\s+(?:and|&)\\s+references?)?|works\\s+cited|marejeleo|referencias|bibliograf[ií]a|r[eé]f[eé]rences|bibliographie|literaturverzeichnis|referências)\\s*[.:]?\\s*$", "iu"));
   const unverifiedHeadings = [];
   for (const line of lines) {
     const text = line.text.trim();
     if (!text || starts.includes(line.start) || !REFERENCE_HEADING.test(text)) continue;
     if (hasReferenceEntryAfterHeading(source, line.start, lines)) starts.push(line.start);
-    else unverifiedHeadings.push(line);
+    else if (CORE_REFERENCE_HEADING.test(text)) unverifiedHeadings.push(line);
   }
   if (verifiedExplicitList && !starts.includes(verifiedExplicitList.start)) starts.push(verifiedExplicitList.start);
   if (!starts.length && Number.isInteger(fallbackStart) && fallbackStart >= 0 && fallbackStart < source.length) {
