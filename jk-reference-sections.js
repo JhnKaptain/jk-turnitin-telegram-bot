@@ -208,6 +208,13 @@ function isReferenceEntryStart(value) {
   // name without a preceding period (e.g. "Elliott, Anthony. 2010.").
   if (/^[\p{Lu}][\p{L}\p{M}'’.-]+,\s+.{2,130}?\.\s+(?:19|20)\d{2}[a-z]?\.\s/u.test(text)) return true;
 
+  // IEEE-style numbered references may wrap the publication year / DOI
+  // onto a later visual line. Recognize the distinctive initial-plus-surname
+  // author list without requiring citation metadata on the FIRST line.
+  // Restrict this shape to bracketed numbers plus author punctuation; a
+  // numbered question or ordinary list item must not be treated as a citation.
+  if (/^\[\d{1,3}\]\s+(?:[A-Z]\.\s*){1,3}[\p{Lu}][\p{L}\p{M}'’-]+(?:\s+[\p{Lu}][\p{L}\p{M}'’-]+){0,3}(?:,|\s+and\s+[A-Z]\.)/u.test(text)) return true;
+
   // Numbered references are common in technical and medical documents.
   if (/^(?:\[\d+\]|\d+[.)])\s+.{8,}/u.test(text) &&
       /\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|doi\b/iu.test(text)) return true;
@@ -456,6 +463,30 @@ function isVisualReferenceContinuation(line, previousLine, entryLine) {
   return hangingIndent || previousIsOpen || conventionalContinuation || normalLineStep;
 }
 
+// An IEEE reference often occupies multiple *double-spaced* visual lines.
+// Recognize only bibliographic continuation evidence inside a live numbered
+// author entry. Never infer a continuation past a complete terminal year/DOI,
+// over a page gap, or into a new heading or reference entry.
+function isIeeeWrappedCitationContinuation(line, previousLine, activeEntryLine) {
+  const active = String(activeEntryLine?.text || "").trim();
+  const value = String(line?.text || "").trim();
+  const preceding = String(previousLine?.text || "").trim();
+  if (!/^\[\d{1,3}\]\s+(?:[A-Z]\.\s*){1,3}[\p{Lu}]/u.test(active) ||
+      !value || !previousLine || !line ||
+      isReferenceEntryStart(value) || REFERENCE_HEADING.test(value) ||
+      KNOWN_TERMINATOR.test(value) || COMMON_SECTION_HEADING.test(value) ||
+      STRUCTURAL_FOLLOWER.test(value)) return false;
+  if (Number(line.layoutPage || 0) <= 0 || line.layoutPage !== previousLine.layoutPage ||
+      !Number.isFinite(line.layoutY) || !Number.isFinite(previousLine.layoutY)) return false;
+  const height = Math.max(Number(line.layoutHeight || 0), Number(previousLine.layoutHeight || 0), 1);
+  if (Math.abs(line.layoutY - previousLine.layoutY) > height * 3.25) return false;
+  // Once the previous line closes with a year (or completed DOI), the next
+  // prose paragraph cannot be silently absorbed into the bibliography.
+  if (/(?:19|20)\d{2}[a-z]?\.\s*$/iu.test(preceding) ||
+      /(?:https?:\/\/\S+|10\.\d{4,9}\/\S+)\.?\s*$/iu.test(preceding)) return false;
+  return /(?:\b(?:19|20)\d{2}\b|(?:\b(?:vol|pp|doi|proc|art|no|conf|technol)\s*\.?\b)|[”"]\s*,?|^10\.\d{4,9}\/)/iu.test(value);
+}
+
 function inspectBoundary(source, start, lines) {
   const index = lines.findIndex(line => line.start <= start && start <= line.end);
   if (index < 0) {
@@ -565,7 +596,8 @@ function inspectBoundary(source, start, lines) {
     }
 
     if (entriesFound > 0 &&
-        (looksLikeReferenceContinuation(text) ||
+        (isIeeeWrappedCitationContinuation(line, previousNonblankLine, activeEntryLine) ||
+         looksLikeReferenceContinuation(text) ||
          isVisualReferenceContinuation(line, previousNonblankLine, activeEntryLine))) {
       previousNonblankLine = line;
       continue;
