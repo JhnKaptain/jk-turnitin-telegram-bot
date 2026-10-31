@@ -111,7 +111,7 @@ function findBibliographyStart(
   */
 
   const standaloneHeadingRe =
-    /(^|\n)[ \t]*(reference list|references?|bibliography|works cited)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
+    /(^|\n)[ \t]*(list of references|reference list|references?|bibliography|works cited)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
 
   let match;
 
@@ -150,7 +150,7 @@ function findBibliographyStart(
     a bibliography boundary.
   */
   const flattenedHeadingRe =
-    /(^|[.!?][ \t]+)(reference list|references?|bibliography|works cited)[ \t]*:?[ \t]*(?:\r?\n[ \t]*|[ \t]+)/gim;
+    /(^|[.!?][ \t]+)(list of references|reference list|references?|bibliography|works cited)[ \t]*:?[ \t]*(?:\r?\n[ \t]*|[ \t]+)/gim;
 
   while (
     (
