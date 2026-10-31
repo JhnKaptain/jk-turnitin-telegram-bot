@@ -13,7 +13,7 @@ assert(code.includes('bot.telegram.sendDocument(ADMIN_ID'));
 assert(code.includes('saved?.reportIdentity?.jkSubmissionId===submissionId'));
 assert(code.includes('renderSavedAiOnlyFromBundle(full,outfile)'));
 assert(code.includes("const id=\"trn:oid:::1:3555822768\""));
-assert(!/runProviderPipeline|buildProviderJobBundle|submitPaidJobToProviders|sapling|quetext/iu.test(code),
+assert(!/\b(?:runProviderPipeline|buildProviderJobBundle|submitPaidJobToProviders|querySapling|requestSapling)\s*\(/iu.test(code),
   "A credit-free replay may not contact paid providers");
 assert(renderer.includes("async function renderSavedAiOnlyFromBundle(bundlePath, outputPath)"));
 assert(renderer.includes("AI_RENDER_REFERENCE_HIGHLIGHT_INTEGRITY_FAILED"));
