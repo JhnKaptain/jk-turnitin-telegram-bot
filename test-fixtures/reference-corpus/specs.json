@@ -1613,5 +1613,493 @@
   "secondList": false,
   "expectReview": false,
   "noRefs": false
+ },
+ {
+  "name": "neg_prose_after_refs_starts_patients",
+  "style": "apa",
+  "heading": "References",
+  "after": "prose",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Jurado-Castro, J. M., Munoz-",
+   "Moseng, T., Vliet Vlieland, ",
+   "U.S. Preventive Services Tas",
+   "Cowley, S., & McCarthy, G. (",
+   "Smith, M. H., & Berman, J. R",
+   "Mohseni, M., Mabrouk, A., & ",
+   "World Health Organization. (",
+   "Poznyak, A. V., Kirichenko, ",
+   "Porter, L. (2016). Young chi"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": "Patients who attended the follow-up clinic reported that the",
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "neg_prose_after_refs_starts_prevention",
+  "style": "apa",
+  "heading": "References",
+  "after": "prose",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Jurado-Castro, J. M., Munoz-",
+   "Moseng, T., Vliet Vlieland, ",
+   "U.S. Preventive Services Tas",
+   "Cowley, S., & McCarthy, G. (",
+   "Smith, M. H., & Berman, J. R",
+   "Mohseni, M., Mabrouk, A., & ",
+   "World Health Organization. (",
+   "Poznyak, A. V., Kirichenko, ",
+   "Porter, L. (2016). Young chi"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": "Prevention remains the most important message of this case, ",
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "neg_prose_after_refs_starts_nonetheless",
+  "style": "apa",
+  "heading": "References",
+  "after": "prose",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Jurado-Castro, J. M., Munoz-",
+   "Moseng, T., Vliet Vlieland, ",
+   "U.S. Preventive Services Tas",
+   "Cowley, S., & McCarthy, G. (",
+   "Smith, M. H., & Berman, J. R",
+   "Mohseni, M., Mabrouk, A., & ",
+   "World Health Organization. (",
+   "Poznyak, A. V., Kirichenko, ",
+   "Porter, L. (2016). Young chi"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": "Nonetheless, the plan has limitations that should be acknowl",
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "neg_prose_after_refs_starts_issues",
+  "style": "apa",
+  "heading": "References",
+  "after": "prose",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Jurado-Castro, J. M., Munoz-",
+   "Moseng, T., Vliet Vlieland, ",
+   "U.S. Preventive Services Tas",
+   "Cowley, S., & McCarthy, G. (",
+   "Smith, M. H., & Berman, J. R",
+   "Mohseni, M., Mabrouk, A., & ",
+   "World Health Organization. (",
+   "Poznyak, A. V., Kirichenko, ",
+   "Porter, L. (2016). Young chi"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": "Issues of access and cost were raised repeatedly during the ",
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "neg_prose_after_refs_starts_volunteers",
+  "style": "apa",
+  "heading": "References",
+  "after": "prose",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Jurado-Castro, J. M., Munoz-",
+   "Moseng, T., Vliet Vlieland, ",
+   "U.S. Preventive Services Tas",
+   "Cowley, S., & McCarthy, G. (",
+   "Smith, M. H., & Berman, J. R",
+   "Mohseni, M., Mabrouk, A., & ",
+   "World Health Organization. (",
+   "Poznyak, A. V., Kirichenko, ",
+   "Porter, L. (2016). Young chi"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": "Volunteers from the local walking group offered to accompany",
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_apa_standard",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi",
+   "World Health Organization. (",
+   "Smith, M. H., & Berman, J. R"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it",
+   "The authors give a concise patient-oriented overview of",
+   "Because it is written for patients, the article is easy"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_apa_indented_annotations",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi",
+   "World Health Organization. (",
+   "Smith, M. H., & Berman, J. R"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it",
+   "The authors give a concise patient-oriented overview of",
+   "Because it is written for patients, the article is easy"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_apa_single_paragraph",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi",
+   "World Health Organization. (",
+   "Smith, M. H., & Berman, J. R"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The authors update the European recommendations for non",
+   "Porter explains how educators can guide young children'",
+   "This fact sheet summarises the global burden of musculo",
+   "The authors give a concise patient-oriented overview of"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_apa_no_hanging",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi",
+   "World Health Organization. (",
+   "Smith, M. H., & Berman, J. R"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it",
+   "The authors give a concise patient-oriented overview of",
+   "Because it is written for patients, the article is easy"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_apa_title_only",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi",
+   "World Health Organization. (",
+   "Smith, M. H., & Berman, J. R"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it",
+   "The authors give a concise patient-oriented overview of",
+   "Because it is written for patients, the article is easy"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_apa_subheadings",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi",
+   "World Health Organization. (",
+   "Smith, M. H., & Berman, J. R"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it",
+   "The authors give a concise patient-oriented overview of",
+   "Because it is written for patients, the article is easy"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_apa_double_spaced",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi",
+   "World Health Organization. (",
+   "Smith, M. H., & Berman, J. R"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it",
+   "The authors give a concise patient-oriented overview of",
+   "Because it is written for patients, the article is easy"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_apa_numbered",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "1. Brophy, R. H., & Fillingh",
+   "2. Moseng, T., Vliet Vlielan",
+   "3. Porter, L. (2016). Young ",
+   "4. World Health Organization",
+   "5. Smith, M. H., & Berman, J"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it",
+   "The authors give a concise patient-oriented overview of",
+   "Because it is written for patients, the article is easy"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_apa_blank_between",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi",
+   "World Health Organization. (",
+   "Smith, M. H., & Berman, J. R"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it",
+   "The authors give a concise patient-oriented overview of",
+   "Because it is written for patients, the article is easy"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_mla",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, Robert H., and Yale ",
+   "Elliott, Anthony. The Routle",
+   "Porter, Louise. Young Childr",
+   "Smith, Melissa H., and Jessi"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_mla_works_cited_heading",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, Robert H., and Yale ",
+   "Elliott, Anthony. The Routle",
+   "Porter, Louise. Young Childr",
+   "Smith, Melissa H., and Jessi"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_heading_references",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi",
+   "World Health Organization. (",
+   "Smith, M. H., & Berman, J. R"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m",
+   "This fact sheet summarises the global burden of musculo",
+   "The source is authoritative but brief, so I will use it",
+   "The authors give a concise patient-oriented overview of",
+   "Because it is written for patients, the article is easy"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "ann_then_references",
+  "style": "annotated",
+  "heading": "",
+  "after": "",
+  "entries": [
+   "Brophy, R. H., & Fillingham,",
+   "Moseng, T., Vliet Vlieland, ",
+   "Porter, L. (2016). Young chi"
+  ],
+  "keepBefore": null,
+  "keepAfter": null,
+  "keepAll": [
+   "This guideline summary presents the American Academy of",
+   "The source is highly credible because it was produced b",
+   "The authors update the European recommendations for non",
+   "Although the recommendations are thorough, they were de",
+   "Porter explains how educators can guide young children'",
+   "This book is useful for my reflection because it gave m"
+  ],
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
  }
 ]

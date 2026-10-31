@@ -10,7 +10,10 @@
 // quotes, tables, auto-numbering, 2-entry and 29-entry lists; appendices,
 // declarations, Task 2 sections, second lists, word counts, running headers
 // and footers, tables of contents and cover pages; plus negative documents
-// that must NOT be excluded or must fail closed to administrator review.
+// that must NOT be excluded or must fail closed to administrator review;
+// annotated bibliographies (citations excluded, every annotation kept); and
+// unheaded prose after a list that starts with "Patients", "Prevention",
+// "Nonetheless", "Issues" or "Volunteers" (must stay in the input).
 // Offline: no provider, Telegram or Render calls.
 const assert = require("node:assert/strict");
 const path = require("node:path");
@@ -39,7 +42,10 @@ for (const spec of specs) {
         const leaked = spec.entries.filter(e => input.includes(norm(e)));
         if (leaked.length) problems.push(label + " input contains " + leaked.length + " reference entries, e.g. " + JSON.stringify(leaked[0]));
         if (spec.secondList && input.includes(norm("Brophy, R.H. and Fillingham"))) problems.push(label + " input contains the second reference list");
-        if (!input.includes(norm(spec.keepBefore))) problems.push(label + " input lost body prose");
+        if (spec.keepBefore && !input.includes(norm(spec.keepBefore))) problems.push(label + " input lost body prose");
+        // Annotated bibliographies: every annotation is the student's prose.
+        const lostAnnotations = (spec.keepAll || []).filter(k => !input.includes(norm(k)));
+        if (lostAnnotations.length) problems.push(label + " input lost " + lostAnnotations.length + " annotation(s), e.g. " + JSON.stringify(lostAnnotations[0]));
         if (spec.keepAfter && !input.includes(norm(spec.keepAfter))) problems.push(label + " input lost text that follows the references");
       }
     }
@@ -48,4 +54,4 @@ for (const spec of specs) {
 }
 
 assert.deepEqual(failures, [], "reference corpus failures:\n" + failures.join("\n"));
-console.log("PASS: reference corpus — " + specs.length + " real-geometry documents: every bibliography excluded, no false exclusions, mixed content fails closed");
+console.log("PASS: reference corpus — " + specs.length + " real-geometry documents: every bibliography excluded, annotations and following prose kept, mixed content fails closed");
