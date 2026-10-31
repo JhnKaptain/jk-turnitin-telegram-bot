@@ -68,8 +68,23 @@ const chars = ranges => {
     if (i < headingStart || i >= declarationStart) set.add(i);
   return set;
 };
-assert.deepEqual([...chars(painted)].sort((a, b) => a - b), [...chars(original)].sort((a, b) => a - b),
-  "valid AI highlights outside the bibliography changed");
+// The only other characters allowed to lose paint are the non-prose
+// "Response Word Count | 705/710" and "Question Answer" table cells
+// (production painted them too).
+const keptChars = chars(painted);
+const removedOutside = [...chars(original)].filter(i => !keptChars.has(i));
+const removedText = [...new Set(removedOutside.map(i => {
+  for (const page of doc.pages) for (const item of page.items)
+    if (item.start <= i && i < item.end) return item.text.trim();
+  return "";
+}))].filter(Boolean).sort();
+const cells = require("./jk-ai-non-prose.cjs").classifyNonProse(doc)
+  .filter(span => span.reason === "SHORT_TABLE_CELL");
+assert(removedOutside.every(i => /\s/u.test(text[i]) || cells.some(span => span.start <= i && i < span.end)),
+  "valid AI prose highlights outside the bibliography changed");
+assert(removedText.length >= 4 && removedText.length <= 6, "unexpected removals: " + removedText);
+assert(removedText.includes("705") && removedText.includes("710"));
+assert([...keptChars].every(i => chars(original).has(i)), "new highlight painted");
 
 // 5. Ranges saved with a provider run are honoured even if a future document
 //    defeats detection (e.g. administrator-chosen boundaries).
