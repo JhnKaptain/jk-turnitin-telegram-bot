@@ -270,6 +270,23 @@ function looksLikeSubstantiveBody(value) {
   return words.length >= 16;
 }
 
+// Text found between two reference entries is bibliographic when it carries
+// citation metadata and contains no genuine prose sentence. A wrapped title
+// / journal / DOI line (e.g. "(CPPD) disease: a review. Open access
+// rheumatology: research and reviews, 33-41. https://doi.org/...") must not
+// be mistaken for substantive writing just because it contains "and".
+const CITATION_METADATA = /https?:\/\/|\bwww\.|\bdoi\s*:|\b10\.\d{4,9}\/|\b\d+\s*\(\s*\d+(?:[-–]\d+)?\s*\)|\b\d+\s*[-–]\s*\d+\b|\bpp?\.\s*\d|\((?:19|20)\d{2}[a-z]?\)|\b(?:journal|press|publishing|publishers?|proceedings|vol\.|edition|ed\.|eds?\.|retrieved|available at|statpearls|university)\b/iu;
+function isBibliographicGap(value) {
+  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  if (!text || !CITATION_METADATA.test(text)) return false;
+  const sentences = text.split(/(?<=[.!?])\s+(?=[\p{Lu}])/u);
+  // A real prose sentence: long, and itself free of citation metadata.
+  return !sentences.some(sentence => {
+    const words = sentence.match(/[\p{L}][\p{L}'’-]*/gu) || [];
+    return words.length >= 12 && !CITATION_METADATA.test(sentence);
+  });
+}
+
 function looksLikeUnheadedBodyLine(value) {
   const text = String(value || "").replace(/\s+/gu, " ").trim();
   const words = text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) || [];
@@ -526,7 +543,8 @@ function inspectBoundary(source, start, lines) {
       // be a genuine body section. Never silently swallow it just because
       // another citation follows. Request review instead.
       if (firstCandidate !== null &&
-          looksLikeSubstantiveBody(source.slice(firstCandidate, line.start))) {
+          looksLikeSubstantiveBody(source.slice(firstCandidate, line.start)) &&
+          !isBibliographicGap(source.slice(firstCandidate, line.start))) {
         return {
           status: "REVIEW",
           reason: "Potential substantive writing occurs between reference entries.",
