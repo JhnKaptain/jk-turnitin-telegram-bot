@@ -187,9 +187,80 @@ function classifyTables(lines, add) {
   }
 }
 
+// Headings, judged LOCALLY against the paragraph that follows them (on the
+// same page, or at the top of the next page when the heading ends a page).
+// A document-wide "body font" fails for merged tasks written in different
+// fonts, so a heading is a short non-sentence line whose font or size differs
+// from the prose line directly after it. Paragraph lines share the next
+// line's font and are never matched.
+function lineFont(line) {
+  const usage = new Map();
+  for (const item of line.words) {
+    const n = (item.text.match(/\p{L}/gu) || []).length;
+    usage.set(item.fontName, (usage.get(item.fontName) || 0) + n);
+  }
+  return [...usage].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
+function classifyHeadings(pagesLines, add) {
+  const right = line => Math.max(...line.words.map(i => i.x + i.width));
+  for (const entry of pagesLines) {
+    // Right edge of full prose lines: a wrapped paragraph line reaches it,
+    // a heading visibly does not.
+    const widths = entry.lines.filter(line => wc(line.text) >= 8).map(right).sort((a, b) => a - b);
+    const left = Math.min(...entry.lines.map(line => line.x));
+    entry.textRight = widths.length ? widths[Math.floor(widths.length * 0.9)] : Infinity;
+    entry.textLeft = Number.isFinite(left) ? left : 0;
+  }
+  let current = null;
+  const candidate = line => {
+    const w = wc(line.text);
+    const margin = Math.max(30, 0.12 * (current.textRight - current.textLeft));
+    return w >= 1 && w <= 14 && line.text.length <= 120 && line.segments.length === 1 &&
+      right(line) <= current.textRight - margin &&
+      !SENTENCE_END.test(line.text) && !/[,;]$/u.test(line.text) && !/^\p{Ll}/u.test(line.text) &&
+      !/\p{L}{2,}[.!?]["'’”)]?\s+\p{Lu}/u.test(line.text) &&
+      !/https?:|\bdoi\b|\((?:19|20)\d{2}[a-z]?\)/iu.test(line.text);
+  };
+  const prose = line => line && wc(line.text) >= 8;
+  const distinct = (heading, body) => lineFont(heading) !== lineFont(body) ||
+    Math.abs(heading.height - body.height) >= 0.8;
+  for (let p = 0; p < pagesLines.length; p++) {
+    const { lines } = pagesLines[p];
+    current = pagesLines[p];
+    for (let k = 0; k < lines.length; k++) {
+      if (!candidate(lines[k])) continue;
+      const before = lines[k - 1];
+      const startsBlock = !before ||
+        before.y - lines[k].y >= Math.max(lines[k].height, 8) * 1.2 ||
+        SENTENCE_END.test(before.text) || /:$/u.test(before.text);
+      if (!startsBlock) continue;
+      const run = [lines[k]];
+      let j = k + 1;
+      while (j < lines.length && run.length < 3 && candidate(lines[j]) &&
+             !prose(lines[j]) && run.at(-1).y - lines[j].y <= Math.max(lines[j].height, 8) * 4) {
+        run.push(lines[j]); j++;
+      }
+      let next = lines[j];
+      if (next && run.at(-1).y - next.y > Math.max(next.height, 8) * 4) next = null;
+      if (!next && j >= lines.length && pagesLines[p + 1]) {
+        // Heading at the bottom of a page: its paragraph starts the next page.
+        next = pagesLines[p + 1].lines.find(line => line.y < pagesLines[p + 1].page.height * 0.9);
+      }
+      // A heading starts flush with (or left of) its paragraph, or is centred;
+      // an indented short line is a hanging-indent continuation, not a title.
+      const placed = line => line.x <= next.x + 3 ||
+        Math.abs(line.x + (right(line) - line.x) / 2 - current.page.width / 2) <= 15;
+      if (!prose(next) || !run.every(line => distinct(line, next) && placed(line))) continue;
+      run.forEach(line => line.words.forEach(i => add(i, "LOCAL_HEADING", line.pageNumber)));
+      k = j - 1;
+    }
+  }
+}
+
 function classifyNonProse(document) {
   if (!document || typeof document.text !== "string" || !Array.isArray(document.pages)) return [];
   const source = document.text, spans = [], seen = new Set();
+  const pagesLines = [];
   for (let p = 0; p < document.pages.length; p++) {
     const page = document.pages[p];
     if (page.rotation || !Number.isFinite(page.width) || !Number.isFinite(page.height)) continue;
@@ -200,10 +271,17 @@ function classifyNonProse(document) {
       spans.push({ start: item.start, end: item.end, text: item.text, pageNumber, reason });
     };
     const lines = visualLines(page, source);
+    lines.forEach(line => { line.pageNumber = pageNumber; });
+    pagesLines.push({ page, lines });
     classifyTableOfContents(lines, page, add);
     classifyLists(lines, add);
     classifyTables(lines, add);
   }
+  classifyHeadings(pagesLines, (item, reason, pageNumber) => {
+    if (seen.has(item.start)) return;
+    seen.add(item.start);
+    spans.push({ start: item.start, end: item.end, text: item.text, pageNumber, reason });
+  });
   return spans.sort((a, b) => a.start - b.start);
 }
 
