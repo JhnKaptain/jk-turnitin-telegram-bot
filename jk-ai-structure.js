@@ -276,7 +276,10 @@ function classifyAiStructuralText(document) {
   return spans.concat(
     require("./jk-ai-layout-extra.cjs").classifyExtra(document),
     require("./jk-ai-structure-layout.cjs").classifyLayoutStructures(document),
-    require("./jk-ai-provided-assessment.cjs").classifyProvidedAssessmentTemplate(document)
+    require("./jk-ai-provided-assessment.cjs").classifyProvidedAssessmentTemplate(document),
+    // Turnitin-style non-prose: table of contents, short table cells and
+    // short bullet / numbered list items (full sentences are kept).
+    require("./jk-ai-non-prose.cjs").classifyNonProse(document)
   );
 }
 function excludeAiStructuralText(prepared, document) {
