@@ -1108,7 +1108,21 @@ function summarizePreparedInput(
         prepared?.map
       )
         ? prepared.map.length
-        : 0
+        : 0,
+
+    // Exact canonical ranges withheld from the provider. The renderer uses
+    // them so painted AI highlights never cover excluded references.
+    removedReferenceRanges:
+      Array.isArray(
+        prepared?.removedReferenceRanges
+      )
+        ? prepared.removedReferenceRanges
+            .map(range => ({
+              start: range.start,
+              end: range.end,
+              manual: Boolean(range.manual)
+            }))
+        : []
   };
 }
 

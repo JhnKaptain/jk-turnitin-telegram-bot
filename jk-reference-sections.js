@@ -2,15 +2,31 @@
 
 const crypto = require("node:crypto");
 
-const REFERENCE_HEADING = /^(?:\d{1,3}[.)]\s+)?(?:harvard\s+reference\s+list|apa\s+reference\s+list|(?:list\s+of\s+references?|reference\s+list)|references?|bibliography|works cited|table of cases|table of legislation)\s*:?\s*$/i;
-const KNOWN_TERMINATOR = /^(?:\d{1,3}[.)]\s+)?(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|(?:generative\s+)?ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s*:\s*[^\n]*)?(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
+// Word small-caps headings are exported as a full-size capital followed by a
+// separately positioned run of smaller capitals. PDF.js canonical extraction
+// therefore yields "L IST OF R EFERENCES:" or "G ENERATIVE AI USE ...".
+// Canonical offsets must not change, so heading recognition (never the
+// source text) also tests a defragmented copy of the visual line.
+function defragmentSmallCaps(value) {
+  return String(value ?? "").replace(/(^|[^\p{L}\p{N}])(\p{Lu}) (?=\p{L}{2,})/gu, "$1$2");
+}
+function fragmentTolerant(pattern) {
+  return {
+    source: pattern.source,
+    test: value => pattern.test(String(value ?? "")) ||
+      pattern.test(defragmentSmallCaps(value))
+  };
+}
+
+const REFERENCE_HEADING = fragmentTolerant(/^(?:\d{1,3}[.)]\s+)?(?:harvard\s+reference\s+list|apa\s+reference\s+list|(?:list\s+of\s+references?|reference\s+list)|references?|bibliography|works cited|table of cases|table of legislation)\s*:?\s*$/i);
+const KNOWN_TERMINATOR = fragmentTolerant(/^(?:\d{1,3}[.)]\s+)?(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|(?:generative\s+)?ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s*:\s*[^\n]*)?(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i);
 const STRUCTURAL_FOLLOWER = /^(?:date|context|children|apst|purpose|overview|learning objectives|introduction|background|stimulus behaviour|strategies used|reflection|references|appendix|appendices|table of contents)\s*:?\s*$|^\d+(?:\.\d+)*[.)]?\s+[A-Z]/i;
 
 const SECTION_STOPWORDS = new Set([
   "a","an","and","as","at","by","for","from","in","into","of","on","or",
   "the","to","with","without","vs","versus"
 ]);
-const COMMON_SECTION_HEADING = /^(?:cyber security(?:\s*&\s*data privacy)?|abstract|introduction(?:\s+(?:of|to)\b.*)?|background|overview(?:\s+of\b.*)?|basic overview(?:\s+of\b.*)?|purpose|objective(?:s)?|literature review|related work|method(?:s|ology)?|results?|discussion|conclusion|summary|police|courts|corrections|structure of\b.*|origin of\b.*|current issues and concerns|legal philosophy|type of system|alternatives to incarceration|handling juveniles|guiding children(?:['’]s)? behaviour|teaching resources(?:,?\s+strategies)?(?:\s+and transitions)?|main point\s+\d+|chapter\s+\d+.*|part\s+\d+.*)$/i;
+const COMMON_SECTION_HEADING = fragmentTolerant(/^(?:cyber security(?:\s*&\s*data privacy)?|abstract|introduction(?:\s+(?:of|to)\b.*)?|background|overview(?:\s+of\b.*)?|basic overview(?:\s+of\b.*)?|purpose|objective(?:s)?|literature review|related work|method(?:s|ology)?|results?|discussion|conclusion|summary|police|courts|corrections|structure of\b.*|origin of\b.*|current issues and concerns|legal philosophy|type of system|alternatives to incarceration|handling juveniles|guiding children(?:['’]s)? behaviour|teaching resources(?:,?\s+strategies)?(?:\s+and transitions)?|main point\s+\d+|chapter\s+\d+.*|part\s+\d+.*)$/i);
 const REFERENCE_ENTRY_START = /^(?:\[\d+\]\s*)?(?:[A-Z][\p{L}'’.-]{1,50},\s*[A-Z]|\S.{0,100}\((?:19|20)\d{2}[a-z]?\)\s*[.,]|https?:\/\/|www\.|doi\s*:)/u;
 
 function lineRecords(source, layoutDocument = null) {
@@ -696,6 +712,16 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
     const start = match.index + match[1].length;
     if (hasReferenceEntryAfterHeading(source, start, lines)) starts.push(start);
   }
+  // Same standalone headings when the PDF fragmented them (small caps,
+  // per-letter runs). The heading line itself must still be nothing but a
+  // recognized bibliography title, and real reference entries must follow.
+  const unverifiedHeadings = [];
+  for (const line of lines) {
+    const text = line.text.trim();
+    if (!text || starts.includes(line.start) || !REFERENCE_HEADING.test(text)) continue;
+    if (hasReferenceEntryAfterHeading(source, line.start, lines)) starts.push(line.start);
+    else unverifiedHeadings.push(line);
+  }
   if (verifiedExplicitList && !starts.includes(verifiedExplicitList.start)) starts.push(verifiedExplicitList.start);
   if (!starts.length && Number.isInteger(fallbackStart) && fallbackStart >= 0 && fallbackStart < source.length) {
     starts.push(fallbackStart);
@@ -769,6 +795,33 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
       excludedUntil = decision.end;
     }
   }
+
+  // Fail closed: a late standalone bibliography heading followed by dense
+  // publication evidence must never pass to a provider unexcluded simply
+  // because its entry style was not recognized. Ask the administrator (the
+  // existing ten-minute review fallback applies) instead of scanning it.
+  for (const line of unverifiedHeadings) {
+    if (line.start < source.length * 0.4 ||
+        ranges.some(range => range.start <= line.start && line.start < range.end) ||
+        reviews.some(review => review.start === line.start)) continue;
+    const following = source.slice(line.end, Math.min(source.length, line.end + 2500));
+    const years = (following.match(/\b(?:19|20)\d{2}[a-z]?\b/gu) || []).length;
+    const links = (following.match(/https?:\/\/|\bdoi\s*:|\b10\.\d{4,9}\//giu) || []).length;
+    if (years < 3 && links < 1) continue;
+    reviews.push({
+      start: line.start,
+      heading: line.text.trim().slice(0, 80),
+      hasFollowingReferenceSection: starts.some(otherStart => otherStart > line.start),
+      hasFollowingSubstantiveSection: lines.some((record, index) =>
+        record.start > line.start && isIndependentAssignmentHeading(lines, index)),
+      sourceTextSha256,
+      sourceLength: source.length,
+      reason: "A bibliography heading was found but its reference entries were not recognized.",
+      entriesFound: 0,
+      candidates: buildReviewCandidates(source, line.start, lines, null)
+    });
+  }
+  reviews.sort((a, b) => a.start - b.start);
   return {ranges, reviews, sourceTextSha256, sourceLength: source.length};
 }
 

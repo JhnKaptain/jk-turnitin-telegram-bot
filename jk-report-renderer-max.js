@@ -4169,17 +4169,20 @@ async function drawOriginalPages(
         )
       : kind === "AI"
         ? require("./jk-ai-visual-mask.cjs")
-            .excludeAiNonProseRanges(ranges, providerDocument(bundle))
+            .excludeAiNonProseRanges(ranges, providerDocument(bundle),
+              bundle?.preparation?.ai?.removedReferenceRanges)
         : ranges;
 
-  // Final PDF paint invariant. A verified bibliography may be present in the
+  // Final PDF paint invariant. A detected bibliography may be present in the
   // source page image, but must NEVER overlap a cyan AI rectangle. This
-  // audit executes after all display-only exclusions and before PDF drawing.
+  // audit executes after all display-only exclusions and before PDF drawing,
+  // using the same reference detector that filters provider input.
   if (kind === "AI") {
-    const proof=require("./jk-ai-reference-proof.cjs")
-      .verifiedListOfReferences(canonicalPaintText,providerDocument(bundle));
-    if(proof && visualRanges.some(range =>
-      range.start<proof.end && range.end>proof.start)) {
+    const referenceSpans=require("./jk-ai-visual-mask.cjs")
+      .referenceExclusionSpans(providerDocument(bundle),
+        bundle?.preparation?.ai?.removedReferenceRanges);
+    if(referenceSpans.some(span => visualRanges.some(range =>
+      range.start<span.end && range.end>span.start))) {
       throw new Error("AI_RENDER_REFERENCE_HIGHLIGHT_INTEGRITY_FAILED");
     }
   }

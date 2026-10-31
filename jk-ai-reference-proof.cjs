@@ -6,6 +6,20 @@
 // at least five author-year citation starts, at least two DOI/URL lines,
 // and a separate named Generative AI declaration must all be present.
 // If uncertain, return null and defer to the existing administrator review.
+function sameVisualLine(a,b) {
+  const tolerance=0.9*Math.max(Number(a?.height)||1,Number(b?.height)||1);
+  return Boolean(a&&b)&&Math.abs(a.y-b.y)<=tolerance;
+}
+function sharesVisualLine(items,first,last) {
+  // Whitespace-only items carry no words; look past them to real neighbours.
+  const wordy=item=>/[\p{L}\p{N}]/u.test(String(item?.text||""));
+  let b=first-1,a=last+1;
+  while(b>=0&&!wordy(items[b])&&sameVisualLine(items[b],items[first]))b--;
+  while(a<items.length&&!wordy(items[a])&&sameVisualLine(items[a],items[last]))a++;
+  const before=items[b],after=items[a];
+  return (wordy(before)&&sameVisualLine(before,items[first])&&before.x<items[first].x)||
+    (wordy(after)&&sameVisualLine(after,items[last])&&after.x>items[last].x);
+}
 function layoutHeadings(layoutDocument) {
   const rows=[];
   for(const page of layoutDocument?.pages||[]) {
@@ -33,7 +47,10 @@ function layoutHeadings(layoutDocument) {
           ?"REFERENCE_HEADING":
           compact==="GENERATIVEAIUSEDECLARATIONMANDATORY"
           ?"DECLARATION":null;
-        if(kind) {
+        // A heading is a standalone visual line. A quoted mention inside an
+        // instruction sentence ("A complete 'List of References' must be
+        // provided") shares its line with other words and is not a heading.
+        if(kind && !sharesVisualLine(items,i,j)) {
           rows.push({kind,start:items[i].start,end:x.end,
             pageNumber:Number(page.pageNumber||x.pageNumber)});
           break;
@@ -68,12 +85,12 @@ function verifiedReferenceFromLayout(source,layoutDocument) {
 
 function verifiedListOfReferences(source, layoutDocument = null) {
   const text = String(source ?? "");
-  const heading = /^[ \t]*LIST[ \t]+OF[ \t]+REFERENCES?[ \t]*:[ \t]*(?=\r?\n|$)/gim;
+  const heading = /^[ \t]*L ?IST[ \t]+O ?F[ \t]+R ?EFERENCES?[ \t]*:[ \t]*(?=\r?\n|$)/gim;
   const hits = [...text.matchAll(heading)];
   if (hits.length !== 1) return verifiedReferenceFromLayout(text,layoutDocument);
   const start = hits[0].index;
   if (start < text.length * 0.45) return null;
-  const declaration = /^[ \t]*GENERATIVE[ \t]+AI[ \t]+USE[ \t]+DECLARATION[ \t]*:[ \t]*MANDATORY[ \t]*(?=\r?\n|$)/gim;
+  const declaration = /^[ \t]*G ?ENERATIVE[ \t]+A ?I[ \t]+U ?SE[ \t]+D ?ECLARATION[ \t]*:[ \t]*M ?ANDATORY[ \t]*(?=\r?\n|$)/gim;
   const endings = [...text.matchAll(declaration)].filter(m => m.index > start);
   if (endings.length !== 1) return verifiedReferenceFromLayout(text,layoutDocument);
   const end = endings[0].index;
