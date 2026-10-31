@@ -4172,6 +4172,18 @@ async function drawOriginalPages(
             .excludeAiNonProseRanges(ranges, providerDocument(bundle))
         : ranges;
 
+  // Final PDF paint invariant. A verified bibliography may be present in the
+  // source page image, but must NEVER overlap a cyan AI rectangle. This
+  // audit executes after all display-only exclusions and before PDF drawing.
+  if (kind === "AI") {
+    const proof=require("./jk-ai-reference-proof.cjs")
+      .verifiedListOfReferences(canonicalPaintText,providerDocument(bundle));
+    if(proof && visualRanges.some(range =>
+      range.start<proof.end && range.end>proof.start)) {
+      throw new Error("AI_RENDER_REFERENCE_HIGHLIGHT_INTEGRITY_FAILED");
+    }
+  }
+
   for (const original of originalPages) {
     const sourceWidth =
       Number(
