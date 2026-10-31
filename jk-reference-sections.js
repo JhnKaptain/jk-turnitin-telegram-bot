@@ -66,7 +66,8 @@ function lineRecords(source, layoutDocument = null) {
           !Number.isFinite(item.y) || !Number.isFinite(item.height)) continue;
       items.push({
         start: item.start, end: item.end, x: item.x, y: item.y,
-        height: item.height, pageNumber: Number(item.pageNumber || page.pageNumber || 0)
+        height: item.height, pageNumber: Number(item.pageNumber || page.pageNumber || 0),
+        pageHeight: Number(page.height) || null
       });
     }
   }
@@ -82,11 +83,13 @@ function lineRecords(source, layoutDocument = null) {
         line.layoutY = item.y;
         line.layoutHeight = item.height;
         line.layoutPage = item.pageNumber;
+        line.layoutPageHeight = item.pageHeight;
       } else if (item && item.start >= first && item.start <= line.end) {
         line.layoutX = item.x;
         line.layoutY = item.y;
         line.layoutHeight = item.height;
         line.layoutPage = item.pageNumber;
+        line.layoutPageHeight = item.pageHeight;
       }
     }
   }
@@ -289,7 +292,9 @@ function looksLikeReferenceContinuation(value) {
   if (!text) return true;
   if (/^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return true;
   if (/^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(?:19|20)\d{2}\b/iu.test(text)) return true;
-  if (/^(?:(?:international\s+)?journal(?:\s+of)?|proceedings|university|institute|volume|vol\.?|issue|no\.?|pp?\.?|edition|publisher|retrieved(?: from)?|available at|doi\b|https?:|www\.)/iu.test(text)) return true;
+  // Whole words only: "Porter", "Patients", "Nonetheless", "Volunteers" and
+  // "Issues raised..." are prose, not "pp." / "no." / "vol." / "issue" metadata.
+  if (/^(?:(?:international\s+)?journal(?:\s+of)?\b|proceedings\b|university\b|institute\b|volume\s*\d|vol\.?\s*\d|issue\s*\d|no\.?\s*\d|pp?\.\s*\d|pp?\s+\d|edition\b|publisher\b|retrieved(?: from)?\b|available at\b|doi\b|https?:|www\.)/iu.test(text)) return true;
   // A justified APA citation can wrap without a hanging indent. Translator,
   // editor and publication-number metadata are strong citation continuation
   // evidence even when abbreviations contain ". Capitalized" punctuation.
@@ -386,7 +391,34 @@ function isStrongPostReferenceProse(lines, index, previousLine, activeEntryLine)
 }
 
 function isPageMarkerLine(line) {
-  return /^(?:\d{1,4}|Page\s+\d{1,4}(?:\s+of\s+\d{1,4})?)$/iu.test(String(line?.text || "").trim());
+  return Boolean(line?.running) ||
+    /^(?:\d{1,4}|Page\s+\d{1,4}(?:\s+of\s+\d{1,4})?)$/iu.test(String(line?.text || "").trim());
+}
+
+// Running headers / footers: a short line repeated on 3+ pages (digits
+// ignored), e.g. "Smith 3", "CASE STUDY: CARDIOVASCULAR CONDITIONS" or a
+// broken Word field "PAGE \* MERGEFORMAT 2". Page furniture, not content.
+function markRunningLines(lines) {
+  const pagesByKey = new Map();
+  const key = text => text.toLowerCase().replace(/\d+/gu, "#").replace(/\s+/gu, " ").trim();
+  // Only lines in the top or bottom margin (when the page geometry is known),
+  // and never a line that itself looks like a citation: identical reference
+  // entries can legitimately repeat across pages.
+  const inMargin = line => !Number.isFinite(line.layoutY) || !Number.isFinite(line.layoutPageHeight) ||
+    line.layoutY >= line.layoutPageHeight * 0.88 || line.layoutY <= line.layoutPageHeight * 0.1;
+  for (const line of lines) {
+    const text = line.text.trim();
+    if (!text || text.length > 90 || (text.match(/\S+/gu) || []).length > 12) continue;
+    if (!inMargin(line) || isReferenceEntryStart(text) || CITATION_METADATA.test(text)) continue;
+    const k = key(text);
+    if (!pagesByKey.has(k)) pagesByKey.set(k, new Set());
+    pagesByKey.get(k).add(line.layoutPage || ("n" + pagesByKey.get(k).size));
+  }
+  for (const line of lines) {
+    const text = line.text.trim();
+    if (text && (pagesByKey.get(key(text))?.size || 0) >= 3 && !REFERENCE_HEADING.test(text)) line.running = true;
+  }
+  return lines;
 }
 
 function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
@@ -558,6 +590,91 @@ function isIeeeWrappedCitationContinuation(line, previousLine, activeEntryLine) 
   return /(?:\b(?:19|20)\d{2}\b|(?:\b(?:vol|pp|doi|proc|art|no|conf|technol)\s*\.?\b)|[”"]\s*,?|^10\.\d{4,9}\/)/iu.test(value);
 }
 
+// ANNOTATED BIBLIOGRAPHY
+// Citation, then the student's annotation paragraph(s), then the next
+// citation, and so on. The citations are references; the annotations are
+// the student's own prose. Exclude ONLY the citation lines (and the
+// heading), keep every annotation for AI / Similarity analysis.
+// Recognized only when at least two citations are each followed by a
+// substantive annotation, and at least half of the citations are annotated,
+// so an ordinary list with one stray paragraph still goes to review.
+const ANNOTATION_MIN_WORDS = 30;
+function annotatedBibliographyRanges(source, start, lines) {
+  const headingIndex = lines.findIndex(line => line.start <= start && start <= line.end);
+  if (headingIndex < 0) return null;
+  const entries = [];      // {first, last, lines:[...], annotation:""}
+  let current = null;      // entry being accumulated
+  let state = "SEEK";      // SEEK | ENTRY | ANNOTATION
+  let sectionEnd = source.length;
+  const closed = entry => {
+    const text = entry.lines.map(line => line.text.trim()).join(" ");
+    const last = entry.lines[entry.lines.length - 1].text.trim();
+    if (/https?:\/\/|\b10\.\d{4,9}\//iu.test(text) && !/\s/u.test(last) && entry.lines.length > 1 &&
+        /[-\/._]$/u.test(entry.lines[entry.lines.length - 2].text.trim())) return true;
+    return /(?:https?:\/\/\S+|\b10\.\d{4,9}\/\S+)\s*$/iu.test(text) ||
+      (/\b(?:19|20)\d{2}[a-z]?\b|n\.\s*d\./iu.test(text) && /[.)\]]\s*$/u.test(text));
+  };
+  const numberOf = text => {
+    const m = /^(?:\[(\d{1,3})\]|(\d{1,3})[.)])\s/u.exec(text);
+    return m ? Number(m[1] ?? m[2]) : null;
+  };
+  for (let i = headingIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+    const text = line.text.trim();
+    if (!text || isPageMarkerLine(line)) continue;
+    // A new section ends the annotated bibliography.
+    if (REFERENCE_HEADING.test(text) || KNOWN_TERMINATOR.test(text) || isIndependentAssignmentHeading(lines, i)) {
+      sectionEnd = line.start;
+      break;
+    }
+    const lastNumber = current ? numberOf(current.lines[0].text.trim()) : null;
+    const startsEntry = isReferenceEntryStart(text) ||
+      (lastNumber !== null && numberOf(text) === lastNumber + 1);
+    if (state === "ENTRY" && current) {
+      const lastLine = current.lines[current.lines.length - 1];
+      const hanging = Number.isFinite(line.layoutX) && Number.isFinite(current.lines[0].layoutX) &&
+        line.layoutPage === lastLine.layoutPage &&
+        line.layoutX >= current.lines[0].layoutX + Math.max(3.5, Number(line.layoutHeight || 0) * 0.3) &&
+        !(Number.isFinite(lastLine.layoutX) && line.layoutX > lastLine.layoutX + 3.5 && lastLine === current.lines[0] && false);
+      const isClosed = closed(current);
+      const words = (text.match(/[\p{L}][\p{L}'’-]*/gu) || []).length;
+      const strongContinuation = looksLikeReferenceContinuation(text) ||
+        /^(?:https?:\/\/|www\.|doi\b|10\.\d{4,9}\/)/iu.test(text) ||
+        // "Annals of the Rheumatic Diseases, 83(6), 730–740." after "...2023 update."
+        (words <= 12 && /\b\d+\s*\(\s*\d+(?:[-–]\d+)?\s*\)|\b\d+\s*[-–]\s*\d+\b|\bpp?\.\s*\d|\bvol\.\s*\d|\bno\.\s*\d/iu.test(text) &&
+          !looksLikeUnheadedBodyLine(text));
+      const continuation = !startsEntry && (
+        strongContinuation ||
+        (!isClosed && (hanging || isBibliographicGap(text) ||
+          (!looksLikeUnheadedBodyLine(text) && (text.match(/[\p{L}][\p{L}'’-]*/gu) || []).length <= 20))));
+      if (continuation) { current.lines.push(line); continue; }
+    }
+    if (startsEntry) {
+      current = { lines: [line], annotation: "" };
+      entries.push(current);
+      state = "ENTRY";
+      continue;
+    }
+    if (!current) return null;          // prose before any citation: not this layout
+    current.annotation += " " + text;
+    state = "ANNOTATION";
+  }
+  if (entries.length < 2) return null;
+  const annotated = entries.filter(entry => {
+    const words = (entry.annotation.match(/[\p{L}][\p{L}'’-]*/gu) || []).length;
+    return words >= ANNOTATION_MIN_WORDS && looksLikeSubstantiveBody(entry.annotation) &&
+      !isBibliographicGap(entry.annotation);
+  });
+  if (annotated.length < 2 || annotated.length * 2 < entries.length) return null;
+  const heading = lines[headingIndex];
+  const ranges = [{ start: heading.start, end: heading.end, manual: false, annotatedBibliography: true }];
+  for (const entry of entries) {
+    ranges.push({ start: entry.lines[0].start, end: entry.lines[entry.lines.length - 1].end,
+      manual: false, annotatedBibliography: true });
+  }
+  return { ranges, end: sectionEnd, citations: entries.length, annotations: annotated.length };
+}
+
 function inspectBoundary(source, start, lines) {
   const index = lines.findIndex(line => line.start <= start && start <= line.end);
   if (index < 0) {
@@ -574,7 +691,7 @@ function inspectBoundary(source, start, lines) {
   for (let i = index + 1; i < lines.length; i++) {
     const line = lines[i];
     const text = line.text.trim();
-    if (!text || /^(?:\d{1,4}|Page\s+\d{1,4}(?:\s+of\s+\d{1,4})?)$/iu.test(text)) continue;
+    if (!text || isPageMarkerLine(line)) continue;
 
     // A wrapped continuation line can itself begin like a citation
     // ("Østerås, N. (2024). EULAR recommendations..."). With a hanging indent
@@ -805,7 +922,7 @@ function replayedDocumentStart(start, lines, layoutDocument) {
 
 function inspectReferenceSections(source, fallbackStart = -1, overrides = [], layoutDocument = null) {
   source = String(source || "");
-  const lines = lineRecords(source, layoutDocument);
+  const lines = markRunningLines(lineRecords(source, layoutDocument));
   const sourceTextSha256 = crypto.createHash("sha256").update(source, "utf8").digest("hex");
   const starts = [];
   const verifiedExplicitList = require("./jk-ai-reference-proof.cjs").verifiedListOfReferences(source,layoutDocument);
@@ -874,6 +991,14 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
       excludedUntil = verifiedExplicitList.end;
       continue;
     }
+    // Annotated bibliography: exclude the citations, keep the annotations.
+    const annotated = annotatedBibliographyRanges(source, start, lines);
+    if (annotated) {
+      ranges.push(...annotated.ranges);
+      excludedUntil = annotated.end;
+      continue;
+    }
+
     const replayStart = replayedDocumentStart(start, lines, layoutDocument);
     if (Number.isInteger(replayStart)) {
       ranges.push({start, end: replayStart, manual: false});
