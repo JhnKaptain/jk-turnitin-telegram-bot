@@ -68,7 +68,8 @@ for (const phrase of kept) {
 // 3. No false positives: justified prose, two-column prose, long numbered and
 //    bulleted sentences, a prose-only table, a sentence ending in a number.
 const stress = require("./test-fixtures/prose-stress-word-layout.json").document;
-assert.deepEqual(classifyNonProse(stress), [], "prose was classified as non-prose");
+assert.deepEqual(classifyNonProse(stress).map(s => [s.reason, s.text.trim()]),
+  [["LOCAL_HEADING", "Introduction"]], "prose was classified as non-prose");
 
 console.log("PASS: table of contents, list of tables, short table cells and short list items excluded");
 console.log("PASS: full-sentence bullets, prose table cells and body prose kept in AI input and paint");

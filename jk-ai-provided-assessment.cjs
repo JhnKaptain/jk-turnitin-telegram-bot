@@ -13,10 +13,12 @@ function detectFourQuestionTemplate(document) {
   if (typeof document?.text !== "string" || !Array.isArray(document.pages) ||
       document.pages.length < 4) return no("NO_MULTI_PAGE_TEMPLATE");
   const source=document.text;
-  const question=/((?:^|\n)[ \t]*)(QUESTION[ \t]+(ONE|TWO|THREE|FOUR)\s*\(\s*\d{1,3}\s+MARKS\s*\)\s*:)/gimu;
+  // Word small caps extract as "Q UESTION O NE (25 MARKS):" (a full-size
+  // capital, then a separate run of small capitals). Accept that single split.
+  const question=/((?:^|\n)[ \t]*)(Q ?UESTION[ \t]+(O ?NE|T ?WO|T ?HREE|F ?OUR)\s*\(\s*\d{1,3}\s+M ?ARKS\s*\)\s*:)/gimu;
   const headings=[...source.matchAll(question)].map(m=>({
     start:m.index+m[1].length, end:m.index+m[0].length,
-    ordinal:m[3].toUpperCase()
+    ordinal:m[3].replace(/\s+/gu,"").toUpperCase()
   }));
   if (headings.length!==4 || headings.some((q,i)=>q.ordinal!==ordered[i]))
     return no("QUESTION_SEQUENCE_UNVERIFIED");
@@ -51,7 +53,7 @@ function detectFourQuestionTemplate(document) {
   // The post-reference declaration is part of the same *provided* template
   // only when its mandatory instruction text matches. If a student has
   // written an actual declaration afterward, it remains in source input.
-  const declaration=/\bGENERATIVE\s+AI\s+USE\s+DECLARATION\s*:\s*MANDATORY\b/iu.exec(source);
+  const declaration=/\bG ?ENERATIVE\s+A ?I\s+U ?SE\s+D ?ECLARATION\s*:\s*M ?ANDATORY\b/iu.exec(source);
   if(declaration && declaration.index>headings[3].end) {
     const tail=source.slice(declaration.index,declaration.index+750);
     const hasInstruction=/Complete\s+the\s+Generative\s+AI\s+use\s+declaration\b/iu.test(tail);
