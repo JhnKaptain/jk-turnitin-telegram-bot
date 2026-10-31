@@ -4,12 +4,13 @@
 // Excludes verified structural text coordinates before drawing rectangles.
 const { classifyAiStructuralText } = require("./jk-ai-structure.js");
 const { getVerifiedCoverSpans } = require("./jk-ai-cover-visual-guard.cjs");
+const { visualReferenceSpans } = require("./jk-ai-reference-proof.cjs");
 
 function excludeAiNonProseRanges(ranges, document) {
   if (!Array.isArray(ranges)) return [];
   if (typeof document?.text !== "string" || !Array.isArray(document.pages)) return ranges;
   const source = document.text;
-  const spans = [...classifyAiStructuralText(document), ...getVerifiedCoverSpans(document)]
+  const spans = [...classifyAiStructuralText(document), ...getVerifiedCoverSpans(document), ...visualReferenceSpans(source)]
     .filter(s => Number.isInteger(s.start) && Number.isInteger(s.end) &&
       s.start >= 0 && s.end > s.start && s.end <= source.length &&
       source.slice(s.start, s.end) === s.text)
