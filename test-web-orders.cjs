@@ -151,6 +151,26 @@ const W = require("./jk-web-orders.cjs");
   assert.equal(fs.readFileSync(r0.file, "utf8"), "%PDF-1.4 similarity");
   assert(orders.statusFor(order).messages.some(m => m.text === "Your AI report"), "delivery caption shown");
 
+  // 4a. Manual delivery keeps the admin's file name; deletion rules.
+  global.fetch = async () => ({ ok: true, status: 200, arrayBuffer: async () => Buffer.from("%PDF manual") });
+  await bot.telegram.sendDocument(String(order.uid), "AgADother", { filename: "Smith Essay - Similarity Report.pdf" });
+  global.fetch = realFetch;
+  assert.equal(orders.statusFor(order).reports.at(-1).name, "Smith Essay - Similarity Report.pdf", "original file name kept");
+  const processing = orders.newOrder("3.3.3.3");
+  orders.addUpload(processing.order, "p.docx", Buffer.from("processing doc"));
+  await orders.checkout(processing.order, { files: [{ type: "CHECK" }], phone: "0712345678" });
+  const pSub = submissions[processing.order.uid];
+  paymentRefs[pSub.api_ref].status = "COMPLETE";
+  paidJobs[pSub.batchId] = { jobId: pSub.batchId, batchId: pSub.batchId, userId: processing.order.uid, status: "API_PROCESSING" };
+  assert.throws(() => orders.deleteData(processing.order), /still being prepared/, "files kept while the bot needs them");
+  const deleted = orders.deleteData(order);
+  assert.equal(deleted.deleted, true);
+  assert.deepEqual(deleted.reports, []);
+  assert.deepEqual(deleted.messages, []);
+  assert(deleted.files.every(f => f.name === "deleted"));
+  assert.throws(() => orders.reportFile(order, 0), e => e.status === 404);
+  assert.throws(() => orders.readWebFile(sub.files[0].file_id), /not found|ENOENT/);
+
   // 4b. A failed STK initiation is reported as PAYMENT_FAILED and can be resent.
   const failing = orders.newOrder("4.4.4.4");
   orders.addUpload(failing.order, "f.docx", Buffer.from("failing stk"));
@@ -188,11 +208,12 @@ const W = require("./jk-web-orders.cjs");
   filterMode = "FILTERED";
 
   // 8. Persistence: a restart reloads orders and rebuilds the submission.
-  delete submissions[order.uid];
+  delete submissions[processing.order.uid];
   const reloaded = W.createWebOrders(d);
-  const again = reloaded.authorize(order.id, token);
-  assert.equal(reloaded.statusFor(again).reports.length, 2);
-  assert.equal(reloaded.readWebFile(sub.files[0].file_id).toString(), "first document");
+  const again = reloaded.authorize(processing.order.id, processing.token);
+  assert.equal(reloaded.statusFor(again).stage, "PROCESSING");
+  assert.equal(reloaded.readWebFile(pSub.files[0].file_id).toString(), "processing doc");
+  assert.equal(reloaded.statusFor(reloaded.authorize(order.id, token)).deleted, true, "deletion persists");
 
   // 9. bot.js wiring: every dependency handed to installWebOrders exists in bot.js.
   const botSource = fs.readFileSync(path.join(__dirname, "bot.js"), "utf8");
@@ -213,6 +234,10 @@ const W = require("./jk-web-orders.cjs");
   }
   assert(/if \(webOrders && require\("\.\/jk-web-orders\.cjs"\)\.isWebFileId\(fileId\)\)/.test(botSource), "provider download reads website uploads");
   assert(botSource.includes('bot.command("webdeliver"'), "/webdeliver admin command");
+  assert(/isWebUserId\(userId\)\s*\?\s*API_REPORTS_DELIVERED_MESSAGE\s*:\s*REPORTS_DELIVERED_MESSAGE/.test(botSource),
+    "web orders get the API delivery message (no website link) after /donebatch");
+  assert(/isWebUserId\(target\.userId\) && doc\.file_name\s*\?\s*\{ filename: doc\.file_name \}/.test(botSource),
+    "manual delivery passes the original file name for web orders");
 
   fs.rmSync(dataDir, { recursive: true, force: true });
   console.log("PASS: website config mirrors Telegram prices, discount window, code and filter rules (no recheck)");

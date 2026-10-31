@@ -6124,7 +6124,12 @@ bot.command("donebatch", async (ctx) => {
     markLatestPaidJobDelivered(userId);
 
     try {
-      await bot.telegram.sendMessage(userId, REPORTS_DELIVERED_MESSAGE);
+      // JK_WEB_ORDERS_V1: website customers are already on the site, so they
+      // get the API delivery message (no website link).
+      await bot.telegram.sendMessage(userId,
+        require("./jk-web-orders.cjs").isWebUserId(userId)
+          ? API_REPORTS_DELIVERED_MESSAGE
+          : REPORTS_DELIVERED_MESSAGE);
     } catch {}
   }
 
@@ -8600,6 +8605,9 @@ bot.on("document", async (ctx) => {
 
     try {
       await bot.telegram.sendDocument(target.userId, doc.file_id, {
+        // JK_WEB_ORDERS_V1: keep the admin's file name for website downloads.
+        ...(require("./jk-web-orders.cjs").isWebUserId(target.userId) && doc.file_name
+          ? { filename: doc.file_name } : {}),
         caption: target.sentCount === 0 ? target.caption || undefined : undefined
       });
 
