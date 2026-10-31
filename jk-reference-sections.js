@@ -688,7 +688,7 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
   const lines = lineRecords(source, layoutDocument);
   const sourceTextSha256 = crypto.createHash("sha256").update(source, "utf8").digest("hex");
   const starts = [];
-  const verifiedExplicitList = require("./jk-ai-reference-proof.cjs").verifiedListOfReferences(source);
+  const verifiedExplicitList = require("./jk-ai-reference-proof.cjs").verifiedListOfReferences(source,layoutDocument);
   const seen = new Set();
   const re = /(^|\n)[ \t]*(?:\d{1,3}[.)][ \t]+)?(harvard[ \t]+reference[ \t]+list|apa[ \t]+reference[ \t]+list|list[ \t]+of[ \t]+references?|reference list|references?|bibliography|works cited|table of cases|table of legislation)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
   let match;
