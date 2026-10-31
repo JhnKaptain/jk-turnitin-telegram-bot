@@ -5901,6 +5901,93 @@ bot.start(async (ctx) => {
 // =====================
 // ADMIN COMMANDS
 // =====================
+// JK_CREDIT_FREE_AI_ADMIN_REPLAY_V1
+// Reuses the persisted provider bundle. NO call to Sapling / Quetext.
+// Both explicit requests and the one-time saved job repair deliver ADMIN ONLY.
+const adminAiReplayActive = new Set();
+async function deliverSavedAiReportToAdmin(bundlePath, label) {
+  const full = path.resolve(String(bundlePath || ""));
+  const dataRoot = path.resolve(DATA_DIR, "provider-runs") + path.sep;
+  if (!full.startsWith(dataRoot) || path.basename(full) !== "bundle.json" ||
+      !fs.existsSync(full)) throw new Error("Original saved provider bundle unavailable");
+  const saved = JSON.parse(fs.readFileSync(full, "utf8"));
+  if (!saved?.reportIdentity?.jkSubmissionId ||
+      !saved?.aiDetection?.available ||
+      !saved?.canonicalDocument?.pages?.length ||
+      !Array.isArray(saved.aiDetection.ranges)) {
+    throw new Error("No verified saved AI detection data; refusing new provider request");
+  }
+  if (adminAiReplayActive.has(full)) throw new Error("Replay already in progress");
+  adminAiReplayActive.add(full);
+  try {
+    const {renderSavedAiOnlyFromBundle} = require("./jk-report-renderer-max.js");
+    const outfile = path.join(path.dirname(full), "reports",
+      "ADMIN_SAVED_AI_HIGHLIGHTS_REPLAY_" +
+      String(saved.reportIdentity.jkSubmissionId).replace(/[^A-Za-z0-9]/g,"") + ".pdf");
+    await renderSavedAiOnlyFromBundle(full,outfile);
+    await bot.telegram.sendDocument(ADMIN_ID, {
+      source: fs.createReadStream(outfile),
+      filename: path.basename(outfile)
+    }, {caption:
+      "ADMIN-ONLY REGENERATED AI REPORT (NO API CREDITS). " +
+      "Reuses SAVED Sapling result/percentage; bibliography highlight layout corrected. " +
+      "Score has NOT been recalculated. " + String(label||"").slice(0,100)});
+    return outfile;
+  } finally {adminAiReplayActive.delete(full);}
+}
+function findSavedBundleForSubmission(submissionId) {
+  const root = path.resolve(DATA_DIR,"provider-runs");
+  if (!fs.existsSync(root)) return null;
+  const found=[];
+  for(const ent of fs.readdirSync(root,{withFileTypes:true})){
+    if (!ent.isDirectory()) continue;
+    const bundle=path.join(root,ent.name,"bundle.json");
+    if (!fs.existsSync(bundle)) continue;
+    try{
+      const saved=JSON.parse(fs.readFileSync(bundle,"utf8"));
+      if(saved?.reportIdentity?.jkSubmissionId===submissionId &&
+         /^SC60100300GS07(?:\b|[ ._-])/i.test(
+           String(saved?.reportIdentity?.filename||"SC60100300GS07"))) found.push(bundle);
+    }catch {}
+  }
+  return found.length===1?found[0]:null;
+}
+bot.command("replayai", async (ctx) => {
+  if(ctx.from?.id!==ADMIN_ID || ctx.chat?.type!=="private")return;
+  const input=String(ctx.message?.text||"").trim().split(/\s+/u);
+  const submissionId=input[1];
+  if(!/^trn:oid:::1:[1-9]\d{9}$/u.test(submissionId||"")) {
+    await ctx.reply("Usage: /replayai trn:oid:::1:3555822768\n" +
+      "Uses saved AI data only. No Sapling or Quetext request. Admin-only delivery.");
+    return;
+  }
+  const bundle=findSavedBundleForSubmission(submissionId);
+  if(!bundle){await ctx.reply("Saved provider bundle not uniquely available. No API request made.");return;}
+  try{
+    await deliverSavedAiReportToAdmin(bundle,"Requested by administrator");
+    await ctx.reply("Credit-free saved AI report delivered to this admin chat. The original detection percentage was reused.");
+  }catch(e){await ctx.reply("Credit-free replay failed: "+String(e.message||e).slice(0,250));}
+});
+async function sendOneTimeSavedAiCorrection() {
+  // Explicit, single-submission repair request, not a periodic scan.
+  const id="trn:oid:::1:3555822768";
+  const bundle=findSavedBundleForSubmission(id);
+  if(!bundle){
+    console.warn("ADMIN SAVED AI REPLAY: target bundle not available; no API call");
+    return;
+  }
+  const marker=path.join(path.dirname(bundle),"admin-ai-replay-"+id.replace(/[^A-Za-z0-9]/g,"")+".sent");
+  if(fs.existsSync(marker))return;
+  try {
+    await deliverSavedAiReportToAdmin(bundle,"One-time correction requested by administrator");
+    fs.writeFileSync(marker,JSON.stringify({submissionId:id,deliveredAt:new Date().toISOString()}),
+      {encoding:"utf8",flag:"wx"});
+    console.log("ADMIN SAVED AI REPLAY: delivered",id);
+  }catch(e){
+    console.error("ADMIN SAVED AI REPLAY: not delivered",String(e?.message||e));
+  }
+}
+
 bot.command("adminhelp", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
   await showAdminDashboard(ctx);
@@ -14513,6 +14600,9 @@ app.listen(port, async () => {
   }
 
   await syncAdminCommandMenu();
+  // One-off rerender of the specifically requested saved submission, ADMIN only.
+  setTimeout(() => { sendOneTimeSavedAiCorrection().catch(err =>
+    console.error("Saved AI correction delivery failed:",err?.message||err)); }, 8000);
   paidAiHighlights.start();
 
   startBotDisplayNameScheduler();

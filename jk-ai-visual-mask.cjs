@@ -10,7 +10,7 @@ function excludeAiNonProseRanges(ranges, document) {
   if (!Array.isArray(ranges)) return [];
   if (typeof document?.text !== "string" || !Array.isArray(document.pages)) return ranges;
   const source = document.text;
-  const spans = [...classifyAiStructuralText(document), ...getVerifiedCoverSpans(document), ...visualReferenceSpans(source)]
+  const spans = [...classifyAiStructuralText(document), ...getVerifiedCoverSpans(document), ...visualReferenceSpans(source,document)]
     .filter(s => Number.isInteger(s.start) && Number.isInteger(s.end) &&
       s.start >= 0 && s.end > s.start && s.end <= source.length &&
       source.slice(s.start, s.end) === s.text)

@@ -1,0 +1,22 @@
+"use strict";
+const assert=require("node:assert/strict");
+const fs=require("node:fs");
+const path=require("node:path");
+const bot=fs.readFileSync(path.join(__dirname,"bot.js"),"utf8");
+const renderer=fs.readFileSync(path.join(__dirname,"jk-report-renderer-max.js"),"utf8");
+const proof=fs.readFileSync(path.join(__dirname,"jk-ai-reference-proof.cjs"),"utf8");
+const code=bot.slice(bot.indexOf("// JK_CREDIT_FREE_AI_ADMIN_REPLAY_V1"),bot.indexOf('bot.command("adminhelp"'));
+assert(code.includes('bot.command("replayai"'));
+assert(code.includes('ctx.from?.id!==ADMIN_ID'));
+assert(code.includes('ctx.chat?.type!=="private"'));
+assert(code.includes('bot.telegram.sendDocument(ADMIN_ID'));
+assert(code.includes('saved?.reportIdentity?.jkSubmissionId===submissionId'));
+assert(code.includes('renderSavedAiOnlyFromBundle(full,outfile)'));
+assert(code.includes("const id=\"trn:oid:::1:3555822768\""));
+assert(!/\b(?:runProviderPipeline|buildProviderJobBundle|submitPaidJobToProviders|querySapling|requestSapling)\s*\(/iu.test(code),
+  "A credit-free replay may not contact paid providers");
+assert(renderer.includes("async function renderSavedAiOnlyFromBundle(bundlePath, outputPath)"));
+assert(renderer.includes("AI_RENDER_REFERENCE_HIGHLIGHT_INTEGRITY_FAILED"));
+assert(proof.includes("function verifiedReferenceFromLayout(source,layoutDocument)"));
+assert(proof.includes("function layoutHeadings(layoutDocument)"));
+console.log("PASS: admin-only cached AI replay requires saved bundle and cannot invoke paid provider pipeline");
