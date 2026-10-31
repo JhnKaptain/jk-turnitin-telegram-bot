@@ -234,6 +234,11 @@ const W = require("./jk-web-orders.cjs");
   }
   assert(/if \(webOrders && require\("\.\/jk-web-orders\.cjs"\)\.isWebFileId\(fileId\)\)/.test(botSource), "provider download reads website uploads");
   assert(botSource.includes('bot.command("webdeliver"'), "/webdeliver admin command");
+  const moduleSource = fs.readFileSync(path.join(__dirname, "jk-web-orders.cjs"), "utf8");
+  for (const origin of ["https://jkacademictoolshub.com", "https://www.jkacademictoolshub.com", "https://john-kaptain.github.io"]) {
+    assert(moduleSource.includes(origin), "website origin allowed by default: " + origin);
+  }
+  assert(botSource.includes("services here: https://jkacademictoolshub.com/"), "delivery message links the new domain");
   assert(/isWebUserId\(userId\)\s*\?\s*API_REPORTS_DELIVERED_MESSAGE\s*:\s*REPORTS_DELIVERED_MESSAGE/.test(botSource),
     "web orders get the API delivery message (no website link) after /donebatch");
   assert(/isWebUserId\(target\.userId\) && doc\.file_name\s*\?\s*\{ filename: doc\.file_name \}/.test(botSource),

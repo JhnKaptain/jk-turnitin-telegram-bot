@@ -384,7 +384,7 @@ To protect the Turnitin account from possible restrictions or bans linked to ins
 Your academic content remains unchanged.`;
 
 const REPORTS_DELIVERED_MESSAGE =
-  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://john-kaptain.github.io/johnkaptain-academic-tools-hub/";
+  "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin. Access our other writing services here: https://jkacademictoolshub.com/";
 
 // JK_API_DELIVERY_MESSAGE_V1
 const API_REPORTS_DELIVERED_MESSAGE =
