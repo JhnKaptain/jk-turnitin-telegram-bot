@@ -275,7 +275,8 @@ function classifyAiStructuralText(document) {
   }
   return spans.concat(
     require("./jk-ai-layout-extra.cjs").classifyExtra(document),
-    require("./jk-ai-structure-layout.cjs").classifyLayoutStructures(document)
+    require("./jk-ai-structure-layout.cjs").classifyLayoutStructures(document),
+    require("./jk-ai-provided-assessment.cjs").classifyProvidedAssessmentTemplate(document)
   );
 }
 function excludeAiStructuralText(prepared, document) {
