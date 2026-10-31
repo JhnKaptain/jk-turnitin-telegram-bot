@@ -524,7 +524,10 @@ function createWebOrders(d) {
 function installWebOrders(d) {
   const orders = createWebOrders(d);
   orders.installTelegramRouting(d.bot);
-  const allowed = String(process.env.WEB_ALLOWED_ORIGINS || "https://john-kaptain.github.io")
+  // The website's own domain (www and bare) plus the old GitHub Pages address
+  // during the move. WEB_ALLOWED_ORIGINS on Render overrides this list.
+  const allowed = String(process.env.WEB_ALLOWED_ORIGINS ||
+    "https://jkacademictoolshub.com,https://www.jkacademictoolshub.com,https://john-kaptain.github.io")
     .split(",").map(s => s.trim()).filter(Boolean);
   const app = d.app;
 
