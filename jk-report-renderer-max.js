@@ -6440,6 +6440,23 @@ async function renderAi(
 }
 
 
+// Offline ADMIN repair: use SAVED AI detection and canonical source, never a
+// provider request. Do not mutate saved results or deliver to the client.
+async function renderSavedAiOnlyFromBundle(bundlePath, outputPath) {
+  const p = path.resolve(String(bundlePath || ""));
+  if (!fs.existsSync(p)) throw new Error("Saved provider bundle unavailable");
+  const bundle = JSON.parse(fs.readFileSync(p, "utf8"));
+  if (!bundle?.canonicalDocument || !bundle?.aiDetection?.available ||
+      !Array.isArray(bundle.aiDetection.ranges)) {
+    throw new Error("Saved canonical source or AI results unavailable");
+  }
+  ensureProviderIdentity(bundle);
+  validateStrictReportIdentity(bundle);
+  bundle.__bundlePath = p;
+  fs.mkdirSync(path.dirname(outputPath), {recursive:true});
+  return renderAi(bundle, outputPath);
+}
+
 async function renderJkReports({
   bundlePath = "bundle.json",
   outputDir
@@ -6595,6 +6612,7 @@ async function renderAdminLowScoreAiReview({ bundle, bundlePath, outputPath }) {
 }
 
 module.exports = {
+  renderSavedAiOnlyFromBundle,
   renderAdminLowScoreAiReview,
   renderJkReports,
   aiInfo,
