@@ -3,7 +3,7 @@
 const crypto = require("node:crypto");
 
 const REFERENCE_HEADING = /^(?:\d{1,3}[.)]\s+)?(?:harvard\s+reference\s+list|apa\s+reference\s+list|(?:list\s+of\s+references?|reference\s+list)|references?|bibliography|works cited|table of cases|table of legislation)\s*:?\s*$/i;
-const KNOWN_TERMINATOR = /^(?:\d{1,3}[.)]\s+)?(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|(?:generative\s+)?ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
+const KNOWN_TERMINATOR = /^(?:\d{1,3}[.)]\s+)?(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|(?:generative\s+)?ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s*:\s*[^\n]*)?(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
 const STRUCTURAL_FOLLOWER = /^(?:date|context|children|apst|purpose|overview|learning objectives|introduction|background|stimulus behaviour|strategies used|reflection|references|appendix|appendices|table of contents)\s*:?\s*$|^\d+(?:\.\d+)*[.)]?\s+[A-Z]/i;
 
 const SECTION_STOPWORDS = new Set([
