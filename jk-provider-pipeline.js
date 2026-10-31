@@ -733,6 +733,13 @@ async function runProviderPipeline({
   const referenceIntegrity = require("./jk-reference-integrity.cjs");
   referenceIntegrity.validateExcludedSourceMappings(similarityPrepared, "Similarity");
   referenceIntegrity.validateExcludedSourceMappings(aiPrepared, "AI");
+  // A known bibliography must never reach a provider through an unrecognized
+  // boundary. Verify independently before any paid API call.
+  const verifyReference = require("./jk-ai-reference-proof.cjs").verifyPreparedReferenceIsolation;
+  verifyReference(aiPrepared, document.text, "AI");
+  if (String(similarityMode).toUpperCase() === "FILTERED") {
+    verifyReference(similarityPrepared, document.text, "Similarity");
+  }
 
   const eligibility =
     aiEligibility(
