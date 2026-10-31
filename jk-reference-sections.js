@@ -2,8 +2,8 @@
 
 const crypto = require("node:crypto");
 
-const REFERENCE_HEADING = /^(?:\d{1,3}[.)]\s+)?(?:harvard\s+reference\s+list|apa\s+reference\s+list|reference list|references?|bibliography|works cited|table of cases|table of legislation)\s*:?\s*$/i;
-const KNOWN_TERMINATOR = /^(?:\d{1,3}[.)]\s+)?(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
+const REFERENCE_HEADING = /^(?:\d{1,3}[.)]\s+)?(?:harvard\s+reference\s+list|apa\s+reference\s+list|(?:list\s+of\s+references?|reference\s+list)|references?|bibliography|works cited|table of cases|table of legislation)\s*:?\s*$/i;
+const KNOWN_TERMINATOR = /^(?:\d{1,3}[.)]\s+)?(?:(?:appendix|appendices|glossary|acknowledgements?|acknowledgments?|exhibits|(?:generative\s+)?ai\s+(?:use|usage|assistance|tools?)\s+(?:declaration|statement|acknowledg(?:e)?ment|disclosure))(?:\s*:\s*[^\n]*)?(?:\s+.*)?|(?:tables?|figures?|charts?)(?:\s+\d+.*)?)\s*:?\s*$/i;
 const STRUCTURAL_FOLLOWER = /^(?:date|context|children|apst|purpose|overview|learning objectives|introduction|background|stimulus behaviour|strategies used|reflection|references|appendix|appendices|table of contents)\s*:?\s*$|^\d+(?:\.\d+)*[.)]?\s+[A-Z]/i;
 
 const SECTION_STOPWORDS = new Set([
@@ -689,7 +689,7 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
   const sourceTextSha256 = crypto.createHash("sha256").update(source, "utf8").digest("hex");
   const starts = [];
   const seen = new Set();
-  const re = /(^|\n)[ \t]*(?:\d{1,3}[.)][ \t]+)?(harvard[ \t]+reference[ \t]+list|apa[ \t]+reference[ \t]+list|reference list|references?|bibliography|works cited|table of cases|table of legislation)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
+  const re = /(^|\n)[ \t]*(?:\d{1,3}[.)][ \t]+)?(harvard[ \t]+reference[ \t]+list|apa[ \t]+reference[ \t]+list|list[ \t]+of[ \t]+references?|reference list|references?|bibliography|works cited|table of cases|table of legislation)[ \t]*:?[ \t]*(?=\r?\n|$)/gim;
   let match;
   while ((match = re.exec(source))) {
     const start = match.index + match[1].length;
