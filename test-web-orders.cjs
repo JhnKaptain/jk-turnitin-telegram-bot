@@ -20,7 +20,7 @@ const W = require("./jk-web-orders.cjs");
   const paymentRefs = {}, paidJobs = {}, submissions = {};
   let discountWindow = false, filterMode = "FILTERED", inactive = false;
   const stkCalls = [];
-  const adminMessages = [], proofCalls = [];
+  const adminMessages = [], proofCalls = [], highlightBuys = [];
   let failNextStk = false;
   const d = {
     bot, DATA_DIR: dataDir, ADMIN_ID: 111, MAX_BATCH_FILES: 10, submissions,
@@ -68,6 +68,9 @@ const W = require("./jk-web-orders.cjs");
     buildAdminDocumentCaption: ({ userId, file }) => "User " + userId + " " + file.file_name,
     adminActionKeyboard: () => ({ reply_markup: { inline_keyboard: [] } }),
     supportedScanUpload: n => /\.(pdf|docx|doc|pptx)$/i.test(n),
+    processingMaxMinutes: () => 20,
+    highlightOffers: job => (job?.deliveredAt ? [{ id: "1234567890", name: "Essay.docx", price: 50, state: "AVAILABLE" }] : []),
+    buyHighlights: async (uid, id, phone) => { highlightBuys.push({ uid, id, phone }); },
     sendAdminMessage: async (text, extra) => { adminMessages.push({ text, extra }); },
     handleMpesaProofText: async (ctx, sub, text) => { proofCalls.push({ uid: ctx.from.id, text }); await ctx.reply("✅ Payment proof received. Admin will verify."); },
     TILL_NUMBER: "6164915"
@@ -280,6 +283,39 @@ const W = require("./jk-web-orders.cjs");
   assert(/isWebUserId\(target\.userId\) && doc\.file_name\s*\?\s*\{ filename: doc\.file_name \}/.test(botSource),
     "manual delivery passes the original file name for web orders");
 
+  // 8b. Turnitin card chat: closed after payment for the stated processing
+  //     time (20 min here), open before payment and after delivery/time.
+  {
+    discountWindow = false; inactive = false;
+    const o = orders.newOrder("8.8.8.8").order;
+    orders.addUpload(o, "chat.docx", Buffer.from("chat window"));
+    await orders.checkout(o, { files: [{ type: "CHECK" }], phone: "0712345678" });
+    const sb = submissions[o.uid];
+    await orders.clientMessage(o, "Before paying: is the price right?");
+    paymentRefs[sb.api_ref].status = "COMPLETE";
+    paidJobs[sb.batchId] = { jobId: sb.batchId, batchId: sb.batchId, userId: o.uid, status: "API_PROCESSING", paidAt: Date.now() };
+    const st = orders.statusFor(o);
+    assert.equal(st.stage, "PROCESSING");
+    assert(st.chatOpensAt > Date.now() && st.chatOpensAt <= Date.now() + 20 * 60_000, "page shows when chat opens");
+    await assert.rejects(orders.clientMessage(o, "Where are my reports?"), e => e.status === 409 && /usually arrive within 20 minutes/.test(e.message));
+    paidJobs[sb.batchId].paidAt = Date.now() - 21 * 60_000;
+    assert.equal(orders.statusFor(o).chatOpensAt, null);
+    await orders.clientMessage(o, "It has been 21 minutes, no reports yet");
+    assert.deepEqual(orders.statusFor(o).highlights, [], "no highlights before delivery");
+
+    // AI highlights button after delivery, bought from the order page.
+    fs.writeFileSync(pdf, "%PDF-1.4 chat");
+    await bot.telegram.sendDocument(o.uid, { source: fs.createReadStream(pdf), filename: "AI Report.pdf" });
+    paidJobs[sb.batchId].deliveredAt = Date.now();
+    const done = orders.statusFor(o);
+    assert.equal(done.stage, "DELIVERED");
+    assert.equal(done.chatOpensAt, null, "chat open after delivery");
+    assert.deepEqual(done.highlights, [{ id: "1234567890", name: "Essay.docx", price: 50, state: "AVAILABLE" }]);
+    await orders.buyHighlights(o, "1234567890", "0712345678");
+    assert.deepEqual(highlightBuys.at(-1), { uid: o.uid, id: "1234567890", phone: "0712345678" });
+    await assert.rejects(orders.buyHighlights(o, "999", "0712345678"), e => e.status === 404);
+  }
+
   // 9. Disk retention: unpaid 36 h; paid uploads 36 h after delivery and at
   //    most 48 h (kept while processing); reports 48 h; records 30 days.
   {
@@ -329,6 +365,8 @@ const W = require("./jk-web-orders.cjs");
   }
 
   fs.rmSync(dataDir, { recursive: true, force: true });
+  console.log("PASS: Turnitin card chat closed during the stated processing time, open before payment and after delivery/time");
+  console.log("PASS: AI highlights button with price on delivered orders; purchase goes through the bot's highlights service");
   console.log("PASS: disk retention: unpaid 36 h, paid documents 36 h after delivery / max 48 h (kept while processing), reports 48 h, records 30 days");
   console.log("PASS: website config mirrors Telegram prices, discount window, code and filter rules (no recheck)");
   console.log("PASS: uploads, token auth, checkout via the bot's own STK payment, admin receives documents");

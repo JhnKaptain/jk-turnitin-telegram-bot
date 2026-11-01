@@ -74,7 +74,11 @@ function createService(deps) {
   const getPrice = () => price(deps.env || process.env);
   const configured = () => getPrice() !== null && (!deps.configured || deps.configured());
   const save = () => atomic(storePath, store);
-  const msg = (userId, text, extra) => deps.telegram.sendMessage(userId, text, extra);
+  // Website (Turnitin card) customers see the offer as a button with the
+  // price on their order page, so the Telegram-style status texts are not
+  // posted into their chat.
+  const isWeb = userId => Boolean(deps.isWebUser?.(userId));
+  const msg = (userId, text, extra) => isWeb(userId) ? Promise.resolve({}) : deps.telegram.sendMessage(userId, text, extra);
   const recordFor = (userId, id) => Object.values(records).find(r => r.userId === Number(userId) && r.id === id);
   const owned = (ctx, r) => r && Number(ctx.from?.id) === r.userId && Number(ctx.chat?.id) === r.userId;
   const buttons = r => {
@@ -107,7 +111,7 @@ function createService(deps) {
     } catch { return null; }
   }
   function deliveryOffer(job) {
-    if (!configured() || Number(job.userId) === Number(deps.adminId)) return { text: "", replyMarkup: { inline_keyboard: [] } };
+    if (!configured() || Number(job.userId) === Number(deps.adminId) || isWeb(job.userId)) return { text: "", replyMarkup: { inline_keyboard: [] } };
     const rows = [], seen = new Set();
     for (const file of job.files || []) {
       const id = idOf(file);
@@ -268,10 +272,15 @@ function createService(deps) {
     const number = phone(text);
     if (!number) { await stateMessage(r, "Enter your M-Pesa phone number (07XXXXXXXX or 01XXXXXXXX)."); return true; }
     if (!pdfExists(r.outputPath)) { r.status = "OFFERED"; save(); await msg(r.userId, "The prepared PDF is unavailable. No payment request was sent."); return true; }
+    r.status = "SUBMITTING"; save(); // before any await: a second message cannot start another payment
+    await stateMessage(r, "Sending an M-Pesa payment request for KES " + r.amount + ".");
+    background(r, () => startStk(r, number));
+    return true;
+  }
+  async function startStk(r, number) {
     const attempt = { apiRef: "AIHL_" + token(), amount: r.amount, phone: number, createdAt: now(), invoiceId: null };
     r.attempts.push(attempt); r.status = "SUBMITTING"; save();
-    await stateMessage(r, "Sending an M-Pesa payment request for KES " + r.amount + ".");
-    background(r, async () => {
+    {
       try {
         const response = await timed(deps.sendStk({ amount: attempt.amount, phone_number: number, api_ref: attempt.apiRef }));
         const invoice = response?.invoice || response?.data?.invoice || response;
@@ -287,8 +296,54 @@ function createService(deps) {
         }
         throw error;
       }
+    }
+  }
+
+  // ---- Website (Turnitin card) ----
+  const WEB_STATE = { PREPARING: "CHECKING", SUBMITTING: "WAITING_PAYMENT", PENDING: "WAITING_PAYMENT",
+    UNCERTAIN: "WAITING_PAYMENT", REVIEW: "REVIEW", PAID: "DELIVERING", DELIVERED: "DELIVERED", FAILED: "FAILED" };
+  function webOffers(job) {
+    if (!job || !configured() || !isWeb(job.userId)) return [];
+    const out = [], seen = new Set();
+    for (const file of job.files || []) {
+      const id = idOf(file);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const r = recordFor(job.userId, id);
+      const available = Boolean(source(job.userId, id));
+      if (!r && !available) continue;
+      let state = r ? WEB_STATE[r.status] || "AVAILABLE" : "AVAILABLE";
+      if (r?.status === "OFFERED" && r.preparationError) state = "UNAVAILABLE";
+      if (!available && !r?.paidAt && !["CHECKING", "WAITING_PAYMENT", "REVIEW"].includes(state)) continue;
+      out.push({ id, name: String(file.file_name || "Document"), price: r?.paidAt ? r.amount : getPrice(), state });
+    }
+    return out;
+  }
+  async function webBuy(userId, id, rawPhone) {
+    const fail = (message, status = 409) => { const e = new Error(message); e.status = status; throw e; };
+    let r = recordFor(userId, id);
+    if (r?.paidAt) return "DELIVERED";
+    if (r && busy.has(r.token)) return "CHECKING";
+    if (r && ["SUBMITTING", "PENDING", "UNCERTAIN", "REVIEW"].includes(r.status)) { background(r, () => verify(r)); return "WAITING_PAYMENT"; }
+    if (!configured()) fail("AI highlights are currently unavailable.");
+    const number = phone(rawPhone);
+    if (!number) fail("Enter a valid M-Pesa number (07XXXXXXXX or 01XXXXXXXX).", 400);
+    const item = source(userId, id);
+    if (!item) fail("AI highlights are no longer available for this document. No payment was requested.", 410);
+    if (!r) { r = { token: token(), id, userId: Number(userId), createdAt: now(), attempts: [] }; records[r.token] = r; }
+    Object.assign(r, item, { amount: getPrice(), quoteExpires: now() + QUOTE_MS, status: "PREPARING", preparationError: null });
+    r.outputPath = path.join(path.dirname(r.bundlePath), "client-ai-highlights-" + r.token, r.outputName); save();
+    background(r, async () => {
+      try {
+        if (!pdfExists(r.outputPath)) await prepareLimited(r.bundlePath, r.outputPath);
+        if (!pdfExists(r.outputPath)) throw new Error("Generated PDF is invalid.");
+      } catch (error) {
+        r.status = "OFFERED"; r.preparationError = error.message; save();
+        return; // shown as "not available"; no payment requested
+      }
+      await startStk(r, number);
     });
-    return true;
+    return "CHECKING";
   }
   async function handleWebhook(payload) {
     const event = payload?.invoice || payload?.data?.invoice || payload;
@@ -334,7 +389,7 @@ function createService(deps) {
     }
     save(); void tick(); timer = setInterval(() => void tick(), 15000); timer.unref?.();
   }
-  return { deliveryOffer, buy, pay, handleText, handleWebhook, register, start, tick, cancelPhone,
+  return { deliveryOffer, webOffers, webBuy, buy, pay, handleText, handleWebhook, register, start, tick, cancelPhone,
     stop: () => { clearInterval(timer); timer = null; }, records, verify, source };
 }
 module.exports = { createService, price, phone, hasProtectedPurchase };

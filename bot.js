@@ -9215,7 +9215,8 @@ paidAiHighlights = require("./jk-client-ai-highlights.cjs").createService({
   userBusy: userId => Boolean(submissions[userId] && submissions[userId].stage !== STAGE_PAID),
   sendStk: intasendSendStkPush,
   checkPayment: invoiceId => intasendCheckPaymentStatus({ invoice_id: invoiceId }),
-  listInvoices: intasendListInvoicesByApiRef
+  listInvoices: intasendListInvoicesByApiRef,
+  isWebUser: userId => require("./jk-web-orders.cjs").isWebUserId(userId)
 });
 paidAiHighlights.register(bot);
 
@@ -13875,7 +13876,10 @@ webOrders = require("./jk-web-orders.cjs").installWebOrders({
   createEmptySubmission, createStoredFileFromDocument, ensureFileReportIdentity, effectiveSimilarityFilter,
   calculateSubmissionAmount, formatBatchSummary, makeBatchId, normalizePhoneTo254, attemptStkPush,
   buildAdminDocumentCaption, adminActionKeyboard, supportedScanUpload, sendAdminMessage,
-  handleMpesaProofText, TILL_NUMBER
+  handleMpesaProofText, TILL_NUMBER,
+  processingMaxMinutes: () => REPORT_PROCESSING_MAX_MINUTES,
+  highlightOffers: job => paidAiHighlights ? paidAiHighlights.webOffers(job) : [],
+  buyHighlights: (userId, id, phone) => paidAiHighlights.webBuy(userId, id, phone)
 });
 
 app.post("/webhook", (req, res) => {
