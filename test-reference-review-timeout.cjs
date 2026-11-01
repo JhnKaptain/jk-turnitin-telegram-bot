@@ -17,10 +17,10 @@ const file = {
     autoResolveAt: start + timeout.REFERENCE_BOUNDARY_AUTO_RESOLVE_MS}
 };
 
-assert.equal(timeout.REFERENCE_BOUNDARY_AUTO_RESOLVE_MS, 10 * 60 * 1000);
-assert.equal(timeout.isAutoResolveDue(file, start + 9 * 60 * 1000), false);
-assert.equal(timeout.isAutoResolveDue(file, start + 10 * 60 * 1000 - 1), false);
-assert.equal(timeout.isAutoResolveDue(file, start + 10 * 60 * 1000), true);
+assert.equal(timeout.REFERENCE_BOUNDARY_AUTO_RESOLVE_MS, 6 * 60 * 1000);
+assert.equal(timeout.isAutoResolveDue(file, start + 5 * 60 * 1000), false);
+assert.equal(timeout.isAutoResolveDue(file, start + 6 * 60 * 1000 - 1), false);
+assert.equal(timeout.isAutoResolveDue(file, start + 6 * 60 * 1000), true);
 assert.equal(timeout.isAutoResolveDue({...file, referenceBoundaryReviewStatus:"APPROVED"}, start + 20 * 60 * 1000), false);
 
 const override = timeout.makeTreatRemainderAsReferencesOverride(
@@ -45,8 +45,8 @@ const expired = {...file, referenceBoundaryReview: {...file.referenceBoundaryRev
 const cancelled = {...file, referenceBoundaryReviewStatus:"CANCELLED", providerStatus:"CANCELLED"};
 assert.equal(timeout.isAutoResolveDue(cancelled, start + HOUR), false);
 assert.equal(timeout.isAutoResolveDue(expired, start + HOUR), true);
-console.log("PASS: no timeout before ten minutes; exactly due at ten minutes.");
-console.log("PASS: unanswered review auto-excludes the remainder after ten minutes.");
+console.log("PASS: no timeout before six minutes; exactly due at six minutes.");
+console.log("PASS: unanswered review auto-excludes the remainder after six minutes.");
 console.log("PASS: auto-submission is scheduled only after persisted resolution.");
 console.log("PASS: cancelling changes status so the timed submission is blocked.");
 console.log("PASS: approval or cancellation prevents repeat timeout processing.");

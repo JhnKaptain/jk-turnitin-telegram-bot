@@ -8170,7 +8170,7 @@ async function notifyReferenceBoundaryReview(job, file, review) {
     "",
     "No Quetext or Sapling request was made for this file.",
     "Choose the first text that should be INCLUDED after the references.",
-    "You have 10 minutes to select the correct inclusion point or cancel this file.",
+    "You have " + Math.round(require("./jk-reference-review-timeout.cjs").REFERENCE_BOUNDARY_AUTO_RESOLVE_MS / 60000) + " minutes to select the correct inclusion point or cancel this file.",
     "Otherwise the remaining text will automatically be treated as references, and provider submission will resume."
   ];
   const keyboard = [];
@@ -8343,7 +8343,7 @@ bot.action(/^JK_REF_BOUNDARY_(END|\d{1,2})_([a-f0-9]{20})$/, async ctx => {
 });
 
 // JK_REFERENCE_BOUNDARY_AUTO_RESOLVE_V1
-// One initial admin notification. After ten minutes, silently take the already
+// One initial admin notification. After the review timeout, silently take the already
 // offered "Treat remainder as references" action, then resume the same job.
 // A persisted deadline plus a serial sweep makes this restart-safe/idempotent.
 let referenceBoundaryAutoResolveSweepRunning = false;

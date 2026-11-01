@@ -1,6 +1,6 @@
 "use strict";
 
-const REFERENCE_BOUNDARY_AUTO_RESOLVE_MS = 10 * 60 * 1000;
+const REFERENCE_BOUNDARY_AUTO_RESOLVE_MS = 6 * 60 * 1000;
 
 function getAutoResolveAt(review, now = Date.now()) {
   const existing = Number(review?.autoResolveAt);
