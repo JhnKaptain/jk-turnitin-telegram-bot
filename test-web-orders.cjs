@@ -172,7 +172,7 @@ const W = require("./jk-web-orders.cjs");
   assert.deepEqual(deleted.messages, []);
   assert(deleted.files.every(f => f.name === "deleted"));
   assert.throws(() => orders.reportFile(order, 0), e => e.status === 404);
-  assert.throws(() => orders.readWebFile(sub.files[0].file_id), /not found|ENOENT/);
+  assert.throws(() => orders.readWebFile(sub.files[0].file_id), /not found|ENOENT|storage clean-up/);
 
   // 4b. A failed STK initiation is reported as PAYMENT_FAILED and can be resent.
   const failing = orders.newOrder("4.4.4.4");
@@ -280,7 +280,52 @@ const W = require("./jk-web-orders.cjs");
   assert(/isWebUserId\(target\.userId\) && doc\.file_name\s*\?\s*\{ filename: doc\.file_name \}/.test(botSource),
     "manual delivery passes the original file name for web orders");
 
+  // 9. Disk retention: unpaid 36 h; paid uploads 36 h after delivery (kept
+  //    while processing, max 7 days); reports 7 days; records 30 days.
+  {
+    discountWindow = false; inactive = false;
+    const H = 3600_000, t0 = Date.now();
+    const exists = fid => { try { orders.readWebFile(fid); return true; } catch { return false; } };
+    const make = async (ip, name) => {
+      const o = orders.newOrder(ip).order;
+      orders.addUpload(o, name, Buffer.from("retention " + name));
+      await orders.checkout(o, { files: [{ type: "CHECK" }], phone: "0712345678" });
+      const s = submissions[o.uid];
+      return { o, s, fid: s.files[0].file_id };
+    };
+    const unpaid = await make("9.0.0.1", "unpaid.docx");
+    const delivered = await make("9.0.0.2", "delivered.docx");
+    const busy = await make("9.0.0.3", "busy.docx");
+    for (const x of [delivered, busy]) {
+      paymentRefs[x.s.api_ref].status = "COMPLETE";
+      paidJobs[x.s.batchId] = { jobId: x.s.batchId, batchId: x.s.batchId, userId: x.o.uid, status: "API_PROCESSING" };
+    }
+    fs.writeFileSync(pdf, "%PDF-1.4 retention");
+    await bot.telegram.sendDocument(delivered.o.uid, { source: fs.createReadStream(pdf), filename: "Report.pdf" });
+    paidJobs[delivered.s.batchId].deliveredAt = Date.now();
+    assert.equal(orders.statusFor(delivered.o).stage, "DELIVERED");
+    assert.equal(orders.statusFor(unpaid.o).stage, "PAYMENT");
+
+    orders.prune(t0 + 35 * H);
+    assert(exists(unpaid.fid) && exists(delivered.fid) && exists(busy.fid), "nothing removed before 36 h");
+    orders.prune(t0 + 37 * H);
+    assert(!exists(unpaid.fid), "unpaid (stuck in payment) files removed after 36 h");
+    assert(!exists(delivered.fid), "paid documents removed 36 h after delivery");
+    assert(exists(busy.fid), "paid order still processing keeps its documents");
+    assert(fs.existsSync(orders.reportFile(delivered.o, 0).file), "reports still downloadable after 36 h");
+    assert.match(String((() => { try { orders.readWebFile(delivered.fid); } catch (e) { return e.message; } })()), /storage clean-up|not found/);
+
+    orders.prune(t0 + 8 * 24 * H);
+    assert(!exists(busy.fid), "paid documents removed after 7 days even if never delivered");
+    assert.deepEqual(orders.statusFor(delivered.o).reports, [], "reports removed after 7 days");
+
+    orders.prune(t0 + 31 * 24 * H);
+    assert.equal(orders.orderById(delivered.o.id), null, "order record dropped after 30 days");
+    assert.equal(orders.orderById(unpaid.o.id), null);
+  }
+
   fs.rmSync(dataDir, { recursive: true, force: true });
+  console.log("PASS: disk retention: unpaid 36 h, paid documents 36 h after delivery (kept while processing), reports 7 days, records 30 days");
   console.log("PASS: website config mirrors Telegram prices, discount window, code and filter rules (no recheck)");
   console.log("PASS: uploads, token auth, checkout via the bot's own STK payment, admin receives documents");
   console.log("PASS: messages and reports for website customers never reach Telegram; API and manual delivery captured");
