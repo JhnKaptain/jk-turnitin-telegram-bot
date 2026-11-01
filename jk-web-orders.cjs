@@ -21,8 +21,22 @@ const crypto = require("crypto");
 const WEB_UID_BASE = 9_000_000_000_000_000;
 const WEB_FILE_PREFIX = "web:";
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // Telegram bot document limit
-const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
-const REPORT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+// Disk retention for website orders (Render persistent disk):
+//  - unpaid / failed / cancelled orders: all files removed after 36 h;
+//  - paid orders: the uploaded documents are removed 36 h after the reports
+//    are delivered (or 7 days after payment if delivery never completes);
+//  - delivered reports stay downloadable for 7 days;
+//  - the small order record itself is dropped 30 days after creation.
+const HOUR_MS = 60 * 60 * 1000;
+const envHours = (name, fallback) => {
+  const n = Number(process.env[name]);
+  return (Number.isFinite(n) && n > 0 ? n : fallback) * HOUR_MS;
+};
+const DRAFT_TTL_MS = envHours("WEB_UNPAID_RETENTION_HOURS", 36);
+const UPLOAD_AFTER_DELIVERY_MS = envHours("WEB_UPLOAD_RETENTION_HOURS", 36);
+const PAID_UPLOAD_MAX_MS = 7 * 24 * HOUR_MS;
+const REPORT_TTL_MS = envHours("WEB_REPORT_RETENTION_HOURS", 7 * 24);
+const RECORD_TTL_MS = 30 * 24 * HOUR_MS;
 const CREATE_LIMIT_PER_HOUR = 20;
 
 function isWebUserId(value) {
@@ -174,7 +188,12 @@ function createWebOrders(d) {
     return path.join(orderDir(id), "uploads", upload.stored);
   }
   function readWebFile(fileId) {
-    return fs.readFileSync(webFilePath(fileId));
+    try {
+      return fs.readFileSync(webFilePath(fileId));
+    } catch (err) {
+      if (err?.code === "ENOENT") throw new Error("This website file was removed by the storage clean-up (kept 36 h after delivery).");
+      throw err;
+    }
   }
 
   function addUpload(order, name, buffer) {
@@ -542,20 +561,43 @@ function createWebOrders(d) {
   }
 
   function prune(now = Date.now()) {
+    let changed = false;
     for (const order of Object.values(store.orders)) {
-      if ((order.stage === "DRAFT" || order.stage === "CANCELLED") && now - order.createdAt > DRAFT_TTL_MS && !order.pruned) {
+      const stage = statusFor(order).stage;
+      const unpaid = ["DRAFT", "PAYMENT", "PAYMENT_FAILED", "CANCELLED"].includes(stage);
+      if (unpaid && now - order.createdAt > DRAFT_TTL_MS && !order.pruned) {
         delete d.submissions[order.uid];
         try { fs.rmSync(orderDir(order.id), { recursive: true, force: true }); } catch {}
         order.pruned = true;
+        changed = true;
+      }
+      // Paid: the client's documents are no longer needed once delivered.
+      if (!unpaid && !order.uploadsPurged) {
+        const deliveredAt = stage === "DELIVERED"
+          ? Math.max(order.deliveredAt || 0, ...order.reports.map(r => r.at || 0))
+          : 0;
+        const due = (deliveredAt && now - deliveredAt > UPLOAD_AFTER_DELIVERY_MS) ||
+          now - order.createdAt > PAID_UPLOAD_MAX_MS;
+        if (due) {
+          try { fs.rmSync(path.join(orderDir(order.id), "uploads"), { recursive: true, force: true }); } catch {}
+          order.uploadsPurged = true;
+          changed = true;
+        }
       }
       for (const report of order.reports) {
         if (!report.purged && now - report.at > REPORT_TTL_MS) {
           try { fs.unlinkSync(path.join(orderDir(order.id), "reports", report.stored)); } catch {}
           report.purged = true;
+          changed = true;
         }
       }
+      if (now - order.createdAt > RECORD_TTL_MS && (order.pruned || order.reports.every(r => r.purged))) {
+        try { fs.rmSync(orderDir(order.id), { recursive: true, force: true }); } catch {}
+        delete store.orders[order.id];
+        changed = true;
+      }
     }
-    save();
+    if (changed) save();
   }
 
   function reportFile(order, id) {
@@ -658,8 +700,10 @@ function installWebOrders(d) {
     res.download(file, name);
   }));
 
-  const timer = setInterval(() => { try { orders.prune(); } catch (e) { console.error("WEB ORDERS prune:", e?.message || e); } }, 3600_000);
+  const runPrune = () => { try { orders.prune(); } catch (e) { console.error("WEB ORDERS prune:", e?.message || e); } };
+  const timer = setInterval(runPrune, 3600_000);
   timer.unref?.();
+  setTimeout(runPrune, 60_000).unref?.();
   return orders;
 }
 
