@@ -280,8 +280,8 @@ const W = require("./jk-web-orders.cjs");
   assert(/isWebUserId\(target\.userId\) && doc\.file_name\s*\?\s*\{ filename: doc\.file_name \}/.test(botSource),
     "manual delivery passes the original file name for web orders");
 
-  // 9. Disk retention: unpaid 36 h; paid uploads 36 h after delivery (kept
-  //    while processing, max 7 days); reports 7 days; records 30 days.
+  // 9. Disk retention: unpaid 36 h; paid uploads 36 h after delivery and at
+  //    most 48 h (kept while processing); reports 48 h; records 30 days.
   {
     discountWindow = false; inactive = false;
     const H = 3600_000, t0 = Date.now();
@@ -315,9 +315,13 @@ const W = require("./jk-web-orders.cjs");
     assert(fs.existsSync(orders.reportFile(delivered.o, 0).file), "reports still downloadable after 36 h");
     assert.match(String((() => { try { orders.readWebFile(delivered.fid); } catch (e) { return e.message; } })()), /storage clean-up|not found/);
 
-    orders.prune(t0 + 8 * 24 * H);
-    assert(!exists(busy.fid), "paid documents removed after 7 days even if never delivered");
-    assert.deepEqual(orders.statusFor(delivered.o).reports, [], "reports removed after 7 days");
+    orders.prune(t0 + 49 * H);
+    assert.deepEqual(orders.statusFor(delivered.o).reports, [], "reports removed after 48 h");
+    assert(exists(busy.fid), "a job still processing keeps its documents past 48 h");
+    await bot.telegram.sendDocument(busy.o.uid, { source: fs.createReadStream(pdf), filename: "Late.pdf" });
+    paidJobs[busy.s.batchId].deliveredAt = Date.now();
+    orders.prune(t0 + 49 * H);
+    assert(!exists(busy.fid), "late job's documents removed once delivered after 48 h");
 
     orders.prune(t0 + 31 * 24 * H);
     assert.equal(orders.orderById(delivered.o.id), null, "order record dropped after 30 days");
@@ -325,7 +329,7 @@ const W = require("./jk-web-orders.cjs");
   }
 
   fs.rmSync(dataDir, { recursive: true, force: true });
-  console.log("PASS: disk retention: unpaid 36 h, paid documents 36 h after delivery (kept while processing), reports 7 days, records 30 days");
+  console.log("PASS: disk retention: unpaid 36 h, paid documents 36 h after delivery / max 48 h (kept while processing), reports 48 h, records 30 days");
   console.log("PASS: website config mirrors Telegram prices, discount window, code and filter rules (no recheck)");
   console.log("PASS: uploads, token auth, checkout via the bot's own STK payment, admin receives documents");
   console.log("PASS: messages and reports for website customers never reach Telegram; API and manual delivery captured");

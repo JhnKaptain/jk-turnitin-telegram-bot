@@ -24,8 +24,9 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // Telegram bot document limit
 // Disk retention for website orders (Render persistent disk):
 //  - unpaid / failed / cancelled orders: all files removed after 36 h;
 //  - paid orders: the uploaded documents are removed 36 h after the reports
-//    are delivered (or 7 days after payment if delivery never completes);
-//  - delivered reports stay downloadable for 7 days;
+//    are delivered, and at the latest 48 h after the order (unless the job is
+//    still being processed then: removed as soon as it is delivered);
+//  - delivered reports stay downloadable for 48 h;
 //  - the small order record itself is dropped 30 days after creation.
 const HOUR_MS = 60 * 60 * 1000;
 const envHours = (name, fallback) => {
@@ -34,8 +35,8 @@ const envHours = (name, fallback) => {
 };
 const DRAFT_TTL_MS = envHours("WEB_UNPAID_RETENTION_HOURS", 36);
 const UPLOAD_AFTER_DELIVERY_MS = envHours("WEB_UPLOAD_RETENTION_HOURS", 36);
-const PAID_UPLOAD_MAX_MS = 7 * 24 * HOUR_MS;
-const REPORT_TTL_MS = envHours("WEB_REPORT_RETENTION_HOURS", 7 * 24);
+const PAID_UPLOAD_MAX_MS = envHours("WEB_FILE_MAX_HOURS", 48);
+const REPORT_TTL_MS = envHours("WEB_REPORT_RETENTION_HOURS", 48);
 const RECORD_TTL_MS = 30 * 24 * HOUR_MS;
 const CREATE_LIMIT_PER_HOUR = 20;
 
@@ -191,7 +192,7 @@ function createWebOrders(d) {
     try {
       return fs.readFileSync(webFilePath(fileId));
     } catch (err) {
-      if (err?.code === "ENOENT") throw new Error("This website file was removed by the storage clean-up (kept 36 h after delivery).");
+      if (err?.code === "ENOENT") throw new Error("This website file was removed by the storage clean-up (website files are kept at most 48 h).");
       throw err;
     }
   }
@@ -576,8 +577,11 @@ function createWebOrders(d) {
         const deliveredAt = stage === "DELIVERED"
           ? Math.max(order.deliveredAt || 0, ...order.reports.map(r => r.at || 0))
           : 0;
+        const processing = stage === "PROCESSING" || stage === "PARTLY_DELIVERED";
         const due = (deliveredAt && now - deliveredAt > UPLOAD_AFTER_DELIVERY_MS) ||
-          now - order.createdAt > PAID_UPLOAD_MAX_MS;
+          (deliveredAt && now - order.createdAt > PAID_UPLOAD_MAX_MS) ||
+          (!processing && now - order.createdAt > PAID_UPLOAD_MAX_MS) ||
+          now - order.createdAt > 7 * 24 * HOUR_MS; // safety net for a job that never finishes
         if (due) {
           try { fs.rmSync(path.join(orderDir(order.id), "uploads"), { recursive: true, force: true }); } catch {}
           order.uploadsPurged = true;
