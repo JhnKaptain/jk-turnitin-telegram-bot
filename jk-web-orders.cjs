@@ -92,7 +92,8 @@ function publicConfig(d) {
       requiresCode: Boolean(f.RESALE_ENABLED && !publicActive),
       timeText: plainText(d.discountTimeText())
     },
-    similarityFilterChoice: d.getFilterMode() === d.FILTER_MODE_CLIENT
+    similarityFilterChoice: d.getFilterMode() === d.FILTER_MODE_CLIENT,
+    tillNumber: d.TILL_NUMBER || null
   };
 }
 
@@ -230,10 +231,15 @@ function createWebOrders(d) {
     };
   }
 
-  function pushMessage(order, text) {
-    const clean = plainText(text);
+  function pushMessage(order, text, kind = "bot") {
+    let clean = plainText(text);
+    // Admin replies arrive wrapped in the Telegram "JK Turnitin Support" frame.
+    if (/JK Turnitin Support/u.test(clean)) {
+      kind = "support";
+      clean = clean.replace(/━+/gu, "").replace(/💬\s*JK Turnitin Support/u, "").trim();
+    }
     if (!clean) return;
-    order.messages.push({ at: Date.now(), text: clean });
+    order.messages.push({ at: Date.now(), text: clean, kind });
     if (order.messages.length > 60) order.messages = order.messages.slice(-60);
     save();
   }
@@ -383,7 +389,8 @@ function createWebOrders(d) {
       amount: sub?.amount ?? order.amount ?? null, currency: "KES",
       summary: order.summary || null, files,
       payment: ref ? { status: ref.status || "PENDING", invoiceId: ref.invoiceId || null } : null,
-      messages: order.messages.slice(-20),
+      messages: order.messages.slice(-30),
+      proofSubmitted: Boolean(order.proofSubmittedAt),
       reports: order.reports.filter(r => !r.purged).map((r, k) => ({ id: k, name: r.name, size: r.size, at: r.at }))
     };
   }
@@ -488,6 +495,47 @@ function createWebOrders(d) {
     return statusFor(order);
   }
 
+  // Customer message to support: shown in the order, sent to the admin chat
+  // with the order's user ID, so the existing 💬 Reply button answers it here.
+  const messageRate = new Map();
+  function limited(key, max) {
+    const now = Date.now();
+    const hits = (messageRate.get(key) || []).filter(t => now - t < 3600_000);
+    if (hits.length >= max) { const e = new Error("Too many messages. Please wait a little and try again."); e.status = 429; throw e; }
+    messageRate.set(key, [...hits, now]);
+  }
+  async function clientMessage(order, text) {
+    const clean = String(text || "").replace(/\s+/gu, " ").trim().slice(0, 1000);
+    if (clean.length < 2) { const e = new Error("Write a message first."); e.status = 400; throw e; }
+    limited("msg:" + order.id, 10);
+    pushMessage(order, clean, "client");
+    await d.sendAdminMessage(
+      "💬 Website message\nOrder: " + order.id + "\nUser ID: " + order.uid +
+      "\nStage: " + statusFor(order).stage + "\n\n" + clean,
+      { adminButtons: "replyOnly" });
+    return statusFor(order);
+  }
+
+  // Till payment (Buy Goods) instead of the STK prompt: the customer pastes
+  // the M-Pesa confirmation SMS. Same handler as Telegram, so the admin gets
+  // "🧾 M-Pesa message received" with the usual ✅ Confirm button.
+  async function paymentProof(order, text) {
+    const stage = statusFor(order).stage;
+    if (!["PAYMENT", "PAYMENT_FAILED"].includes(stage)) {
+      const e = new Error(stage === "DRAFT" ? "Start the payment first." : "Payment is already confirmed for this order."); e.status = 409; throw e;
+    }
+    const clean = String(text || "").trim().slice(0, 1500);
+    if (!/\b[A-Z0-9]{10}\b/u.test(clean) || !/\b(?:KSH|KES)\s*[\d,]+/iu.test(clean)) {
+      const e = new Error("Paste the full M-Pesa confirmation message (it contains the code and the amount)."); e.status = 400; throw e;
+    }
+    limited("proof:" + order.id, 5);
+    const sub = subFor(order);
+    await d.handleMpesaProofText(contextFor(order), sub, clean);
+    order.proofSubmittedAt = Date.now();
+    save();
+    return statusFor(order);
+  }
+
   function markDelivered(uid) {
     const order = orderByUid(uid);
     if (order && order.reports.length) { order.deliveredAt = Date.now(); save(); }
@@ -516,7 +564,7 @@ function createWebOrders(d) {
     return { file: path.join(orderDir(order.id), "reports", report.stored), name: report.name };
   }
 
-  return { newOrder, authorize, addUpload, removeUpload, checkout, resend, cancel, deleteData, statusFor, reportFile,
+  return { newOrder, authorize, addUpload, removeUpload, checkout, resend, cancel, deleteData, clientMessage, paymentProof, statusFor, reportFile,
     readWebFile, installTelegramRouting, markDelivered, prune, orderById: id => store.orders[id] || null,
     orderByUid, uidForOrder: id => store.orders[String(id || "").trim()]?.uid || null };
 }
@@ -586,6 +634,14 @@ function installWebOrders(d) {
   app.post("/api/web/orders/:id/cancel", handle(async (req, res) => {
     const order = orders.authorize(req.params.id, token(req));
     res.json({ status: orders.cancel(order) });
+  }));
+  app.post("/api/web/orders/:id/message", handle(async (req, res) => {
+    const order = orders.authorize(req.params.id, token(req));
+    res.json({ status: await orders.clientMessage(order, req.body?.text) });
+  }));
+  app.post("/api/web/orders/:id/proof", handle(async (req, res) => {
+    const order = orders.authorize(req.params.id, token(req));
+    res.json({ status: await orders.paymentProof(order, req.body?.text) });
   }));
   app.post("/api/web/orders/:id/delete", handle(async (req, res) => {
     const order = orders.authorize(req.params.id, token(req));

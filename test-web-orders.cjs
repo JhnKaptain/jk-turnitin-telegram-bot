@@ -20,6 +20,7 @@ const W = require("./jk-web-orders.cjs");
   const paymentRefs = {}, paidJobs = {}, submissions = {};
   let discountWindow = false, filterMode = "FILTERED", inactive = false;
   const stkCalls = [];
+  const adminMessages = [], proofCalls = [];
   let failNextStk = false;
   const d = {
     bot, DATA_DIR: dataDir, ADMIN_ID: 111, MAX_BATCH_FILES: 10, submissions,
@@ -67,7 +68,9 @@ const W = require("./jk-web-orders.cjs");
     buildAdminDocumentCaption: ({ userId, file }) => "User " + userId + " " + file.file_name,
     adminActionKeyboard: () => ({ reply_markup: { inline_keyboard: [] } }),
     supportedScanUpload: n => /\.(pdf|docx|doc|pptx)$/i.test(n),
-    sendAdminMessage: async () => {}
+    sendAdminMessage: async (text, extra) => { adminMessages.push({ text, extra }); },
+    handleMpesaProofText: async (ctx, sub, text) => { proofCalls.push({ uid: ctx.from.id, text }); await ctx.reply("✅ Payment proof received. Admin will verify."); },
+    TILL_NUMBER: "6164915"
   };
 
   const orders = W.createWebOrders(d);
@@ -207,6 +210,39 @@ const W = require("./jk-web-orders.cjs");
   assert.equal(submissions[fourth.order.uid].files[0].similarityFilter, "UNFILTERED");
   filterMode = "FILTERED";
 
+  // 7b. Support conversation and till payment proof.
+  assert.equal(W.publicConfig(d).tillNumber, "6164915");
+  const talk = orders.newOrder("7.7.7.7");
+  orders.addUpload(talk.order, "t.docx", Buffer.from("talk doc"));
+  failNextStk = true;
+  await orders.checkout(talk.order, { files: [{ type: "CHECK" }], phone: "0712345678" });
+  assert.equal(orders.statusFor(talk.order).stage, "PAYMENT_FAILED");
+  // admin reply from Telegram (💬 Reply button) lands in the order, tagged as support
+  await bot.telegram.sendMessage(String(talk.order.uid), "━━━━━━━━━━━━━━━\n💬 *JK Turnitin Support*\n━━━━━━━━━━━━━━━\n\nPlease resend the prompt or pay via till.\n\n━━━━━━━━━━━━━━━", { parse_mode: "Markdown" });
+  const supportMsg = orders.statusFor(talk.order).messages.at(-1);
+  assert.deepEqual([supportMsg.kind, supportMsg.text], ["support", "Please resend the prompt or pay via till."]);
+  // customer message goes to the admin with the order's user ID (Reply button attaches)
+  adminMessages.length = 0;
+  await orders.clientMessage(talk.order, "  I paid via till, kindly confirm.  ");
+  assert.equal(adminMessages.length, 1);
+  assert(adminMessages[0].text.includes("User ID: " + talk.order.uid) && adminMessages[0].text.includes(talk.order.id));
+  assert.equal(adminMessages[0].extra.adminButtons, "replyOnly");
+  assert.deepEqual(orders.statusFor(talk.order).messages.at(-1), { at: orders.statusFor(talk.order).messages.at(-1).at, text: "I paid via till, kindly confirm.", kind: "client" });
+  await assert.rejects(orders.clientMessage(talk.order, " "), e => e.status === 400);
+  // till proof uses the bot's own handler with the order's virtual user
+  await assert.rejects(orders.paymentProof(talk.order, "hello"), e => e.status === 400);
+  const sms = "UKA1B2C3D4 Confirmed. Ksh135.00 paid to JK TURNITIN. on 1/11/26 at 3:41 PM. New M-PESA balance is Ksh1,200.00.";
+  const proofStatus = await orders.paymentProof(talk.order, sms);
+  assert.deepEqual(proofCalls.at(-1), { uid: talk.order.uid, text: sms });
+  assert.equal(proofStatus.proofSubmitted, true);
+  assert(proofStatus.messages.some(m => m.text === "✅ Payment proof received. Admin will verify."));
+  // once paid, no further proofs
+  const talkSub = submissions[talk.order.uid];
+  paidJobs[talkSub.batchId] = { jobId: talkSub.batchId, batchId: talkSub.batchId, userId: talk.order.uid, status: "API_PROCESSING" };
+  await assert.rejects(orders.paymentProof(talk.order, sms), e => e.status === 409);
+  for (let k = 0; k < 9; k++) await orders.clientMessage(talk.order, "message " + k);
+  await assert.rejects(orders.clientMessage(talk.order, "one too many"), e => e.status === 429);
+
   // 8. Persistence: a restart reloads orders and rebuilds the submission.
   delete submissions[processing.order.uid];
   const reloaded = W.createWebOrders(d);
@@ -249,4 +285,5 @@ const W = require("./jk-web-orders.cjs");
   console.log("PASS: uploads, token auth, checkout via the bot's own STK payment, admin receives documents");
   console.log("PASS: messages and reports for website customers never reach Telegram; API and manual delivery captured");
   console.log("PASS: cancellation only before payment; restart persistence; bot.js wiring dependencies all defined");
+  console.log("PASS: admin replies shown as support messages; customer messages reach the admin with Reply; till SMS proof via the bot's handler");
 })().catch(err => { console.error(err); process.exit(1); });

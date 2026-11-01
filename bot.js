@@ -13871,7 +13871,8 @@ webOrders = require("./jk-web-orders.cjs").installWebOrders({
   STAGES: { WAIT_UPLOADS: STAGE_WAIT_UPLOADS, WAIT_PHONE: STAGE_WAIT_PHONE, WAIT_PAYMENT: STAGE_WAIT_PAYMENT },
   createEmptySubmission, createStoredFileFromDocument, ensureFileReportIdentity, effectiveSimilarityFilter,
   calculateSubmissionAmount, formatBatchSummary, makeBatchId, normalizePhoneTo254, attemptStkPush,
-  buildAdminDocumentCaption, adminActionKeyboard, supportedScanUpload, sendAdminMessage
+  buildAdminDocumentCaption, adminActionKeyboard, supportedScanUpload, sendAdminMessage,
+  handleMpesaProofText, TILL_NUMBER
 });
 
 app.post("/webhook", (req, res) => {
