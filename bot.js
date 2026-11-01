@@ -14550,6 +14550,9 @@ app.post("/intasend/webhook", (req, res) => {
 
       const ref = getPaymentRef(apiRef);
       if (!ref) {
+        // Website shop payments go to the shop quietly; other unknown payments
+        // alert only when COMPLETE (see jk-foreign-payments.cjs).
+        if (await require("./jk-foreign-payments.cjs").handleUnknownPayment({ payload, apiRef, state })) return;
         await sendAdminMessage(
           `⚠️ IntaSend webhook: unknown apiref ${safeText(apiRef)}\ninvoiceid: ${safeText(
             invoiceId || "N/A"
