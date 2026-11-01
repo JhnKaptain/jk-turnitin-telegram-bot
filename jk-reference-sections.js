@@ -324,9 +324,13 @@ function isBibliographicGap(value) {
   if (!text || !CITATION_METADATA.test(text)) return false;
   const sentences = text.split(/(?<=[.!?])\s+(?=[\p{Lu}])/u);
   // A real prose sentence: long, and itself free of citation metadata.
+  // A wrapped title fragment ("the fear of missing out drives purchase
+  // intentions in the fast..., ResearchGate.") starts mid-sentence in lower
+  // case; the student's own sentence starts with a capital letter.
   return !sentences.some(sentence => {
     const words = sentence.match(/[\p{L}][\p{L}'’-]*/gu) || [];
-    return words.length >= 12 && !CITATION_METADATA.test(sentence);
+    return words.length >= 12 && /^["“‘'(]?[\p{Lu}]/u.test(sentence.trim()) &&
+      !CITATION_METADATA.test(sentence);
   });
 }
 
@@ -533,6 +537,17 @@ function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
     previousNonblankLine = line;
   }
 
+  // Fallback: the detector's own candidate, when it starts a line, is not a
+  // URL / citation line and real prose follows within two lines. Never leave
+  // the administrator with only "Cancel".
+  if (!offsets.length && Number.isInteger(firstCandidateOffset)) {
+    const at = lines.findIndex(line => line.start === firstCandidateOffset);
+    const candidateText = at >= 0 ? lines[at].text.trim() : "";
+    const following = at >= 0 ? lines.slice(at, at + 3).map(line => line.text).join(" ") : "";
+    if (at >= 0 && candidateText && !/^(?:https?:\/\/|www\.|doi\b|10\.\d{4,9}\/)/iu.test(candidateText) &&
+        !isReferenceEntryStart(candidateText) && looksLikeSubstantiveBody(following) &&
+        !isBibliographicGap(following)) add(firstCandidateOffset);
+  }
   // Never offer an arbitrary first ambiguous offset. An empty option list is
   // safer than allowing the admin to resume inside a citation or URL.
   return offsets.slice(0, 3).map((offset, index) => ({
@@ -673,6 +688,22 @@ function annotatedBibliographyRanges(source, start, lines) {
       manual: false, annotatedBibliography: true });
   }
   return { ranges, end: sectionEnd, citations: entries.length, annotations: annotated.length };
+}
+
+// Do citation entries follow this prose line within the same section?
+// Stops at the next reference heading, terminator or assignment heading:
+// a later, separately headed list is not "mixed" with this one.
+function furtherEntriesInSection(lines, index) {
+  let seen = 0;
+  for (let k = index + 1; k < lines.length && seen < 10; k++) {
+    const value = lines[k].text.trim();
+    if (!value || isPageMarkerLine(lines[k])) continue;
+    if (REFERENCE_HEADING.test(value) || KNOWN_TERMINATOR.test(value) ||
+        isIndependentAssignmentHeading(lines, k)) return false;
+    if (isReferenceEntryStart(value)) return true;
+    seen++;
+  }
+  return false;
 }
 
 function inspectBoundary(source, start, lines) {
@@ -835,12 +866,23 @@ function inspectBoundary(source, start, lines) {
         (looksLikeUnheadedBodyLine(text) ||
          (looksLikeSubstantiveBody(text) && !looksLikeReferenceContinuation(text)))) {
       if (firstCandidate !== null) {
+        // A short non-bibliographic line right before the prose is where the
+        // new writing starts: "Hello Jeimy,", "Task 2", "Response to Peer 1",
+        // "Discussion Reply". End the list there (the line itself is kept).
+        const between = source.slice(firstCandidate, line.start);
+        const betweenLines = between.split(/\r?\n/u).map(value => value.trim()).filter(Boolean);
+        const betweenWords = (between.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+        if (betweenLines.length <= 2 && betweenWords <= 10 && !CITATION_METADATA.test(between) &&
+            !/^(?:https?:\/\/|www\.|doi\b)/iu.test(betweenLines[0] || "")) {
+          if (!furtherEntriesInSection(lines, i)) {
+            return {status: "AUTO", end: firstCandidate, reason: "New writing starts after a short heading or greeting.", entriesFound};
+          }
+        }
         return {status: "REVIEW", reason: "Substantive text may resume after an uncertain bibliography continuation.", candidateOffset: firstCandidate, entriesFound};
       }
       // Prose followed by further citation entries is mixed content: never
       // leave those later entries in the provider input silently.
-      const upcoming = lines.slice(i + 1).filter(record => record.text.trim()).slice(0, 10);
-      if (upcoming.some(record => isReferenceEntryStart(record.text.trim()))) {
+      if (furtherEntriesInSection(lines, i)) {
         return {status: "REVIEW", reason: "Potential substantive writing occurs between reference entries.", candidateOffset: line.start, entriesFound};
       }
       return {status: "AUTO", end: line.start, reason: "Substantive prose resumes.", entriesFound};
@@ -927,7 +969,9 @@ function inspectReferenceSections(source, fallbackStart = -1, overrides = [], la
   const starts = [];
   const verifiedExplicitList = require("./jk-ai-reference-proof.cjs").verifiedListOfReferences(source,layoutDocument);
   const seen = new Set();
-  const re = new RegExp("(^|\\n)[ \\t]*" + REFERENCE_HEADING_PREFIX + "(?:" + REFERENCE_HEADING_WORDS + ")[ \\t]*[.:]?[ \\t]*(?=\\r?\\n|$)", "gimu");
+  // The prefix ("6.", "Chapter 6:") must sit on the same line as the heading
+  // word: a page number "10" on the line above is not part of the heading.
+  const re = new RegExp("(^|\\n)[ \\t]*" + REFERENCE_HEADING_PREFIX.replace(/\\s/g, "[ \\t]") + "(?:" + REFERENCE_HEADING_WORDS + ")[ \\t]*[.:]?[ \\t]*(?=\\r?\\n|$)", "gimu");
   let match;
   while ((match = re.exec(source))) {
     const start = match.index + match[1].length;
