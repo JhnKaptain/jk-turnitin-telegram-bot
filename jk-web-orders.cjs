@@ -410,6 +410,10 @@ function createWebOrders(d) {
       summary: order.summary || null, files,
       payment: ref ? { status: ref.status || "PENDING", invoiceId: ref.invoiceId || null } : null,
       messages: order.messages.slice(-30),
+      chatOpensAt: chatOpensAt(order, { stage }),
+      // Paid AI highlights (AI score below 20%): a button with the price per document.
+      highlights: ["DELIVERED", "PARTLY_DELIVERED"].includes(stage) && !order.deletedAt
+        ? (d.highlightOffers?.(job) || []) : [],
       proofSubmitted: Boolean(order.proofSubmittedAt),
       reports: order.reports.filter(r => !r.purged).map((r, k) => ({ id: k, name: r.name, size: r.size, at: r.at }))
     };
@@ -524,7 +528,38 @@ function createWebOrders(d) {
     if (hits.length >= max) { const e = new Error("Too many messages. Please wait a little and try again."); e.status = 429; throw e; }
     messageRate.set(key, [...hits, now]);
   }
+  // After payment the chat stays closed for the stated processing time:
+  // reports usually arrive within it, so early "where are my reports?"
+  // messages are not needed. It opens again once that time has passed (if
+  // reports are still missing) and after delivery.
+  function chatOpensAt(order, status = statusFor(order)) {
+    if (!["PROCESSING", "PARTLY_DELIVERED"].includes(status.stage)) return null;
+    const job = paidJobFor(order);
+    const paidAt = Number(job?.paidAt || job?.createdAt || 0);
+    const minutes = Number(d.processingMaxMinutes?.() || 0);
+    if (!paidAt || !minutes) return null;
+    const opens = paidAt + minutes * 60_000;
+    return Date.now() < opens ? opens : null;
+  }
+
+  async function buyHighlights(order, fileId, phone) {
+    const status = statusFor(order);
+    if (!status.highlights.some(h => h.id === String(fileId))) {
+      const e = new Error("AI highlights are not available for this document."); e.status = 404; throw e;
+    }
+    limited("hl:" + order.id, 6);
+    await d.buyHighlights(order.uid, String(fileId), phone);
+    return statusFor(order);
+  }
+
   async function clientMessage(order, text) {
+    const opens = chatOpensAt(order);
+    if (opens) {
+      const e = new Error("Your reports are being prepared and usually arrive within " + d.processingMaxMinutes() +
+        " minutes. Chat opens at " + new Date(opens).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Nairobi" }) +
+        " if they have not arrived by then.");
+      e.status = 409; e.chatOpensAt = opens; throw e;
+    }
     const clean = String(text || "").replace(/\s+/gu, " ").trim().slice(0, 1000);
     if (clean.length < 2) { const e = new Error("Write a message first."); e.status = 400; throw e; }
     limited("msg:" + order.id, 10);
@@ -611,7 +646,7 @@ function createWebOrders(d) {
   }
 
   return { newOrder, authorize, addUpload, removeUpload, checkout, resend, cancel, deleteData, clientMessage, paymentProof, statusFor, reportFile,
-    readWebFile, installTelegramRouting, markDelivered, prune, orderById: id => store.orders[id] || null,
+    readWebFile, installTelegramRouting, buyHighlights, markDelivered, prune, orderById: id => store.orders[id] || null,
     orderByUid, uidForOrder: id => store.orders[String(id || "").trim()]?.uid || null };
 }
 
@@ -684,6 +719,10 @@ function installWebOrders(d) {
   app.post("/api/web/orders/:id/message", handle(async (req, res) => {
     const order = orders.authorize(req.params.id, token(req));
     res.json({ status: await orders.clientMessage(order, req.body?.text) });
+  }));
+  app.post("/api/web/orders/:id/highlights", handle(async (req, res) => {
+    const order = orders.authorize(req.params.id, token(req));
+    res.json({ status: await orders.buyHighlights(order, req.body?.fileId, req.body?.phone) });
   }));
   app.post("/api/web/orders/:id/proof", handle(async (req, res) => {
     const order = orders.authorize(req.params.id, token(req));
