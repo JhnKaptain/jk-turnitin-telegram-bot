@@ -13848,6 +13848,9 @@ app.use(
   })
 );
 
+// JK_SHOP_STORE_V1: the website shop's order list lives on this disk.
+require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR });
+
 // JK_WEB_ORDERS_V1: website front door to the same report service.
 webOrders = require("./jk-web-orders.cjs").installWebOrders({
   app, express, bot, DATA_DIR, ADMIN_ID, MAX_BATCH_FILES, submissions,
