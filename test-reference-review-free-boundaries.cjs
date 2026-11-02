@@ -64,6 +64,30 @@ for (const opener of ["Hello Jeimy,", "Hi Maria,", "Dear Professor Smith,", "Tas
   assert.equal(result.ranges[0].end, text.indexOf(opener + "\n"), "list ends at: " + opener);
 }
 
+// 3b. Essay with "Question 1 ... Works Cited ... Question 2: Title ... Works
+//     Cited". Line wraps depend on the fonts available to LibreOffice; with
+//     some fonts the admin was offered a mid-paragraph inclusion point. The
+//     numbered question heading now ends the first list automatically.
+for (const name of ["two-works-cited-question-heading-real-geometry", "two-works-cited-question-heading-dejavu-real-geometry"]) {
+  const doc = require("./test-fixtures/" + name + ".json").document;
+  const text = doc.text;
+  const result = inspect(doc);
+  assert.deepEqual(result.reviews, [], name + ": no administrator review");
+  assert.equal(result.ranges.length, 2, name + ": both Works Cited lists excluded");
+  assert(/^Question 2: From \S+ to \S+\n/u.test(text.slice(result.ranges[0].end)), name + ": resumes at the Question 2 heading");
+  assert.equal(result.ranges[1].end, text.length);
+  const ai = scan.buildAiInput(text, doc, []).text;
+  for (const entry of ["Fearon, J. D. (1995)", "Wendt, A. (1992)", "Art, R. J. (n.d.)"]) assert(!ai.includes(entry), name + ": excluded " + entry);
+  const q2 = text.indexOf("\n", text.indexOf("Question 2: From ")) + 1;
+  assert(ai.includes(text.slice(q2, q2 + 40).split("\n")[0]), name + ": first Question 2 paragraph scanned");
+}
+for (const heading of ["Question 2: From Power to Influence", "Part B: Reflection on Practice", "Section 3 - Comparative Analysis", "Question 4. Policy Options"]) {
+  const text = essay + refs + heading + "\n" + reply + reply;
+  const result = inspectReferenceSections(text, -1, [], null);
+  assert.deepEqual(result.reviews, [], "no review before: " + heading);
+  assert.equal(result.ranges[0].end, text.indexOf(heading + "\n"), "list ends at: " + heading);
+}
+
 // 4. Safety: a short line + prose that is followed by more entries in the
 //    same list is still mixed content and goes to review, with a resume
 //    option offered (never "Cancel" only).
@@ -86,4 +110,5 @@ assert(!bot.includes("You have 10 minutes to select"));
 console.log("PASS: real discussion-post file: both lists excluded, resumes at the greeting and at Task 2, no review");
 console.log("PASS: real Harvard file: page number above 'Reference list' ignored, 40 entries excluded, no review");
 console.log("PASS: greeting / Task / Response / Part openers end a list automatically; mixed lists still fail closed with a resume option");
+console.log("PASS: real two-list essay (two fonts): numbered Question/Part/Section headings end a Works Cited list, no review");
 console.log("PASS: reference review timeout is 6 minutes, message follows the setting");

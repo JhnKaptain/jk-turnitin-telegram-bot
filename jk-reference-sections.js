@@ -147,7 +147,10 @@ function isIndependentAssignmentHeading(lines, index) {
       Number.isFinite(next.layoutX) && headingLine.layoutX >= next.layoutX + 45;
     return startsNewPage || isCenteredHeading;
   }
-  if (!/^(?:Task\s+\d{1,3}(?:\s*[:.\-]\s*|\s+)[^\n]{3,90}|Study\s*:\s*[^\n]{3,75})$/iu.test(text)) return false;
+  // "Question 2: From Power to Influence", "Part B: Reflection", "Section 3 - Analysis":
+  // explicit numbered labels that start new writing after a reference list.
+  if (!/^(?:(?:Task|Question|Part|Section)\s+(?:\d{1,3}|[A-Z]|[IVX]{1,4})(?:\s*[:.\-–]\s*|\s+)[^\n]{3,90}|Study\s*:\s*[^\n]{3,75})$/u.test(text) &&
+      !/^(?:Task)\s+\d{1,3}(?:\s*[:.\-]\s*|\s+)[^\n]{3,90}$/iu.test(text)) return false;
   const subsequent = lines.slice(index + 1).filter(line => line.text.trim()).slice(0, 3);
   if (!subsequent.length || isReferenceEntryStart(subsequent[0].text)) return false;
   const prose = subsequent.map(line => line.text.trim()).join(" ");
