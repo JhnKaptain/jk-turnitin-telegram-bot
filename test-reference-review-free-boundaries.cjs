@@ -120,6 +120,30 @@ for (const heading of ["Question 2: From Power to Influence", "Part B: Reflectio
   assert(result.reviews.length || result.ranges.every(r => r.end <= text.indexOf("Firms in the region")), "prose after the list is kept");
 }
 
+// 3d. Outline repeated over 40 pages: each reference list (5 entries, last
+//     one closed by a DOI) is followed by a short title line and the next
+//     heading ("Case Profile" / "Part III. Outline"). Was 10 reviews.
+{
+  const doc = require("./test-fixtures/repeated-outline-short-title-real-geometry.json").document;
+  const text = doc.text;
+  const result = inspect(doc);
+  assert.deepEqual(result.reviews, [], "repeated outline: no administrator review");
+  assert.equal(result.ranges.length, 11, "every reference list excluded");
+  for (const range of result.ranges.slice(0, -1)) {
+    const next = text.slice(range.end, range.end + 60);
+    assert(/^\S+ \S+\n(?:\S+ \d+ of \d+\n\n)?Part \S+\. /u.test(next), "list ends at the short title line, not later: " + JSON.stringify(next));
+  }
+  const ai = scan.buildAiInput(text, doc, []).text;
+  assert(!ai.includes("Crego, C., & Widiger") && !ai.includes("https://doi.org/10.1037/per0000550"), "references excluded");
+}
+{
+  // Still fails closed when the text before the heading is a real sentence.
+  const list = "References\nCrego, C., & Widiger, T. A. (2016). Cleckley's psychopaths: Revisited. Journal of Abnormal\nPsychology, 125 (1), 75-87. https://doi.org/10.1037/abn0000126\n";
+  const text = essay + list + "I reviewed these sources carefully before writing the outline below.\nPart II. Methods\n" + reply + reply;
+  const result = inspectReferenceSections(text, -1, [], null);
+  assert(result.reviews.length || result.ranges.every(r => r.end <= text.indexOf("I reviewed these sources")), "a sentence before the heading is not swallowed");
+}
+
 // 4. Safety: a short line + prose that is followed by more entries in the
 //    same list is still mixed content and goes to review, with a resume
 //    option offered (never "Cancel" only).
@@ -144,4 +168,5 @@ console.log("PASS: real Harvard file: page number above 'Reference list' ignored
 console.log("PASS: greeting / Task / Response / Part openers end a list automatically; mixed lists still fail closed with a resume option");
 console.log("PASS: real two-list essay (two fonts): numbered Question/Part/Section headings end a Works Cited list, no review");
 console.log("PASS: real manuscript with full-given-name APA references: whole list excluded, no review; prose after a DOI-less entry kept");
+console.log("PASS: real repeated outline: 11 lists end at the short title line before the next heading, no review");
 console.log("PASS: reference review timeout is 6 minutes, message follows the setting");
