@@ -88,6 +88,38 @@ for (const heading of ["Question 2: From Power to Influence", "Part B: Reflectio
   assert.equal(result.ranges[0].end, text.indexOf(heading + "\n"), "list ends at: " + heading);
 }
 
+// 3c. Research manuscript: ~60 APA references with full given names, the
+//     year wrapped to the next line and long sentence-like titles. Was sent
+//     to review with the first reference offered as the "inclusion" point.
+{
+  const doc = require("./test-fixtures/manuscript-fullname-apa-real-geometry.json").document;
+  const text = doc.text;
+  const result = inspect(doc);
+  assert.deepEqual(result.reviews, [], "manuscript: no administrator review");
+  assert.equal(result.ranges.length, 1);
+  assert(text.slice(result.ranges[0].start).startsWith("References\nAl Halbusi, Hussam,"), "starts at the heading");
+  assert.equal(result.ranges[0].end, text.length, "whole list to the end");
+  const ai = scan.buildAiInput(text, doc, []).text;
+  for (const entry of ["Al Halbusi, Hussam, Al-Sulaiti", "Moderating role of big data and knowledge management",
+    "Zournatzidou, Georgia. (2025)", "Isomorphism and Collective Rationality"]) assert(!ai.includes(entry), "excluded: " + entry);
+  assert(ai.length > 40000, "manuscript body kept");
+}
+{
+  // A student paragraph after a reference without a DOI is never absorbed,
+  // even when one of its lines ends with "(Barney, 1991, pp. 99–120).".
+  const list = "References\nAl Halbusi, Hussam, Al-Sulaiti, Khalid Ibrahim, Alalwan, Ali Abdallah, & Al-Busaidi, Adil S.\n" +
+    "(2025). AI capability and green innovation impact on sustainable performance:\n" +
+    "Moderating role of big data and knowledge management. Technological Forecasting and\n" +
+    "Social Change, 210, 123897. https://doi.org/10.1016/j.techfore.2024.123897\n" +
+    "ClarityAI. (2025). Sustainable Finance Regulatory Outlook 2025.\n";
+  const tail = "Firms in the region adopted green bonds slowly because regulators issued guidance late, as earlier studies\n" +
+    "confirm that resources shape sustained advantage (Barney, 1991, pp. 99–120).\n" +
+    "The remaining sections discuss implications for managers and for policy makers in detail.\n";
+  const text = essay + list + tail;
+  const result = inspectReferenceSections(text, -1, [], null);
+  assert(result.reviews.length || result.ranges.every(r => r.end <= text.indexOf("Firms in the region")), "prose after the list is kept");
+}
+
 // 4. Safety: a short line + prose that is followed by more entries in the
 //    same list is still mixed content and goes to review, with a resume
 //    option offered (never "Cancel" only).
@@ -111,4 +143,5 @@ console.log("PASS: real discussion-post file: both lists excluded, resumes at th
 console.log("PASS: real Harvard file: page number above 'Reference list' ignored, 40 entries excluded, no review");
 console.log("PASS: greeting / Task / Response / Part openers end a list automatically; mixed lists still fail closed with a resume option");
 console.log("PASS: real two-list essay (two fonts): numbered Question/Part/Section headings end a Works Cited list, no review");
+console.log("PASS: real manuscript with full-given-name APA references: whole list excluded, no review; prose after a DOI-less entry kept");
 console.log("PASS: reference review timeout is 6 minutes, message follows the setting");

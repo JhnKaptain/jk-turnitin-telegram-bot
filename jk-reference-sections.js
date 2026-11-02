@@ -211,6 +211,52 @@ function isLikelySectionHeading(lines, index, start, source) {
   return STRUCTURAL_FOLLOWER.test(next) || next.length >= 18;
 }
 
+const NAME_PARTICLE = /^(?:al|el|bin|ibn|binti|de|da|di|del|della|der|den|du|la|le|van|von|ter|ten|dos|das|y|e)$/u;
+
+// A line made only of personal names: "Surname, Given Names" pairs joined by
+// commas and a final "&"/"and", optionally ending with the year. No verbs,
+// no lower-case words other than name particles.
+function isAuthorListLine(value) {
+  const text = String(value || "").replace(/\s+/gu, " ").trim()
+    .replace(/\s*\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.)\)\.?$/iu, "");
+  if (text.length < 8 || text.length > 260) return false;
+  if ((text.match(/,/gu) || []).length < 2) return false;
+  if (!/^[\p{Lu}]/u.test(text) || /[:;?!"“”]|\d/u.test(text)) return false;
+  const tokens = text.replace(/[,]/gu, " ").split(/\s+/u).filter(Boolean);
+  let names = 0;
+  for (const token of tokens) {
+    if (token === "&" || token === "and" || /^et$|^al\.?$/u.test(token)) continue;
+    if (NAME_PARTICLE.test(token.toLowerCase()) && /^[\p{Ll}]/u.test(token)) continue;
+    if (/^(?:[\p{Lu}]\.){1,3}$/u.test(token) || /^[\p{Lu}]\.?(?:-[\p{Lu}]\.?)?$/u.test(token)) { names++; continue; }
+    if (/^[\p{Lu}][\p{Ll}\p{M}'’]+(?:-[\p{Lu}]?[\p{L}\p{M}'’]+)*\.?$/u.test(token)) { names++; continue; }
+    if (/^(?:Al|El|De|Van|Von|Mc|Mac|O['’])[\p{Lu}-][\p{L}'’-]+\.?$/u.test(token)) { names++; continue; }
+    return false;
+  }
+  // "Surname, Given" pairs: at least two name tokens per comma group on average.
+  return names >= 3 && /(?:,\s*&|\s&\s|,\s+and\s|,\s*$|\.\s*$|,\s+[\p{Lu}][\p{L}'’-]+,\s)/u.test(String(value).trim());
+}
+
+// A complete citation: names first, a publication year early, and closing
+// citation metadata (DOI/URL, volume(issue), pages, publisher). Article titles
+// are often long sentences ("AI capability and green innovation impact on
+// sustainable performance: Moderating role of ..."), so a long sentence
+// inside such a block is a title, not student prose.
+const YEAR_MARKER = /\((?:19|20)\d{2}[a-z]?(?:,\s*[^)]{1,40})?\)|\(n\.\s*d\.(?:-[a-z])?\)|(?:^|[.,]\s)(?:19|20)\d{2}[a-z]?\.(?:\s|$)/iu;
+const CLOSING_METADATA = /(?:https?:\/\/\S+|\bdoi\s*:?\s*10\.\S+|\b10\.\d{4,9}\/\S+|\b\d{1,4}\s*\(\s*\d{1,4}(?:[-–]\d{1,4})?\s*\)\s*(?:,\s*[A-Za-z]?\d+(?:\s*[-–]\s*[A-Za-z]?\d+)?)?|\bpp?\.\s*[A-Za-z]?\d+(?:\s*[-–]\s*[A-Za-z]?\d+)?\)?|,\s*\d{1,4}\s*,\s*[A-Za-z]?\d{2,7}(?:\s*[-–]\s*[A-Za-z]?\d+)?|\b(?:press|publishing|publishers?|publications?|books|springer|elsevier|wiley|routledge|sage|emerald|taylor\s*&\s*francis|ltd|inc)\b[^.]{0,40})\.?\s*$/iu;
+const IN_TEXT_CITATION = /\((?:see\s+|e\.g\.,?\s+)?[\p{Lu}][\p{L}'’-]+(?:\s+(?:et\s+al\.|&|and)\s*[\p{Lu}]?[\p{L}'’-]*)?,\s*(?:19|20)\d{2}[a-z]?(?:[,;]|\))|\b[\p{Lu}][\p{L}'’-]+(?:\s+et\s+al\.)?\s+\((?:19|20)\d{2}[a-z]?\)\s+(?:argue|argues|argued|found|finds|show|shows|showed|suggest|suggests|note|notes|report|reports|explain|explains|state|states|claim|claims|observe|observes)\b/u;
+function looksLikeCompleteCitation(value) {
+  const text = String(value || "").replace(/\s+/gu, " ").trim();
+  if (text.length < 25 || text.length > 900) return false;
+  if (IN_TEXT_CITATION.test(text)) return false;
+  if ((text.match(/\((?:19|20)\d{2}[a-z]?(?:,[^)]*)?\)/gu) || []).length > 2) return false;
+  const year = YEAR_MARKER.exec(text);
+  if (!year || year.index > 320) return false;
+  const lead = text.slice(0, year.index);
+  // The part before the year is authors/organization, not a sentence.
+  if (/\b(?:is|are|was|were|has|have|this|these|that|which|because|however|therefore|we|our|i|my)\b/u.test(lead)) return false;
+  return CLOSING_METADATA.test(text) || /\b(?:retrieved|available at|accessed)\b/iu.test(text);
+}
+
 function isReferenceEntryStart(value) {
   const raw = String(value || "").replace(/\s+/gu, " ").trim();
   // A stray opening quote (pasted entry) or an MLA title-first entry.
@@ -238,6 +284,11 @@ function isReferenceEntryStart(value) {
   if (/^[\p{Lu}][^\n]{2,100}?\b(?:Act|Regulations|Order|Rules|Code|Convention|Directive|Treaty)\s+(?:19|20)\d{2}\b/u.test(text)) return true; // Human Rights Act 1998, s 6
   if (/\((?:\d+(?:st|nd|rd|th)\s+edn?,?\s+)?[^()]{0,80}?\b(?:19|20)\d{2}\)\.?$/u.test(text) && /^[\p{Lu}][\p{L}\p{M}'’-]+\s+[\p{Lu}]/u.test(text)) return true; // Jonathan Herring, Medical Law (9th edn, OUP 2022).
   if (/\((?:19|20)\d{2}\)\s+\d{1,4}\s+[\p{Lu}]/u.test(text) || /\[(?:19|20)\d{2}\]\s+(?:\d+\s+)?[A-Z]{2,6}\b/u.test(text)) return true; // (2009) 17 Medical Law Review 76 / [2015] UKSC 11
+
+  // Author lists with full given names and multi-word surnames, where the
+  // year often wraps to the next line: "Al Halbusi, Hussam, Al-Sulaiti,
+  // Khalid Ibrahim, Alalwan, Ali Abdallah, & Al-Busaidi, Adil S."
+  if (isAuthorListLine(text)) return true;
 
   // Conventional author-first entries, including personal author lists.
   if (/^(?:\[\d+\]\s*)?[A-Z][\p{L}'’.-]{1,50},\s*(?:[A-Z]\.?|[A-Z][\p{L}'’.-]+)\b/u.test(text)) return true;
@@ -276,7 +327,8 @@ function isReferenceEntryStart(value) {
   if (/^\[\d{1,3}\]\s+(?:[A-Z]\.\s*){1,3}[\p{Lu}][\p{L}\p{M}'’-]+(?:\s+[\p{Lu}][\p{L}\p{M}'’-]+){0,3}(?:,|\s+and\s+[A-Z]\.)/u.test(text)) return true;
 
   // Numbered references are common in technical and medical documents.
-  if (/^(?:\[\d+\]|\d+[.)])\s+.{8,}/u.test(text) &&
+  // (Not a wrapped page/article number followed by the DOI: "123897. https://...".)
+  if (/^(?:\[\d+\]|\d{1,3}[.)])\s+(?!https?:|www\.|doi\b).{8,}/iu.test(text) &&
       /\b(?:19|20)\d{2}[a-z]?\b|https?:\/\/|doi\b/iu.test(text)) return true;
 
   return false;
@@ -294,6 +346,8 @@ function looksLikeReferenceContinuation(value) {
   const text = String(value || "").replace(/\s+/gu, " ").trim();
   if (!text) return true;
   if (/^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return true;
+  // The year wrapped from a long author line: "(2025). AI capability and ..."
+  if (/^\((?:(?:19|20)\d{2}[a-z]?(?:,\s*[^)]{1,40})?|n\.\s*d\.(?:-[a-z])?)\)\.?(?:\s|$)/iu.test(text)) return true;
   if (/^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(?:19|20)\d{2}\b/iu.test(text)) return true;
   // Whole words only: "Porter", "Patients", "Nonetheless", "Volunteers" and
   // "Issues raised..." are prose, not "pp." / "no." / "vol." / "issue" metadata.
@@ -325,6 +379,7 @@ const CITATION_METADATA = /https?:\/\/|\bwww\.|\bdoi\s*:|\b10\.\d{4,9}\/|\b\d+\s
 function isBibliographicGap(value) {
   const text = String(value || "").replace(/\s+/gu, " ").trim();
   if (!text || !CITATION_METADATA.test(text)) return false;
+  if (looksLikeCompleteCitation(text)) return true;
   const sentences = text.split(/(?<=[.!?])\s+(?=[\p{Lu}])/u);
   // A real prose sentence: long, and itself free of citation metadata.
   // A wrapped title fragment ("the fear of missing out drives purchase
@@ -407,6 +462,7 @@ function isPageMarkerLine(line) {
 // broken Word field "PAGE \* MERGEFORMAT 2". Page furniture, not content.
 function markRunningLines(lines) {
   const pagesByKey = new Map();
+  const marginYByKey = new Map();
   const key = text => text.toLowerCase().replace(/\d+/gu, "#").replace(/\s+/gu, " ").trim();
   // Only lines in the top or bottom margin (when the page geometry is known),
   // and never a line that itself looks like a citation: identical reference
@@ -420,15 +476,43 @@ function markRunningLines(lines) {
     const k = key(text);
     if (!pagesByKey.has(k)) pagesByKey.set(k, new Set());
     pagesByKey.get(k).add(line.layoutPage || ("n" + pagesByKey.get(k).size));
+    if (Number.isFinite(line.layoutY) && Number.isFinite(line.layoutPageHeight)) {
+      if (!marginYByKey.has(k)) marginYByKey.set(k, []);
+      marginYByKey.get(k).push(line.layoutY);
+    }
   }
+  // Two pages are enough when the line sits at the same margin position on
+  // both (a short essay with "Running head: TITLE 1" / "... 2").
+  const samePosition = k => {
+    const ys = marginYByKey.get(k) || [];
+    return ys.length >= 2 && Math.max(...ys) - Math.min(...ys) <= 3;
+  };
   for (const line of lines) {
     const text = line.text.trim();
-    if (text && (pagesByKey.get(key(text))?.size || 0) >= 3 && !REFERENCE_HEADING.test(text)) line.running = true;
+    if (!text || REFERENCE_HEADING.test(text)) continue;
+    const pages = pagesByKey.get(key(text))?.size || 0;
+    if (pages >= 3 || (pages === 2 && samePosition(key(text)))) line.running = true;
   }
   return lines;
 }
 
+// Inclusion points offered to the administrator are never a reference entry
+// or a line inside a citation: choosing one would leave references in the
+// scan. When nothing safe remains, "treat remainder as references" and
+// "cancel" are still offered.
 function buildReviewCandidates(source, start, lines, firstCandidateOffset) {
+  const raw = buildReviewCandidatesRaw(source, start, lines, firstCandidateOffset);
+  const safe = raw.filter(candidate => {
+    const index = lines.findIndex(line => line.start <= candidate.offset && candidate.offset < Math.max(line.end, line.start + 1));
+    const text = index >= 0 ? lines[index].text.trim() : "";
+    if (!text) return true;
+    if (isReferenceEntryStart(text) || isAuthorListLine(text) || looksLikeReferenceContinuation(text)) return false;
+    return !closesAsCitation(source, lines, index, lines[index].start);
+  });
+  return safe.map((candidate, k) => ({ ...candidate, id: k + 1 }));
+}
+
+function buildReviewCandidatesRaw(source, start, lines, firstCandidateOffset) {
   const offsets = [];
   const add = offset => {
     if (!Number.isInteger(offset) || offset <= start || offset >= source.length) return;
@@ -709,6 +793,30 @@ function furtherEntriesInSection(lines, index) {
   return false;
 }
 
+// Is line i inside a citation that has not been closed yet? Walk forward to
+// the first line ending with closing citation metadata (DOI, volume(issue),
+// pages, publisher) without crossing another entry start, and check that the
+// whole block from the entry start reads as one complete citation.
+function closesAsCitation(source, lines, i, entryStartOffset) {
+  let seen = 0;
+  for (let k = i; k < lines.length && seen < 9; k++) {
+    const value = lines[k].text.trim();
+    if (!value || isPageMarkerLine(lines[k])) continue;
+    seen++;
+    // Student prose never belongs to a citation: in-text citations
+    // ("(Barney, 1991, p. 99)", "Hair et al. (2019) argue") or a sentence
+    // that opens like body text end the search.
+    if (IN_TEXT_CITATION.test(value) || looksLikeUnheadedBodyLine(value)) return false;
+    // The closing line (pages, DOI) may itself look like an entry start
+    // ("123897. https://doi.org/..."), so test it as the closer first.
+    if (CLOSING_METADATA.test(value) || /^(?:https?:\/\/|www\.|doi\s*:)/iu.test(value)) {
+      return looksLikeCompleteCitation(source.slice(entryStartOffset, lines[k].end));
+    }
+    if (k > i && (isReferenceEntryStart(value) || REFERENCE_HEADING.test(value) || KNOWN_TERMINATOR.test(value))) return false;
+  }
+  return false;
+}
+
 function inspectBoundary(source, start, lines) {
   const index = lines.findIndex(line => line.start <= start && start <= line.end);
   if (index < 0) {
@@ -718,6 +826,7 @@ function inspectBoundary(source, start, lines) {
   let firstCandidate = null;
   let activeEntryLine = null;
   let previousNonblankLine = lines[index];
+  let activeEntryClosed = false;
 
   // A citation can span many extracted PDF visual lines or cross a page.
   // Do not raise a review at the FIRST unfamiliar line: keep examining
@@ -768,6 +877,7 @@ function inspectBoundary(source, start, lines) {
       entriesFound++;
       activeEntryLine = line;
       previousNonblankLine = line;
+      activeEntryClosed = CLOSING_METADATA.test(text) && looksLikeCompleteCitation(text);
       // A brief unrecognized fragment between consecutive entries is
       // consistent with wrapped bibliographic metadata, not proof of prose.
       if (firstCandidate !== null) firstCandidate = null;
@@ -781,6 +891,31 @@ function inspectBoundary(source, start, lines) {
         return {status: "REVIEW", reason: "Insufficient evidence to resolve the final reference continuation before the following section.", candidateOffset: firstCandidate, entriesFound};
       }
       return {status: "AUTO", end: line.start, reason: "Recognized section terminator.", entriesFound};
+    }
+
+    // Inside an open citation (author line -> year -> long title -> journal,
+    // volume, pages, DOI) every line up to the closing metadata belongs to
+    // the entry, however much the title reads like a sentence.
+    if (!KNOWN_TERMINATOR.test(text) && !REFERENCE_HEADING.test(text)) {
+      if (entriesFound > 0 && activeEntryLine && !activeEntryClosed &&
+          closesAsCitation(source, lines, i, activeEntryLine.start)) {
+        if (CLOSING_METADATA.test(text) || /^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) activeEntryClosed = true;
+        firstCandidate = null;
+        previousNonblankLine = line;
+        continue;
+      }
+      // First entry whose author line was not recognized on its own.
+      if (entriesFound === 0 && firstCandidate === null && closesAsCitation(source, lines, i, line.start)) {
+        entriesFound++;
+        activeEntryLine = line;
+        activeEntryClosed = CLOSING_METADATA.test(text);
+        previousNonblankLine = line;
+        continue;
+      }
+    }
+    if (activeEntryLine && (CLOSING_METADATA.test(text) || /^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) &&
+        (looksLikeReferenceContinuation(text) || isBibliographicGap(source.slice(activeEntryLine.start, line.end)))) {
+      activeEntryClosed = true;
     }
 
     // A hanging-indented citation title can look like a title-case heading.
