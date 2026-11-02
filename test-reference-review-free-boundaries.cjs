@@ -144,6 +144,24 @@ for (const heading of ["Question 2: From Power to Influence", "Part B: Reflectio
   assert(result.reviews.length || result.ranges.every(r => r.end <= text.indexOf("I reviewed these sources")), "a sentence before the heading is not swallowed");
 }
 
+// 3e. Chicago bibliography of web and archive sources: "Cincinnati Art
+//     Museum. Identity. ... n.d. Accessed ...", a quoted photograph title
+//     first, URLs wrapped over lines with %, & and =, "Publisher's
+//     description", a wrapped title line that looks like an entry. Was a
+//     review with only "treat remainder as references".
+{
+  const doc = require("./test-fixtures/chicago-web-bibliography-real-geometry.json").document;
+  const text = doc.text;
+  const result = inspect(doc);
+  assert.deepEqual(result.reviews, [], "Chicago web bibliography: no administrator review");
+  assert.equal(result.ranges.length, 1);
+  assert(text.slice(result.ranges[0].start).startsWith("BIBLIOGRAPHY\n"));
+  assert.equal(result.ranges[0].end, text.length, "every entry to the end excluded");
+  const ai = scan.buildAiInput(text, doc, []).text;
+  for (const entry of ["Cincinnati Art Museum. Identity", "Intellect. “The Making", "UBC Press. “Just Above", "Civil Rights Act of 1964. Public Law", "%5Cd1312%5Cu17813125"])
+    assert(!ai.includes(entry), "excluded: " + entry);
+}
+
 // 4. Safety: a short line + prose that is followed by more entries in the
 //    same list is still mixed content and goes to review, with a resume
 //    option offered (never "Cancel" only).
@@ -169,4 +187,5 @@ console.log("PASS: greeting / Task / Response / Part openers end a list automati
 console.log("PASS: real two-list essay (two fonts): numbered Question/Part/Section headings end a Works Cited list, no review");
 console.log("PASS: real manuscript with full-given-name APA references: whole list excluded, no review; prose after a DOI-less entry kept");
 console.log("PASS: real repeated outline: 11 lists end at the short title line before the next heading, no review");
+console.log("PASS: real Chicago web-source bibliography (n.d., quoted titles, wrapped URLs): whole list excluded, no review");
 console.log("PASS: reference review timeout is 6 minutes, message follows the setting");

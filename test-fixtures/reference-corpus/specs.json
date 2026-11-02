@@ -2611,5 +2611,177 @@
   "secondList": false,
   "expectReview": true,
   "noRefs": false
+ },
+ {
+  "name": "cw_chicago_web_hanging",
+  "style": "chicago_web",
+  "heading": "BIBLIOGRAPHY",
+  "after": "none",
+  "entries": [
+   "Anthony, Amanda Koontz. \u201cRac",
+   "Cincinnati Art Museum. Ident",
+   "\u201cConfrontation Between Black",
+   "Florida Department of State,",
+   "Intellect. \u201cThe Making of an",
+   "Museum of Florida History. \u201c",
+   "Smithsonian American Art Mus",
+   "UBC Press. \u201cJust Above the W",
+   "United States. Civil Rights ",
+   "Hagood, Taylor. \u201cNegotiating"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": null,
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "cw_chicago_web_noindent",
+  "style": "chicago_web",
+  "heading": "BIBLIOGRAPHY",
+  "after": "none",
+  "entries": [
+   "Anthony, Amanda Koontz. \u201cRac",
+   "Cincinnati Art Museum. Ident",
+   "\u201cConfrontation Between Black",
+   "Florida Department of State,",
+   "Intellect. \u201cThe Making of an",
+   "Museum of Florida History. \u201c",
+   "Smithsonian American Art Mus",
+   "UBC Press. \u201cJust Above the W",
+   "United States. Civil Rights ",
+   "Hagood, Taylor. \u201cNegotiating"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": null,
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "cw_chicago_web_double",
+  "style": "chicago_web",
+  "heading": "BIBLIOGRAPHY",
+  "after": "none",
+  "entries": [
+   "Anthony, Amanda Koontz. \u201cRac",
+   "Cincinnati Art Museum. Ident",
+   "\u201cConfrontation Between Black",
+   "Florida Department of State,",
+   "Intellect. \u201cThe Making of an",
+   "Museum of Florida History. \u201c",
+   "Smithsonian American Art Mus",
+   "UBC Press. \u201cJust Above the W",
+   "United States. Civil Rights ",
+   "Hagood, Taylor. \u201cNegotiating"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": null,
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "cw_chicago_web_after_appendix",
+  "style": "chicago_web",
+  "heading": "BIBLIOGRAPHY",
+  "after": "appendix",
+  "entries": [
+   "Anthony, Amanda Koontz. \u201cRac",
+   "Cincinnati Art Museum. Ident",
+   "\u201cConfrontation Between Black",
+   "Florida Department of State,",
+   "Intellect. \u201cThe Making of an",
+   "Museum of Florida History. \u201c",
+   "Smithsonian American Art Mus",
+   "UBC Press. \u201cJust Above the W",
+   "United States. Civil Rights ",
+   "Hagood, Taylor. \u201cNegotiating"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": "The appendix presents the interview schedule that was used d",
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "cw_chicago_web_after_prose",
+  "style": "chicago_web",
+  "heading": "BIBLIOGRAPHY",
+  "after": "prose",
+  "entries": [
+   "Anthony, Amanda Koontz. \u201cRac",
+   "Cincinnati Art Museum. Ident",
+   "\u201cConfrontation Between Black",
+   "Florida Department of State,",
+   "Intellect. \u201cThe Making of an",
+   "Museum of Florida History. \u201c",
+   "Smithsonian American Art Mus",
+   "UBC Press. \u201cJust Above the W",
+   "United States. Civil Rights ",
+   "Hagood, Taylor. \u201cNegotiating"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": "Looking back at the research process, the most persuasive so",
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "cw_mla_web",
+  "style": "chicago_web",
+  "heading": "Works Cited",
+  "after": "none",
+  "entries": [
+   "\u201cAlfred Hair.\u201d Museum of Flo",
+   "Anthony, Amanda Koontz. \u201cRac",
+   "National Park Service. \u201cAfri",
+   "Tanzi, Ron. \u201cArt Criticism.\u201d"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": null,
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "cw_mla_web_noindent_after_prose",
+  "style": "chicago_web",
+  "heading": "Works Cited",
+  "after": "prose",
+  "entries": [
+   "\u201cAlfred Hair.\u201d Museum of Flo",
+   "Anthony, Amanda Koontz. \u201cRac",
+   "National Park Service. \u201cAfri",
+   "Tanzi, Ron. \u201cArt Criticism.\u201d"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": "Looking back at the research process, the most persuasive so",
+  "secondList": false,
+  "expectReview": false,
+  "noRefs": false
+ },
+ {
+  "name": "neg_cw_prose_between_web_entries",
+  "style": "chicago_web",
+  "heading": "BIBLIOGRAPHY",
+  "after": "none",
+  "entries": [
+   "Anthony, Amanda Koontz. \u201cRac",
+   "Cincinnati Art Museum. Ident",
+   "\u201cConfrontation Between Black",
+   "Florida Department of State,",
+   "Intellect. \u201cThe Making of an",
+   "Museum of Florida History. \u201c",
+   "Smithsonian American Art Mus",
+   "UBC Press. \u201cJust Above the W",
+   "United States. Civil Rights ",
+   "Hagood, Taylor. \u201cNegotiating"
+  ],
+  "keepBefore": "Osteoarthritis is a degenerative joint condition that leads ",
+  "keepAfter": null,
+  "secondList": false,
+  "expectReview": true,
+  "noRefs": false
  }
 ]
