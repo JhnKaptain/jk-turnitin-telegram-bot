@@ -162,6 +162,8 @@ function isLikelySectionHeading(lines, index, start, source) {
   const text = line.text.trim();
   if (!text || text.length < 3 || text.length > 100) return false;
   if (REFERENCE_HEADING.test(text) || KNOWN_TERMINATOR.test(text)) return false;
+  // A quoted title ("“Confrontation Between ...”") opens a citation, not a section.
+  if (/^[“"‘']/u.test(text)) return false;
   // Task and Study headings can contain publication years, e.g. Study: Milgram (1963).
   if (isIndependentAssignmentHeading(lines, index)) return true;
   if (/^(?:https?:\/\/|doi\s*:|www\.)/i.test(text)) return false;
@@ -252,8 +254,12 @@ function looksLikeCompleteCitation(value) {
   const year = YEAR_MARKER.exec(text);
   if (!year || year.index > 320) return false;
   const lead = text.slice(0, year.index);
-  // The part before the year is authors/organization, not a sentence.
+  // The part before the year is authors/organization (or a quoted title),
+  // not a sentence: no verbs of the student's own writing, and mostly
+  // capitalised words.
   if (/\b(?:is|are|was|were|has|have|this|these|that|which|because|however|therefore|we|our|i|my)\b/u.test(lead)) return false;
+  const longWords = (lead.replace(/https?:\/\/\S+/gu, " ").match(/[\p{L}][\p{L}'’-]{3,}/gu) || []);
+  if (longWords.length >= 6 && longWords.filter(word => /^[\p{Lu}]/u.test(word)).length / longWords.length < 0.5) return false;
   return CLOSING_METADATA.test(text) || /\b(?:retrieved|available at|accessed)\b/iu.test(text);
 }
 
@@ -346,6 +352,8 @@ function looksLikeReferenceContinuation(value) {
   const text = String(value || "").replace(/\s+/gu, " ").trim();
   if (!text) return true;
   if (/^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return true;
+  // A URL wrapped over several lines: "A9&f=", "%5Cd1312%5Cu178...&s=21", "&v=0.".
+  if (/^\S{1,160}$/u.test(text) && /[%&=_]|\/\S/u.test(text) && !/^[\p{Lu}][\p{Ll}]+[.,]?$/u.test(text)) return true;
   // The year wrapped from a long author line: "(2025). AI capability and ..."
   if (/^\((?:(?:19|20)\d{2}[a-z]?(?:,\s*[^)]{1,40})?|n\.\s*d\.(?:-[a-z])?)\)\.?(?:\s|$)/iu.test(text)) return true;
   if (/^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(?:19|20)\d{2}\b/iu.test(text)) return true;
@@ -797,8 +805,20 @@ function furtherEntriesInSection(lines, index) {
 // the first line ending with closing citation metadata (DOI, volume(issue),
 // pages, publisher) without crossing another entry start, and check that the
 // whole block from the entry start reads as one complete citation.
+// The previous line stops mid-phrase ("... An African-American"), so the
+// next line continues the same citation even if it looks like an entry start.
+function endsMidCitation(value) {
+  const text = String(value || "").trim();
+  if (!text || /[.?!"”’')\]]$/u.test(text)) return false;
+  // A heading ("Bibliography", "Table of Legislation") ends nothing mid-phrase.
+  if (REFERENCE_HEADING.test(text) || KNOWN_TERMINATOR.test(text) || COMMON_SECTION_HEADING.test(text)) return false;
+  if (/(?:https?:\/\/|www\.|doi\s*:|\b10\.\d{4,9}\/)\S*$/iu.test(text)) return false;
+  return /[\p{L}\p{N},:;&–-]$/u.test(text);
+}
+
 function closesAsCitation(source, lines, i, entryStartOffset) {
   let seen = 0;
+  let previous = "";
   for (let k = i; k < lines.length && seen < 9; k++) {
     const value = lines[k].text.trim();
     if (!value || isPageMarkerLine(lines[k])) continue;
@@ -809,10 +829,15 @@ function closesAsCitation(source, lines, i, entryStartOffset) {
     if (IN_TEXT_CITATION.test(value) || looksLikeUnheadedBodyLine(value)) return false;
     // The closing line (pages, DOI) may itself look like an entry start
     // ("123897. https://doi.org/..."), so test it as the closer first.
-    if (CLOSING_METADATA.test(value) || /^(?:https?:\/\/|www\.|doi\s*:)/iu.test(value)) {
-      return looksLikeCompleteCitation(source.slice(entryStartOffset, lines[k].end));
+    // A publisher word can end a title line ("Publisher's description"):
+    // keep looking until the block reads as a complete citation.
+    if ((CLOSING_METADATA.test(value) || /^(?:https?:\/\/|www\.|doi\s*:)/iu.test(value)) &&
+        looksLikeCompleteCitation(source.slice(entryStartOffset, lines[k].end))) {
+      return true;
     }
-    if (k > i && (isReferenceEntryStart(value) || REFERENCE_HEADING.test(value) || KNOWN_TERMINATOR.test(value))) return false;
+    if (k > i && (REFERENCE_HEADING.test(value) || KNOWN_TERMINATOR.test(value) ||
+        (isReferenceEntryStart(value) && !endsMidCitation(previous)))) return false;
+    previous = value;
   }
   return false;
 }
@@ -869,7 +894,10 @@ function inspectBoundary(source, start, lines) {
       return Number(prev[1] ?? prev[2]) + 1 === Number(cur[1] ?? cur[2]);
     })());
 
-    if (isReferenceEntryStart(text) || sequentialNumbered) {
+    const continuesOpenCitation = Boolean(activeEntryLine && !activeEntryClosed && !sequentialNumbered &&
+      previousNonblankLine && previousNonblankLine !== lines[index] && endsMidCitation(previousNonblankLine.text) &&
+      !isAuthorListLine(text));
+    if ((isReferenceEntryStart(text) || sequentialNumbered) && !continuesOpenCitation) {
       // A substantial, unexplained paragraph between citation entries might
       // be a genuine body section. Never silently swallow it just because
       // another citation follows. Request review instead.
@@ -909,6 +937,18 @@ function inspectBoundary(source, start, lines) {
           closesAsCitation(source, lines, i, activeEntryLine.start)) {
         if (CLOSING_METADATA.test(text) || /^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) activeEntryClosed = true;
         firstCandidate = null;
+        previousNonblankLine = line;
+        continue;
+      }
+      // A new entry the line patterns do not cover (organisation author with
+      // "n.d.", a quoted title first, a web page with "Accessed ..."): after
+      // a finished citation, a block that closes as a complete citation is
+      // the next entry.
+      if (entriesFound > 0 && activeEntryClosed && firstCandidate === null &&
+          closesAsCitation(source, lines, i, line.start)) {
+        entriesFound++;
+        activeEntryLine = line;
+        activeEntryClosed = CLOSING_METADATA.test(text) && looksLikeCompleteCitation(text);
         previousNonblankLine = line;
         continue;
       }
