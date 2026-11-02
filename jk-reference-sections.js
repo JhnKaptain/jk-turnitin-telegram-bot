@@ -836,6 +836,14 @@ function inspectBoundary(source, start, lines) {
     const text = line.text.trim();
     if (!text || isPageMarkerLine(line)) continue;
 
+    // Track whether the current citation is complete (its closing DOI /
+    // pages line has been seen), whatever branch handles the line below.
+    if (activeEntryLine && !activeEntryClosed && !isReferenceEntryStart(text) &&
+        (CLOSING_METADATA.test(text) || /^(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) &&
+        looksLikeCompleteCitation(source.slice(activeEntryLine.start, line.end))) {
+      activeEntryClosed = true;
+    }
+
     // A wrapped continuation line can itself begin like a citation
     // ("Østerås, N. (2024). EULAR recommendations..."). With a hanging indent
     // it sits at the continuation x, not the entry x: keep it in the entry.
@@ -939,6 +947,20 @@ function inspectBoundary(source, start, lines) {
       // If an unresolved line immediately precedes a heading, do not
       // silently swallow a potentially substantive paragraph.
       if (firstCandidate !== null) {
+        // A short title line right after a finished citation and right
+        // before the heading ("Case Profile" / "Part III. Outline") is the
+        // start of the next section, not part of the reference list. A line
+        // ending in punctuation ("Standards and policy.") may be the tail of
+        // a citation title and still goes to review.
+        const between = lines.filter(record => record.start >= firstCandidate && record.start < line.start &&
+          record.text.trim() && !isPageMarkerLine(record)).map(record => record.text.trim());
+        const words = between.join(" ").match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || [];
+        if (activeEntryClosed && between.length >= 1 && between.length <= 3 && words.length <= 14 &&
+            between.every(value => (value.match(/\S+/gu) || []).length <= 7) &&
+            !CITATION_METADATA.test(between.join(" ")) &&
+            !between.some(value => isReferenceEntryStart(value) || looksLikeReferenceContinuation(value) || /[.,;:]$/u.test(value))) {
+          return {status: "AUTO", end: firstCandidate, reason: "A short title line starts the next section after a completed reference list.", entriesFound};
+        }
         return {status: "REVIEW", reason: "Text between the last reference and the following heading remains ambiguous.", candidateOffset: firstCandidate, entriesFound};
       }
       return {status: "AUTO", end: line.start, reason: "Recognized following section.", entriesFound};
