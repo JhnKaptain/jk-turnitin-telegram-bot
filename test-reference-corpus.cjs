@@ -20,7 +20,8 @@
 // between entries, two-page running heads, and prose after a list that cites
 // "(Barney, 1991, pp. 99-120)" (generate-fullname*.py); Chicago/MLA web-source
 // bibliographies with n.d., quoted titles first and wrapped URLs
-// (generate-chicago-web.py).
+// (generate-chicago-web.py); PowerPoint decks and Word lists with bulleted
+// entries over several "References" slides (generate-slides-bullets.py).
 // Offline: no provider, Telegram or Render calls.
 const assert = require("node:assert/strict");
 const path = require("node:path");

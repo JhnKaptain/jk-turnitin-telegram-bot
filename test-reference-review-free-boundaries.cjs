@@ -162,6 +162,21 @@ for (const heading of ["Question 2: From Power to Influence", "Part B: Reflectio
     assert(!ai.includes(entry), "excluded: " + entry);
 }
 
+// 3f. Slide deck (PDF): Harvard references over three slides titled
+//     "References", every entry bulleted ("• Choo, H.J., 2025. ..."). Only
+//     the 4 entries with "(2023)"-style years were recognised -> review.
+{
+  const doc = require("./test-fixtures/slides-bulleted-harvard-real-geometry.json").document;
+  const text = doc.text;
+  const result = inspect(doc);
+  assert.deepEqual(result.reviews, [], "bulleted slide references: no administrator review");
+  assert.equal(result.ranges.length, 1);
+  assert(text.slice(result.ranges[0].start).startsWith("References\n• Can, E. S. G."), "starts at the first References slide");
+  assert.equal(result.ranges[0].end, text.length, "all three reference slides excluded");
+  const ai = scan.buildAiInput(text, doc, []).text;
+  for (const entry of ["Choo, H.J., 2025", "Glowik, M., 2016", "Teece, D.J., 2009", "Yu, S., 1998"]) assert(!ai.includes(entry), "excluded: " + entry);
+}
+
 // 4. Safety: a short line + prose that is followed by more entries in the
 //    same list is still mixed content and goes to review, with a resume
 //    option offered (never "Cancel" only).
@@ -188,4 +203,5 @@ console.log("PASS: real two-list essay (two fonts): numbered Question/Part/Secti
 console.log("PASS: real manuscript with full-given-name APA references: whole list excluded, no review; prose after a DOI-less entry kept");
 console.log("PASS: real repeated outline: 11 lists end at the short title line before the next heading, no review");
 console.log("PASS: real Chicago web-source bibliography (n.d., quoted titles, wrapped URLs): whole list excluded, no review");
+console.log("PASS: real slide deck with bulleted Harvard references over three slides: all excluded, no review");
 console.log("PASS: reference review timeout is 6 minutes, message follows the setting");

@@ -219,7 +219,7 @@ const NAME_PARTICLE = /^(?:al|el|bin|ibn|binti|de|da|di|del|della|der|den|du|la|
 // commas and a final "&"/"and", optionally ending with the year. No verbs,
 // no lower-case words other than name particles.
 function isAuthorListLine(value) {
-  const text = String(value || "").replace(/\s+/gu, " ").trim()
+  const text = withoutBullet(value)
     .replace(/\s*\((?:(?:19|20)\d{2}[a-z]?|n\.\s*d\.)\)\.?$/iu, "");
   if (text.length < 8 || text.length > 260) return false;
   if ((text.match(/,/gu) || []).length < 2) return false;
@@ -263,8 +263,18 @@ function looksLikeCompleteCitation(value) {
   return CLOSING_METADATA.test(text) || /\b(?:retrieved|available at|accessed)\b/iu.test(text);
 }
 
+// Slide decks and Word lists put a bullet before each entry:
+// "• Choo, H.J., 2025. An Analysis of ..." / "▪ Teece, D.J., 2009. ...".
+// Word's bullet style comes through as a Symbol-font private-use glyph
+// (U+F0B7 etc.); PowerPoint can add its own bullet before a typed one
+// ("• • Choo, ...").
+const LIST_BULLET = /^(?:(?:[•▪◦●○■□▫➢►▸‣⁃∙·*\uE000-\uF8FF]|[-–—](?=\s))\s*)+/u;
+function withoutBullet(value) {
+  return String(value || "").replace(/\s+/gu, " ").trim().replace(LIST_BULLET, "");
+}
+
 function isReferenceEntryStart(value) {
-  const raw = String(value || "").replace(/\s+/gu, " ").trim();
+  const raw = withoutBullet(value);
   // A stray opening quote (pasted entry) or an MLA title-first entry.
   const text = raw.replace(/^[‘’'"“”]+/u, "");
   if (!text || /^(?:\[\d+\]\s*)?(?:https?:\/\/|www\.|doi\s*:)/iu.test(text)) return false;
