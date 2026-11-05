@@ -3506,6 +3506,9 @@ async function sendAdminMessage(text, extra = {}) {
       ).reply_markup;
   }
 
+  // Telegram rejects messages over 4096 characters; never lose an alert.
+  text = require("./jk-gateway-errors.cjs").clampTelegramText(text);
+
   try {
     await bot.telegram.sendMessage(
       ADMIN_ID,
@@ -4620,11 +4623,14 @@ async function intasendCheckoutRequest(endpoint, body) {
   }
 
   if (!res.ok) {
-    const err = new Error(
-      (data && (data.detail || data.message || JSON.stringify(data))) || `HTTP ${res.status}`
-    );
+    // JK_GATEWAY_ERRORS_V1: short, readable error (HTML pages summarised).
+    const err = new Error(require("./jk-gateway-errors.cjs").summarizeGatewayError({
+      status: res.status, statusText: res.statusText,
+      contentType: res.headers?.get?.("content-type"), text, data
+    }));
     err.status = res.status;
-    err.payload = data;
+    err.payload = data && data.raw ? { raw: String(data.raw).slice(0, 2000) } : data;
+    console.error("IntaSend " + endpoint + " failed: " + err.message);
     throw err;
   }
 
@@ -4680,11 +4686,14 @@ async function intasendRequest(endpoint, body) {
   }
 
   if (!res.ok) {
-    const err = new Error(
-      (data && (data.detail || data.message || JSON.stringify(data))) || `HTTP ${res.status}`
-    );
+    // JK_GATEWAY_ERRORS_V1: short, readable error (HTML pages summarised).
+    const err = new Error(require("./jk-gateway-errors.cjs").summarizeGatewayError({
+      status: res.status, statusText: res.statusText,
+      contentType: res.headers?.get?.("content-type"), text, data
+    }));
     err.status = res.status;
-    err.payload = data;
+    err.payload = data && data.raw ? { raw: String(data.raw).slice(0, 2000) } : data;
+    console.error("IntaSend " + endpoint + " failed: " + err.message);
     throw err;
   }
 
@@ -4717,11 +4726,14 @@ async function intasendGet(endpoint, query = {}) {
   }
 
   if (!res.ok) {
-    const err = new Error(
-      (data && (data.detail || data.message || JSON.stringify(data))) || `HTTP ${res.status}`
-    );
+    // JK_GATEWAY_ERRORS_V1: short, readable error (HTML pages summarised).
+    const err = new Error(require("./jk-gateway-errors.cjs").summarizeGatewayError({
+      status: res.status, statusText: res.statusText,
+      contentType: res.headers?.get?.("content-type"), text, data
+    }));
     err.status = res.status;
-    err.payload = data;
+    err.payload = data && data.raw ? { raw: String(data.raw).slice(0, 2000) } : data;
+    console.error("IntaSend " + endpoint + " failed: " + err.message);
     throw err;
   }
 
@@ -5846,6 +5858,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
     schedulePaymentTimeoutReminder(userId, apiRef);
   } catch (err) {
     sub.stage = STAGE_WAIT_PAYMENT;
+    console.error("STK push failed for user " + userId + ": " + (err?.message || err));
 
     updatePaymentRef(apiRef, {
       status: "FAILED_TO_INITIATE",
@@ -6089,6 +6102,22 @@ bot.command("filebatch", async (ctx) => {
 });
 
 // JK_WEB_ORDERS_V1: manual delivery to a website order, same as /filebatch.
+// JK_INTASEND_CHECK_V1: admin-only gateway check. Reads the invoice list for
+// a dummy reference: no STK prompt is sent and nothing is charged.
+bot.command("intasendcheck", async (ctx) => {
+  if (Number(ctx.from?.id) !== Number(ADMIN_ID)) return;
+  const started = Date.now();
+  try {
+    await intasendGet("/invoices/", { api_ref: "JK_HEALTHCHECK_" + started });
+    await ctx.reply("✅ IntaSend reachable (" + (Date.now() - started) + " ms). Mode: " +
+      (INTASEND_TEST ? "TEST" : "LIVE") + ". Secret key present: " + (INTASEND_SECRET_KEY ? "YES" : "NO") + ".");
+  } catch (err) {
+    await ctx.reply("❌ IntaSend check failed (" + (Date.now() - started) + " ms)\n" +
+      require("./jk-gateway-errors.cjs").clampTelegramText(String(err?.message || err), 1500) +
+      "\nMode: " + (INTASEND_TEST ? "TEST" : "LIVE") + ". Secret key present: " + (INTASEND_SECRET_KEY ? "YES" : "NO") + ".");
+  }
+});
+
 bot.command("webdeliver", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
