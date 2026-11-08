@@ -3910,9 +3910,10 @@ function jkSourceLabel(type) {
   return type === "database" ? "Publication" : type === "batch" ? "Student papers" : "Internet";
 }
 
-// JK_SOURCE_NAME_WIDTH_FIT_V1: the source name starts at x=36 and the % at x=386, so a
-// name may use at most 386 - 36 - 12 (gap) points. Cut by measured width, not letters.
-const SOURCE_NAME_MAX_WIDTH = 338;
+// JK_SOURCE_NAME_WIDTH_FIT_V2: match the reference report's gap to the % column.
+// The title starts at x=36 and the percentage at x=386. Reserve 68 PDF points;
+// 282 points remain for the title. Truncate by actual font width, not characters.
+const SOURCE_NAME_MAX_WIDTH = 282;
 
 function fitSourceName(value, font, size, maxWidth) {
   const text = s(value);
