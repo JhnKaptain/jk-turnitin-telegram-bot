@@ -10,6 +10,8 @@ const fs = require("fs");
 const path = require("path");
 const {
   PDFDocument,
+  PDFName,
+  PDFString,
   StandardFonts,
   BlendMode,
   rgb,
@@ -3690,15 +3692,11 @@ function sourceOverviewPages(doc, f, icons, bundle, groups, cats, sources, start
             : "Student papers";
 
       drawTextTop(page, typeLabel, 86.7655, top, 7, f.notoSemi, C.ink);
-      drawTextTop(
-        page,
-        fitSourceName(sourceDomain(source), f.notoSemi, 8, SOURCE_NAME_MAX_WIDTH),
-        36,
-        top + 16.931,
-        8,
-        f.notoSemi,
-        C.ink
-      );
+      const sourceName = fitSourceName(sourceDomain(source), f.notoSemi, 8, SOURCE_NAME_MAX_WIDTH);
+      const sourceNameTop = top + 16.931;
+      drawTextTop(page, sourceName, 36, sourceNameTop, 8, f.notoSemi, C.ink);
+      // Invisible PDF link rectangle covers only the displayed source name.
+      addSourceLinkAnnotation(doc, page, source, sourceName, f.notoSemi, 36, sourceNameTop, 8);
 
       const totalMatched =
         sources.reduce((n, item) => n + Number(item.matchedWords || 0), 0) || 1;
@@ -3955,6 +3953,51 @@ function sourceDomain(source) {
       .replace(/\/.*$/, "")
       .slice(0, 80);
   }
+}
+
+// Only use URLs supplied by the similarity provider. Never invent a link from
+// a publication title or a domain-looking label without a source URL.
+function sourceLinkUrl(source) {
+  const raw = s(source?.url || source?.sourceUrl).trim();
+  if (!raw || raw.includes("\\") || Array.from(raw).some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) return null;
+  // Accept explicit http(s) links, or provider-supplied hostname/path without a scheme.
+  // Reject other URI schemes and credential-bearing URLs.
+  if (/^(?:javascript|data|file|ftp):/i.test(raw)) return null;
+  const hasHttpScheme = raw.toLowerCase().startsWith("https://") || raw.toLowerCase().startsWith("http://");
+  const candidate = hasHttpScheme ? raw : (
+    /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : "https://" + raw
+  );
+  try {
+    const url = new URL(candidate);
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (!url.hostname || !url.hostname.includes(".")) return null;
+    if (url.username || url.password) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+// PDF annotations are separate from printed text: viewers show a short title
+// or hostname, but clicking the text opens the complete provider source URL.
+function addSourceLinkAnnotation(doc, page, source, text, font, x, top, size) {
+  const url = sourceLinkUrl(source);
+  if (!url || !text) return false;
+  const width = Math.min(SOURCE_NAME_MAX_WIDTH, font.widthOfTextAtSize(text, size));
+  if (!(width > 0)) return false;
+  const bottom = topY(top, size, page.getHeight()) - 1;
+  const link = doc.context.obj({
+    Type: PDFName.of("Annot"),
+    Subtype: PDFName.of("Link"),
+    Rect: [x, bottom, x + width, bottom + size + 3],
+    Border: [0, 0, 0],
+    A: doc.context.obj({
+      S: PDFName.of("URI"),
+      URI: PDFString.of(url)
+    })
+  });
+  page.node.addAnnot(doc.context.register(link));
+  return true;
 }
 
 function fittedScale(font, value, size, targetWidth) {
@@ -6687,6 +6730,8 @@ module.exports = {
   simRanges,
   fitSourceName,
   sourceDomain,
+  sourceLinkUrl,
+  addSourceLinkAnnotation,
   SOURCE_NAME_MAX_WIDTH
 };
 
