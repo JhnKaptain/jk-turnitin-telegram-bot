@@ -26,7 +26,8 @@ const { fitSourceName, sourceDomain, sourceLinkUrl, addSourceLinkAnnotation, SOU
   assert.equal(sourceLinkUrl({ title: "A publication with no source URL" }), null);
   assert.equal(sourceLinkUrl({ url: "javascript:alert(1)" }), null);
   assert.equal(sourceLinkUrl({ url: "file:///etc/passwd" }), null);
-  assert.equal(sourceLinkUrl({ url: "https://evil.test\\n/redirect" }), null);
+  assert.equal(sourceLinkUrl({ url: "https://evil.test\\n/redirect" }), null, "reject ambiguous backslash URL");
+  assert.equal(sourceLinkUrl({ url: "https://evil.test" + String.fromCharCode(10) + "/redirect" }), null, "reject embedded newline URL");
   const linkPage = doc.addPage([612, 792]);
   assert.equal(addSourceLinkAnnotation(doc, linkPage, example, "researchonline.lshtm.ac.uk", font, 36, 100, 8), true);
   assert.equal(addSourceLinkAnnotation(doc, linkPage, { title: "No URL" }, "No URL", font, 36, 125, 8), false);
