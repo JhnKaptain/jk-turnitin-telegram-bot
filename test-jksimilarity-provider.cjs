@@ -47,11 +47,15 @@ function startServer() {
           similarity: 42,
           similarity_exact: 41.67,
           word_count: 30,
-          sources: [{ id: "web:https://news.example/a", url: "https://news.example/a", type: "web", percent: 41.67 }],
+          sources: [
+            { id: "web:https://news.example/a", url: "https://news.example/a", type: "web", title: "News page", percent: 41.67 },
+            { id: "doi:10.1/x", url: "https://doi.org/10.1/x", type: "publication", title: "A Journal Article", percent: 5 }
+          ],
           matches: [
             { source_id: "web:https://news.example/a", start, end: start + Array.from(COPIED).length, words: 16,
               counted: true, source_excerpt: COPIED },
-            { source_id: "web:https://news.example/a", start: 0, end: 4, words: 1, counted: false, source_excerpt: "" }
+            { source_id: "web:https://news.example/a", start: 0, end: 4, words: 1, counted: false, source_excerpt: "" },
+            { source_id: "overlapped:not-listed", start, end: start + 10, words: 9, counted: true, source_excerpt: "" }
           ],
           text
         });
@@ -87,17 +91,23 @@ function startServer() {
     const result = await jk.checkPlagiarism({ text: TEXT, title: "Essay.docx", pollMs: 1, onSubmitted: s => submitted.push(s) });
     assert.equal(state.received.text, TEXT, "text must arrive unchanged (CR LF kept)");
     assert.equal(state.received.exclude_bibliography, false);
+    assert.equal(state.received.exclude_quotes, false);
     assert.deepEqual(submitted, [{ provider: "jksimilarity", reportId: "chk_test1" }]);
     assert.equal(result.provider, "jksimilarity");
     assert.equal(result.score, 41.67);
     assert.equal(result.inputText, TEXT);
-    assert.equal(result.matches.length, 1, "uncounted matches are left out");
+    assert.equal(result.matches.length, 1, "uncounted and overlapped (unlisted) matches are left out");
     const [match] = result.matches;
     assert.equal(TEXT.slice(match.start, match.end), COPIED);
     assert.equal(match.text, COPIED);
-    assert.deepEqual(match.source, { id: "web:https://news.example/a", url: "https://news.example/a" });
+    assert.deepEqual(match.source, { id: "web:https://news.example/a", url: "https://news.example/a", title: "News page", type: "internet" });
     assert.equal(match.inputTokenCount, 16);
     assert.equal(result.raw.text, undefined, "raw copy should not duplicate the text");
+
+    // 1b. Filtered reports ask the service to leave out citation entries and quotes too.
+    await jk.checkPlagiarism({ text: TEXT, title: "Essay.docx", pollMs: 1, filtered: true });
+    assert.equal(state.received.exclude_bibliography, true);
+    assert.equal(state.received.exclude_quotes, true);
 
     // 2. The bot's existing alignment accepts it unchanged.
     const [aligned] = alignQuetextResultMatches(TEXT, result);
@@ -139,7 +149,11 @@ function startServer() {
     await jk.deletePlagiarismReport("chk_test1");
     assert.deepEqual(state.deleted, ["chk_test1"]);
 
-    // 7. Admin command text and buttons.
+    // 7. Report shows publication titles and types; Quetext-style sources stay "Internet".
+    const renderer = fs.readFileSync(path.join(__dirname, "jk-report-renderer-max.js"), "utf8");
+    assert.match(renderer, /JK_SOURCE_TYPES_AND_TITLES_V1/u);
+
+    // 8. Admin command text and buttons.
     const admin = require("./jk-plagiarism-provider-admin.cjs");
     assert.match(admin.describe(), /In use: JK SimilarityCheck \(from the Render setting PLAGIARISM_PROVIDER\)/u);
     assert.equal(admin.keyboard().inline_keyboard[0][1].text, "✅ JK SimilarityCheck");

@@ -97,10 +97,14 @@ function countSentences(text) {
 function normalizeJkReport(report, inputText) {
   const text = String(inputText ?? report?.text ?? "");
   const toUtf16 = codePointToUtf16Index(text);
-  const urls = new Map((report?.sources || []).map(source => [source.id, source.url || null]));
+  // Only listed sources are kept: unlisted ones are fully overlapped by a higher-ranked
+  // source (Turnitin: "overlapping sources will not be displayed").
+  const listed = new Map((report?.sources || []).map(source => [source.id, source]));
+  const TYPES = { publication: "database", web: "internet", wikipedia: "internet", submission: "batch" };
   const matches = [];
   for (const match of report?.matches || []) {
-    if (match?.counted === false) continue;
+    if (match?.counted === false || !listed.has(match?.source_id)) continue;
+    const listedSource = listed.get(match.source_id);
     const startCp = Number(match?.start);
     const endCp = Number(match?.end);
     if (!Number.isInteger(startCp) || !Number.isInteger(endCp) || endCp <= startCp || endCp >= toUtf16.length) continue;
@@ -115,8 +119,10 @@ function normalizeJkReport(report, inputText) {
       percentSimilar: 100,
       highlightedSnippet: String(match?.source_excerpt || ""),
       source: {
-        id: match?.source_id !== undefined ? String(match.source_id) : null,
-        url: urls.get(match?.source_id) || null
+        id: String(match.source_id),
+        url: listedSource.url || null,
+        title: listedSource.title || null,
+        type: TYPES[listedSource.type] || "internet"
       }
     });
   }
@@ -135,16 +141,16 @@ function normalizeJkReport(report, inputText) {
   };
 }
 
-async function createPlagiarismReport({ text, title }) {
+async function createPlagiarismReport({ text, title, filtered = false }) {
   // Sent as JSON (not a form upload) so the text arrives exactly as sent:
   // form uploads turn line breaks into CR LF, which would shift every offset.
-  // The pipeline already decides what to send (filtered or unfiltered text),
-  // so everything sent is scored, as with Quetext.
+  // The pipeline already removes the reference section for filtered reports; `filtered`
+  // also leaves out citation entries elsewhere (e.g. annotated bibliographies) and quotes.
   const body = {
     text: String(text || ""),
     filename: String(title || "document").slice(0, 255),
-    exclude_bibliography: false,
-    exclude_quotes: false
+    exclude_bibliography: Boolean(filtered),
+    exclude_quotes: Boolean(filtered)
   };
   const minWords = Number(process.env.JK_SIMILARITY_MIN_WORDS);
   if (Number.isInteger(minWords) && minWords >= 5) body.min_match_words = minWords;
@@ -173,8 +179,8 @@ async function waitForPlagiarismReport(reportId, { pollMs = DEFAULT_POLL_MS, tim
   }
 }
 
-async function checkPlagiarism({ text, title, pollMs, timeoutMs, onProgress, onSubmitted = null }) {
-  const created = await createPlagiarismReport({ text, title });
+async function checkPlagiarism({ text, title, pollMs, timeoutMs, onProgress, onSubmitted = null, filtered = false }) {
+  const created = await createPlagiarismReport({ text, title, filtered });
   if (typeof onSubmitted === "function") {
     try {
       await onSubmitted({ provider: "jksimilarity", reportId: created.reportId });
