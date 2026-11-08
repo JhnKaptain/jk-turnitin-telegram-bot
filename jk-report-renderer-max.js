@@ -3959,11 +3959,12 @@ function sourceDomain(source) {
 // a publication title or a domain-looking label without a source URL.
 function sourceLinkUrl(source) {
   const raw = s(source?.url || source?.sourceUrl).trim();
-  if (!raw || /[\\u0000-\\u001f\\u007f]/.test(raw)) return null;
+  if (!raw || Array.from(raw).some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) return null;
+  // Accept explicit http(s) links, or provider-supplied hostname/path without a scheme.
+  // Reject other URI schemes and credential-bearing URLs.
   if (/^(?:javascript|data|file|ftp):/i.test(raw)) return null;
-
-  // Some source providers return a hostname and path without the scheme.
-  const candidate = /^https?:\\/\\//i.test(raw) ? raw : (
+  const hasHttpScheme = raw.toLowerCase().startsWith("https://") || raw.toLowerCase().startsWith("http://");
+  const candidate = hasHttpScheme ? raw : (
     /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : "https://" + raw
   );
   try {
