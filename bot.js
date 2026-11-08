@@ -3112,6 +3112,7 @@ function adminAllCommandsText() {
     "/reportmode - Manual / Admin Approval / Automatic API",
     "/reporttemplate - Automatic rotation or fixed report profile",
     "/filtermode - Client choice / Always filtered / Always unfiltered",
+    "/plagiarism - Quetext or JK SimilarityCheck",
     "/institution - View automatic identity pool",
     "/copyleaksstatus - Show Copyleaks configuration status",
     "/aihighlights - Generate saved AI highlights to admin",
@@ -6709,6 +6710,9 @@ require("./jk-admin-free-scan-control.cjs").registerGuard(bot, {
   adminId: ADMIN_ID,
   onDisable: () => { adminFreeScanSession = null; }
 });
+
+// JK_PLAGIARISM_PROVIDER_ADMIN_V1: /plagiarism switches Quetext <-> JK SimilarityCheck.
+require("./jk-plagiarism-provider-admin.cjs").register(bot, { adminId: ADMIN_ID });
 
 // JK_ADMIN_FREE_SCAN_ACTIONS_V1
 bot.action(

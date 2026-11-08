@@ -51,11 +51,12 @@ const {
     "./jk-scan-text.js"
   );
 
+// JK_PLAGIARISM_PROVIDER_SWITCH_V1: Quetext or JK SimilarityCheck (same result shape).
 const {
   checkPlagiarism
 } =
   require(
-    "./providers/quetext.js"
+    "./providers/plagiarism.js"
   );
 
 const {
