@@ -3690,7 +3690,15 @@ function sourceOverviewPages(doc, f, icons, bundle, groups, cats, sources, start
             : "Student papers";
 
       drawTextTop(page, typeLabel, 86.7655, top, 7, f.notoSemi, C.ink);
-      drawTextTop(page, sourceDomain(source), 36, top + 16.931, 8, f.notoSemi, C.ink);
+      drawTextTop(
+        page,
+        fitSourceName(sourceDomain(source), f.notoSemi, 8, SOURCE_NAME_MAX_WIDTH),
+        36,
+        top + 16.931,
+        8,
+        f.notoSemi,
+        C.ink
+      );
 
       const totalMatched =
         sources.reduce((n, item) => n + Number(item.matchedWords || 0), 0) || 1;
@@ -3900,6 +3908,35 @@ function jkSourceType(source) {
 
 function jkSourceLabel(type) {
   return type === "database" ? "Publication" : type === "batch" ? "Student papers" : "Internet";
+}
+
+// JK_SOURCE_NAME_WIDTH_FIT_V1: the source name starts at x=36 and the % at x=386, so a
+// name may use at most 386 - 36 - 12 (gap) points. Cut by measured width, not letters.
+const SOURCE_NAME_MAX_WIDTH = 338;
+
+function fitSourceName(value, font, size, maxWidth) {
+  const text = s(value);
+  const width = (t) => {
+    try {
+      return font.widthOfTextAtSize(t, size);
+    } catch {
+      return t.length * size * 0.6;
+    }
+  };
+
+  if (width(text) <= maxWidth) return text;
+
+  const chars = Array.from(text.replace(/\.\.\.$/, ""));
+  let lo = 0;
+  let hi = chars.length;
+
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (width(chars.slice(0, mid).join("").trimEnd() + "...") <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+
+  return chars.slice(0, lo).join("").trimEnd() + "...";
 }
 
 function sourceDomain(source) {
@@ -6647,7 +6684,10 @@ module.exports = {
   renderJkReports,
   aiInfo,
   sourceList,
-  simRanges
+  simRanges,
+  fitSourceName,
+  sourceDomain,
+  SOURCE_NAME_MAX_WIDTH
 };
 
 if (require.main === module) {
