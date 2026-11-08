@@ -3959,7 +3959,7 @@ function sourceDomain(source) {
 // a publication title or a domain-looking label without a source URL.
 function sourceLinkUrl(source) {
   const raw = s(source?.url || source?.sourceUrl).trim();
-  if (!raw || Array.from(raw).some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) return null;
+  if (!raw || raw.includes("\\") || Array.from(raw).some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) return null;
   // Accept explicit http(s) links, or provider-supplied hostname/path without a scheme.
   // Reject other URI schemes and credential-bearing URLs.
   if (/^(?:javascript|data|file|ftp):/i.test(raw)) return null;
