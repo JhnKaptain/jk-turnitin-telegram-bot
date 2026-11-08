@@ -158,6 +158,13 @@ function startServer() {
     assert.match(admin.describe(), /In use: JK SimilarityCheck \(from the Render setting PLAGIARISM_PROVIDER\)/u);
     assert.equal(admin.keyboard().inline_keyboard[0][1].text, "✅ JK SimilarityCheck");
 
+    // Admin menu and dashboard make provider switching accessible without typing.
+    const botCode = fs.readFileSync(path.join(__dirname, "bot.js"), "utf8");
+    assert.match(botCode, /command: "plagiarism", description: "Choose plagiarism provider"/u);
+    assert.match(botCode, /bot\.action\("ADMIN_DASH_PLAGIARISM"/u);
+    assert.match(botCode, /Markup\.button\.callback\("🔗 Plagiarism Provider", "ADMIN_DASH_PLAGIARISM"\)/u);
+    assert.match(botCode, /"ADMIN_DASH_PLAGIARISM"\s*\)/u);
+
     console.log("JK SimilarityCheck provider: all checks passed");
   } finally {
     server.close();

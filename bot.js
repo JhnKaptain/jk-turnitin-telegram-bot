@@ -2863,6 +2863,12 @@ function adminDashboardKeyboard() {
     ],
     [
       Markup.button.callback(
+        "🔗 Plagiarism Provider",
+        "ADMIN_DASH_PLAGIARISM"
+      )
+    ],
+    [
+      Markup.button.callback(
         "🎲 Identity Pool",
         "ADMIN_DASH_INSTITUTION"
       ),
@@ -2921,6 +2927,7 @@ function adminDiscountKeyboard() {
 function reportModeKeyboard() {
   return adminBackKeyboard([
     [Markup.button.callback("Report Template", "RPTM:OPEN")],
+    [Markup.button.callback("🔗 Plagiarism Provider", "ADMIN_DASH_PLAGIARISM")],
     [
       Markup.button.callback(
         "🧑‍💻 Manual Only",
@@ -3165,6 +3172,7 @@ async function syncAdminCommandMenu() {
     { command: "reportmode", description: "Set report generation mode" },
     { command: "reporttemplate", description: "View or set report template rotation" },
     { command: "filtermode", description: "Set similarity filtering mode" },
+    { command: "plagiarism", description: "Choose plagiarism provider" },
     { command: "institution", description: "View automatic identity pool" },
     { command: "copyleaksstatus", description: "Check Copyleaks API status" },
     { command: "aihighlights", description: "Generate saved AI highlights to admin" },
@@ -6712,7 +6720,24 @@ require("./jk-admin-free-scan-control.cjs").registerGuard(bot, {
 });
 
 // JK_PLAGIARISM_PROVIDER_ADMIN_V1: /plagiarism switches Quetext <-> JK SimilarityCheck.
-require("./jk-plagiarism-provider-admin.cjs").register(bot, { adminId: ADMIN_ID });
+const plagiarismProviderAdmin = require("./jk-plagiarism-provider-admin.cjs");
+plagiarismProviderAdmin.register(bot, { adminId: ADMIN_ID });
+
+// JK_PLAGIARISM_DASHBOARD_BUTTON_V1: same provider controls via /admin or Report Generation.
+bot.action("ADMIN_DASH_PLAGIARISM", async (ctx) => {
+  if (ctx.from?.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  await ctx.answerCbQuery();
+  const providerRows = plagiarismProviderAdmin.keyboard().inline_keyboard;
+  await showAdminScreen(
+    ctx,
+    plagiarismProviderAdmin.describe(),
+    Markup.inlineKeyboard([
+      ...providerRows,
+      [Markup.button.callback("🏠 Admin Dashboard", "ADMIN_DASH_HOME")]
+    ]),
+    true
+  );
+});
 
 // JK_ADMIN_FREE_SCAN_ACTIONS_V1
 bot.action(
