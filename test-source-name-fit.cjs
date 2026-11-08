@@ -17,7 +17,12 @@ const { fitSourceName, sourceDomain, SOURCE_NAME_MAX_WIDTH } = require("./jk-rep
   const w = t => font.widthOfTextAtSize(t, 8);
   const fit = source => fitSourceName(sourceDomain(source), font, 8, SOURCE_NAME_MAX_WIDTH);
 
-  assert.equal(36 + SOURCE_NAME_MAX_WIDTH + 12, 386, "gap to the % column");
+  assert.equal(36 + SOURCE_NAME_MAX_WIDTH + 68, 386, "reference gap to the % column");
+
+  // The longest complete title shown in the provided reference screenshot.
+  const referenceTitle = "TUS Technological University of the Shannon: Midwest, Moylish Campus";
+  assert(w(referenceTitle) <= SOURCE_NAME_MAX_WIDTH, "reference title fits the title width");
+  assert.equal(fit({ sourceType: "batch", title: referenceTitle }), referenceTitle, "reference title remains uncut");
 
   const long = [
     "Socioeconomic status and health behavior in children and adolescents: a systematic literature review of the evidence",
