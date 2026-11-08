@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { PDFDocument } = require("pdf-lib");
 const fontkit = require("@pdf-lib/fontkit");
-const { fitSourceName, sourceDomain, SOURCE_NAME_MAX_WIDTH } = require("./jk-report-renderer-max.js");
+const { fitSourceName, sourceDomain, sourceLinkUrl, addSourceLinkAnnotation, SOURCE_NAME_MAX_WIDTH } = require("./jk-report-renderer-max.js");
 
 (async () => {
   const doc = await PDFDocument.create();
@@ -18,6 +18,22 @@ const { fitSourceName, sourceDomain, SOURCE_NAME_MAX_WIDTH } = require("./jk-rep
   const fit = source => fitSourceName(sourceDomain(source), font, 8, SOURCE_NAME_MAX_WIDTH);
 
   assert.equal(36 + SOURCE_NAME_MAX_WIDTH + 12, 386, "gap to the % column");
+  // Display only the hostname, yet preserve the exact source page as the link.
+  const example = { url: "https://researchonline.lshtm.ac.uk/id/eprint/123/file.pdf?track=1" };
+  assert.equal(sourceDomain(example), "researchonline.lshtm.ac.uk");
+  assert.equal(sourceLinkUrl(example), example.url);
+  assert.equal(sourceLinkUrl({ url: "researchonline.lshtm.ac.uk/id/eprint/123" }), "https://researchonline.lshtm.ac.uk/id/eprint/123");
+  assert.equal(sourceLinkUrl({ title: "A publication with no source URL" }), null);
+  assert.equal(sourceLinkUrl({ url: "javascript:alert(1)" }), null);
+  assert.equal(sourceLinkUrl({ url: "file:///etc/passwd" }), null);
+  assert.equal(sourceLinkUrl({ url: "https://evil.test\\n/redirect" }), null);
+  const linkPage = doc.addPage([612, 792]);
+  assert.equal(addSourceLinkAnnotation(doc, linkPage, example, "researchonline.lshtm.ac.uk", font, 36, 100, 8), true);
+  assert.equal(addSourceLinkAnnotation(doc, linkPage, { title: "No URL" }, "No URL", font, 36, 125, 8), false);
+  const linkAnnots = linkPage.node.Annots();
+  assert.equal(linkAnnots.size(), 1, "one clickable source link");
+  assert((await doc.save()).length > 0, "PDF with link annotation saves");
+
 
   const long = [
     "Socioeconomic status and health behavior in children and adolescents: a systematic literature review of the evidence",
