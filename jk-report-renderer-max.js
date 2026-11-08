@@ -1938,10 +1938,10 @@ function sourceList(bundle) {
           ),
 
         sourceType:
-          "internet",
+          jkSourceType(item),
 
         sourceLabel:
-          "Internet",
+          jkSourceLabel(jkSourceType(item)),
 
         number,
 
@@ -2719,10 +2719,10 @@ function simRanges(
             null,
 
           sourceType:
-            "internet",
+            jkSourceType(source),
 
           sourceLabel:
-            "Internet",
+            jkSourceLabel(jkSourceType(source)),
 
           sourceTitle:
             source?.title ||
@@ -3102,10 +3102,10 @@ function validateSimilaritySourceMapping(
             null,
 
           sourceType:
-            "internet",
+            jkSourceType(x),
 
           sourceLabel:
-            "Internet",
+            jkSourceLabel(jkSourceType(x)),
 
           matchedWords:
             Number(
@@ -3891,7 +3891,22 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
   );
 }
 
+// JK_SOURCE_TYPES_AND_TITLES_V1: providers that know a source's type (JK SimilarityCheck)
+// pass it through; Quetext sources have none and stay "internet", exactly as before.
+function jkSourceType(source) {
+  const type = s(source?.sourceType).trim();
+  return ["internet", "database", "batch"].includes(type) ? type : "internet";
+}
+
+function jkSourceLabel(type) {
+  return type === "database" ? "Publication" : type === "batch" ? "Student papers" : "Internet";
+}
+
 function sourceDomain(source) {
+  const title = s(source?.title).trim();
+  if (jkSourceType(source) === "database" && title && !/^https?:\/\//i.test(title)) {
+    return title.length > 95 ? title.slice(0, 92).trimEnd() + "..." : title;
+  }
   const value = s(source?.url || source?.title || `Source ${source?.number || ""}`);
 
   try {

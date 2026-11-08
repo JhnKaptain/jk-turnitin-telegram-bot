@@ -342,6 +342,15 @@ function normalizeQuetextResult(
             sourceUrl ||
             null,
 
+          // JK_SOURCE_TYPES_AND_TITLES_V1 (absent for Quetext)
+          title:
+            safeText(match?.source?.title) ||
+            undefined,
+
+          sourceType:
+            safeText(match?.source?.type) ||
+            undefined,
+
           matchedWords:
             0,
 
@@ -989,6 +998,11 @@ async function runProviderPipeline({
         text:
           similarityPrepared
             .text,
+
+        // JK SimilarityCheck also leaves out citation entries and quotes it finds in the
+        // text when the client chose the filtered report (Quetext ignores this).
+        filtered:
+          String(similarityMode).toUpperCase() === "FILTERED",
 
         title:
           fileTitle(
