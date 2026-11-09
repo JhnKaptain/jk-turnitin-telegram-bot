@@ -6,7 +6,10 @@ const body="The review compares outcomes and ethical safeguards across psycholog
 const source=[body,"References","Lambert, J. (2022). Social media breaks and well-being.","Publisher details with an unresolved section boundary.","Task 4 Evidence vs Misinformation - Can People Be Born Evil?","This section discusses different kinds of psychological evidence and competing explanations.","References","Thomson, J. (2023). The moral mystery of serial killers.","https://bigthink.com/thinking/are-we-born-evil/","Task 5: Written - Academic Skills Reflection","This semester I developed critical thinking skills through research and collaborative learning."].join("\n");
 const inspected=inspectReferenceSections(source);
 const bot=fs.readFileSync(require.resolve("./bot.js"),"utf8");
-assert(bot.includes("if (!review.hasFollowingReferenceSection && !review.hasFollowingSubstantiveSection)"));
+assert(bot.includes("if (!review.hasFollowingReferenceSection && !review.hasFollowingSubstantiveSection &&"), "the end option must still be blocked when later material exists");
+assert(bot.includes("!unsafeReferenceEndExclusion(review))"), "exclude-to-end must also be disabled for annotated or almost-all-document exclusions");
+assert(bot.includes('if (unsafeReferenceEndExclusion(review))'), "unsafe exclusions must be guarded in callbacks and timeouts");
+assert(bot.includes("SIMILARITY_INPUT_FILTERED_TO_EMPTY") || fs.readFileSync(require.resolve("./jk-provider-pipeline.js"),"utf8").includes("SIMILARITY_INPUT_FILTERED_TO_EMPTY"), "pipeline must block unusably short filtered similarity submissions");
 assert(bot.includes('return ctx.answerCbQuery("Later assignment content must be preserved."'));
 assert(bot.includes("review.autoResolvedAt = now"));
 assert(bot.includes('timeout.makeTreatRemainderAsReferencesOverride(review, now)'));
