@@ -103,6 +103,24 @@ function startServer() {
     assert.deepEqual(match.source, { id: "web:https://news.example/a", url: "https://news.example/a", title: "News page", type: "internet" });
     assert.equal(match.inputTokenCount, 16);
     assert.equal(result.raw.text, undefined, "raw copy should not duplicate the text");
+    // Failed CORE + web discovery must not become a falsely clean 0% report.
+    assert.throws(
+      () => jk.normalizeJkReport({
+        id: "chk_incomplete",
+        similarity_exact: 0,
+        similarity: 0,
+        candidate_sources: 0,
+        sources_unavailable: ["core", "web"],
+        sources: [],
+        matches: []
+      }, TEXT),
+      /INCOMPLETE SOURCE COVERAGE/,
+    );
+    const isolatedFailure = jk.normalizeJkReport({
+      id: "chk_partial", similarity_exact: 0, candidate_sources: 0,
+      sources_unavailable: ["core"], sources: [], matches: [],
+    }, TEXT);
+    assert.equal(isolatedFailure.score, 0, "one failed provider alone is not enough to prove total search failure");
 
     // 1b. Filtered reports ask the service to leave out citation entries and quotes too.
     await jk.checkPlagiarism({ text: TEXT, title: "Essay.docx", pollMs: 1, filtered: true });
