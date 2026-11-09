@@ -719,6 +719,18 @@ function isIeeeWrappedCitationContinuation(line, previousLine, activeEntryLine) 
 // substantive annotation, and at least half of the citations are annotated,
 // so an ordinary list with one stray paragraph still goes to review.
 const ANNOTATION_MIN_WORDS = 30;
+// MLA annotated bibliographies sometimes start with institutional authors
+// (without an author-year token on the first visual line) or intentionally
+// lowercase personal names. Require bibliographic metadata nearby, rather
+// than treating ordinary sentences as new citations.
+function isMlaAnnotatedEntryStart(lines, index) {
+  const line = String(lines[index]?.text || "").trim();
+  const corporate = /^(?:(?:[\p{Lu}][\p{L}\p{M}&'’.-]{1,50}|of|and|the|for)[ ,]+){2,16}[\p{Lu}][\p{L}\p{M}&'’.-]{1,50}\.\s*(?:["“‘]|$)/u.test(line);
+  const lowerName = /^[\p{Ll}][\p{L}\p{M}'’.-]{1,50},\s+[\p{Ll}][\p{L}\p{M}'’.-]{1,50}\.\s*/u.test(line);
+  if (!corporate && !lowerName) return false;
+  const nearby = lines.slice(index, index + 10).map(item => item.text.trim()).join(" ");
+  return /\b(?:19|20)\d{2}\b|https?:\/\/|www\.|\bdoi\b/iu.test(nearby);
+}
 function annotatedBibliographyRanges(source, start, lines) {
   const headingIndex = lines.findIndex(line => line.start <= start && start <= line.end);
   if (headingIndex < 0) return null;
@@ -748,7 +760,7 @@ function annotatedBibliographyRanges(source, start, lines) {
       break;
     }
     const lastNumber = current ? numberOf(current.lines[0].text.trim()) : null;
-    const startsEntry = isReferenceEntryStart(text) ||
+    const startsEntry = isReferenceEntryStart(text) || isMlaAnnotatedEntryStart(lines, i) ||
       (lastNumber !== null && numberOf(text) === lastNumber + 1);
     if (state === "ENTRY" && current) {
       const lastLine = current.lines[current.lines.length - 1];
