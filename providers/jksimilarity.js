@@ -63,6 +63,16 @@ async function jkRequest(path, { method = "GET", json = undefined } = {}) {
   let data = null;
   try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
   if (!response.ok) {
+    if ([502, 503, 504].includes(response.status)) {
+      const err = new Error(
+        "JK SimilarityCheck is temporarily unavailable (HTTP " + response.status +
+        "). The service may be restarting or deploying. " +
+        "No verified report was received; retry only after it is healthy."
+      );
+      err.status = response.status;
+      err.temporary = true;
+      throw err;
+    }
     const detail = typeof data?.detail === "string"
       ? data.detail
       : Array.isArray(data?.detail) ? data.detail.map(d => d?.msg).filter(Boolean).join(", ") : raw.slice(0, 200);
