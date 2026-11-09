@@ -812,6 +812,8 @@ function annotatedBibliographyRanges(source, start, lines) {
           (!looksLikeUnheadedBodyLine(text) && (text.match(/[\p{L}][\p{L}'’-]*/gu) || []).length <= 20))));
       if (continuation) { current.lines.push(line); continue; }
     }
+    if (process.env.JK_REFERENCE_DIAGNOSTIC === "1" && source.length < 2000)
+      console.log("REF_PARSER_LINE", JSON.stringify({line:text.slice(0,75), startsEntry, state, closed:current ? closed(current) : null, entryCount:entries.length}));
     if (startsEntry) {
       current = { lines: [line], annotation: "" };
       entries.push(current);
@@ -822,6 +824,8 @@ function annotatedBibliographyRanges(source, start, lines) {
     current.annotation += " " + text;
     state = "ANNOTATION";
   }
+  if (process.env.JK_REFERENCE_DIAGNOSTIC === "1" && source.length < 2000)
+    console.log("REF_PARSER_SUMMARY", JSON.stringify(entries.map(e => ({citation:e.lines.map(x=>x.text).join(" ").slice(0,85),annotationWords:e.annotation.split(/\s+/u).filter(Boolean).length}))));
   if (entries.length < 2) return null;
   const annotated = entries.filter(entry => {
     const words = (entry.annotation.match(/[\p{L}][\p{L}'’-]*/gu) || []).length;
