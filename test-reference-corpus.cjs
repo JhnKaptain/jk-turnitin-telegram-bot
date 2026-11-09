@@ -94,6 +94,8 @@ try {
     assert(prepared.text.split(/\s+/u).length >= 60, "annotated prose must remain substantial");
   }
 } catch (error) {
+  const diagnosis = inspectReferenceSections(mlaAnnotated, scan.findBibliographyStart(mlaAnnotated));
+  console.log("MLA_ANNOTATED_DIAG", JSON.stringify({ranges:diagnosis.ranges, reviews:diagnosis.reviews.map(({reason,entriesFound,start,candidates})=>({reason,entriesFound,start,candidates}))}));
   failures.push("mla_corporate_lowercase_annotated: " + error.message);
 }
 
