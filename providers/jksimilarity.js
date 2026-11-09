@@ -63,6 +63,16 @@ async function jkRequest(path, { method = "GET", json = undefined } = {}) {
   let data = null;
   try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
   if (!response.ok) {
+    if ([502, 503, 504].includes(response.status)) {
+      const err = new Error(
+        "JK SimilarityCheck is temporarily unavailable (HTTP " + response.status +
+        "). The service may be restarting or deploying. " +
+        "No verified report was received; retry only after it is healthy."
+      );
+      err.status = response.status;
+      err.temporary = true;
+      throw err;
+    }
     const detail = typeof data?.detail === "string"
       ? data.detail
       : Array.isArray(data?.detail) ? data.detail.map(d => d?.msg).filter(Boolean).join(", ") : raw.slice(0, 200);
@@ -125,6 +135,24 @@ function normalizeJkReport(report, inputText) {
         type: TYPES[listedSource.type] || "internet"
       }
     });
+  }
+  // A zero score is not evidence of originality when both primary discovery
+  // channels failed. Surface the real failure to the bot instead of issuing a
+  // deceptively clean 0% report.
+  const unavailable = new Set((report?.sources_unavailable || []).map(x => String(x).toLowerCase()));
+  const zeroScore = Number(report?.similarity_exact ?? report?.similarity) === 0;
+  const noMatches = !Array.isArray(report?.matches) || report.matches.length === 0;
+  const noCandidates = Number(report?.candidate_sources ?? 0) === 0;
+  if (zeroScore && noMatches && noCandidates &&
+      unavailable.has("core") && unavailable.has("web")) {
+    const err = new Error(
+      "INCOMPLETE SOURCE COVERAGE: CORE and Serper searches failed. " +
+      "This is NOT a verified 0% similarity result. Review provider availability and daily search limits before retrying."
+    );
+    err.code = "SIMILARITY_COVERAGE_INCOMPLETE";
+    err.reportId = report?.id || null;
+    err.sourcesUnavailable = [...unavailable];
+    throw err;
   }
   const raw = { ...(report || {}) };
   delete raw.text; // the input is kept separately as inputText

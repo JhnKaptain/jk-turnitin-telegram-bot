@@ -8,11 +8,11 @@ function delay(value) {
  const env = value === undefined ? {} : { API_DELIVERY_HOLD_MINUTES: value };
  return vm.runInNewContext(reader + "\n" + hold + "\nAPI_DELIVERY_HOLD_MINUTES * 60000;", { process: { env } });
 }
-assert.equal(delay(), 90000); assert.equal(delay("1.5"), 90000); assert.equal(delay("2"), 120000);
-assert.equal(delay("invalid"), 90000); assert.equal(delay(""), 90000); assert.equal(delay("-1"), 0);
+assert.equal(delay(), 60000); assert.equal(delay("1"), 60000); assert.equal(delay("1.5"), 90000); assert.equal(delay("2"), 120000);
+assert.equal(delay("invalid"), 60000); assert.equal(delay(""), 60000); assert.equal(delay("-1"), 0);
 const summary = require("./jk-provider-admin-status.js").summary;
-const notice = summary({ job: { userId: 123 }, file: { file_name: "Test.docx" }, stage: "ready", rendered: {}, remainingMs: 90000 });
-assert(notice.includes("90 second(s)"));
+const notice = summary({ job: { userId: 123 }, file: { file_name: "Test.docx" }, stage: "ready", rendered: {}, remainingMs: 60000 });
+assert(notice.includes("60 second(s)"));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "jk-timing-test-")), now = Date.now(), hour = 3600000;
 try {
  const files = [], records = {};
@@ -40,5 +40,5 @@ try {
  assert.equal(files[1].providerFilesRetentionHours, 24); assert.equal(files[1].providerAutoResubmitBlocked, true);
  assert.equal(fs.readFileSync(purchasePath, "utf8"), purchaseText); assert.equal(fs.readFileSync(ledger, "utf8"), "KEEP PAYMENT RECORDS");
 } finally { fs.rmSync(root, { recursive: true, force: true }); }
-console.log("PASS: 90-second decimal delivery hold, defaults/env overrides, accurate notice and 24-hour retention boundary.");
+console.log("PASS: 60-second default delivery hold, defaults/env overrides, accurate notice and 24-hour retention boundary.");
 console.log("PASS: recent/active/pending-payment files protected; payment and job records retained. Temporary fixtures only; no live deletions, scans or deliveries.");

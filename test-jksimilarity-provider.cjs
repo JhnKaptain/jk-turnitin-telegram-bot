@@ -21,7 +21,7 @@ function codePointIndex(text, sub) {
 }
 
 function startServer() {
-  const state = { checks: 0, deleted: [], received: null };
+  const state = { checks: 0, deleted: [], received: null, next502: false };
   const server = http.createServer((req, res) => {
     const send = (code, body) => {
       res.writeHead(code, { "Content-Type": "application/json" });
@@ -32,6 +32,12 @@ function startServer() {
     req.on("data", chunk => { raw += chunk; });
     req.on("end", () => {
       if (req.method === "POST" && req.url === "/v1/checks/text") {
+        if (state.next502) {
+          state.next502 = false;
+          res.writeHead(502, { "Content-Type": "text/html" });
+          res.end("<!DOCTYPE html><html><title>502</title></html>");
+          return;
+        }
         state.received = JSON.parse(raw);
         state.checks += 1;
         return send(202, { id: "chk_test1", status: "queued" });
@@ -103,6 +109,24 @@ function startServer() {
     assert.deepEqual(match.source, { id: "web:https://news.example/a", url: "https://news.example/a", title: "News page", type: "internet" });
     assert.equal(match.inputTokenCount, 16);
     assert.equal(result.raw.text, undefined, "raw copy should not duplicate the text");
+    // Failed CORE + web discovery must not become a falsely clean 0% report.
+    assert.throws(
+      () => jk.normalizeJkReport({
+        id: "chk_incomplete",
+        similarity_exact: 0,
+        similarity: 0,
+        candidate_sources: 0,
+        sources_unavailable: ["core", "web"],
+        sources: [],
+        matches: []
+      }, TEXT),
+      /INCOMPLETE SOURCE COVERAGE/,
+    );
+    const isolatedFailure = jk.normalizeJkReport({
+      id: "chk_partial", similarity_exact: 0, candidate_sources: 0,
+      sources_unavailable: ["core"], sources: [], matches: [],
+    }, TEXT);
+    assert.equal(isolatedFailure.score, 0, "one failed provider alone is not enough to prove total search failure");
 
     // 1b. Filtered reports ask the service to leave out citation entries and quotes too.
     await jk.checkPlagiarism({ text: TEXT, title: "Essay.docx", pollMs: 1, filtered: true });
@@ -143,6 +167,16 @@ function startServer() {
     } finally {
       quetext.checkPlagiarism = original;
     }
+
+    // 5b. Temporary deployment errors are reported clearly without
+    // automatically retrying POST and risking duplicate paid scans.
+    const before502 = state.checks;
+    process.env.PLAGIARISM_FALLBACK = "";
+    process.env.JK_SIMILARITY_API_KEY = "test-key-0123456789abcdef";
+    state.next502 = true;
+    await assert.rejects(jk.createPlagiarismReport({ text: TEXT, title: "test.docx" }),
+      /temporarily unavailable \(HTTP 502\)/u);
+    assert.equal(state.checks, before502, "a 502 must not trigger an unsafe automatic resubmission");
 
     // 6. Cleanup call works.
     process.env.JK_SIMILARITY_API_KEY = "test-key-0123456789abcdef";
