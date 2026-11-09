@@ -18,7 +18,7 @@ const W = require("./jk-web-orders.cjs");
   };
   const bot = { telegram };
   const paymentRefs = {}, paidJobs = {}, submissions = {};
-  let discountWindow = false, filterMode = "FILTERED", inactive = false;
+  let discountWindow = false, filterMode = "FILTERED", inactive = false, hideUnfiltered = false;
   const stkCalls = [];
   const adminMessages = [], proofCalls = [], highlightBuys = [];
   let failNextStk = false;
@@ -32,7 +32,7 @@ const W = require("./jk-web-orders.cjs");
     webEnabled: () => true,
     prices: () => ({ CHECK: 135, SIMILARITY: 100, RESALE: 90 }),
     priceFor: k => ({ CHECK: 135, RECHECK: 130, SIMILARITY: 100, RESALE: 90 })[k],
-    flags: () => ({ SIMILARITY_ONLY_ENABLED: true, RESALE_ENABLED: true, RESALE_AMOUNT_VISIBLE: true, RESALE_LABEL_TITLE: "Discount" }),
+    flags: () => ({ SIMILARITY_ONLY_ENABLED: true, RESALE_ENABLED: true, RESALE_AMOUNT_VISIBLE: true, RESALE_LABEL_TITLE: "Discount", HIDE_CLIENT_UNFILTERED: hideUnfiltered }),
     isDiscountPublicActive: () => discountWindow,
     isPublicDiscountExclusiveMode: () => discountWindow,
     discountTimeText: () => "Discount available from 9:00 PM to 6:00 AM EAT.",
@@ -211,6 +211,26 @@ const W = require("./jk-web-orders.cjs");
   await assert.rejects(orders.checkout(fourth.order, { files: [{ type: "CHECK" }], phone: "0712345678" }), /similarity filtering/);
   await orders.checkout(fourth.order, { files: [{ type: "CHECK", filter: "UNFILTERED" }], phone: "0712345678" });
   assert.equal(submissions[fourth.order.uid].files[0].similarityFilter, "UNFILTERED");
+
+  // Client-only visibility flag. Checkout must reject a crafted request
+  // even if someone uses an older website or a stale form.
+  hideUnfiltered = true;
+  assert.equal(W.publicConfig(d).clientUnfilteredAvailable, false);
+  const restricted = orders.newOrder("9.9.9.8");
+  orders.addUpload(restricted.order, "restricted.docx", Buffer.from("restricted"));
+  await assert.rejects(
+    orders.checkout(restricted.order, {
+      files: [{ type: "CHECK", filter: "UNFILTERED" }], phone: "0712345678"
+    }),
+    e => e.status === 403 && /Unfiltered similarity/.test(e.message)
+  );
+  assert.equal(restricted.order.stage, "DRAFT", "rejected checkout should not create payment");
+  await orders.checkout(restricted.order, {
+    files: [{ type: "CHECK", filter: "FILTERED" }], phone: "0712345678"
+  });
+  assert.equal(submissions[restricted.order.uid].files[0].similarityFilter, "FILTERED");
+  hideUnfiltered = false;
+  assert.equal(W.publicConfig(d).clientUnfilteredAvailable, true);
   filterMode = "FILTERED";
 
   // 7b. Support conversation and till payment proof.
