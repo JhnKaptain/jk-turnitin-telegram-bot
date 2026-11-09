@@ -780,6 +780,21 @@ async function runProviderPipeline({
     );
   }
 
+  // Fail before any paid API request if bibliography/quote filtering erased
+  // nearly all readable source text. This is not a scanned-PDF/OCR problem.
+  if (runSimilarity &&
+      countApiInputWords(document.text) >= 20 &&
+      countApiInputWords(similarityPrepared.text) < 20) {
+    const error = new Error(
+      "Similarity scan blocked: filtering left fewer than 20 words from a readable document. " +
+      "Review the reference boundary; no provider request was made."
+    );
+    error.code = "SIMILARITY_INPUT_FILTERED_TO_EMPTY";
+    error.apiBlocked = true;
+    error.noProviderRequests = true;
+    throw error;
+  }
+
   const apiTextChecks = [
     {
       name: "Original document",
