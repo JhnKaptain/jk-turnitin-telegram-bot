@@ -428,7 +428,10 @@ function hasReferenceEntryAfterHeading(source, start, lines) {
     const text = lines[i].text.trim();
     if (!text) continue;
     examined++;
-    if (isReferenceEntryParagraph(text)) return true;
+    if (isReferenceEntryParagraph(text) || isMlaAnnotatedEntryStart(lines, i)) return true;
+    // MLA annotated assignments sometimes put a research question between
+    // their heading and first entry; do not misclassify it as the end.
+    if (/^(?:research\s+question|research\s+topic|guiding\s+question|thesis\s+statement)\s*:/iu.test(text)) continue;
     if (KNOWN_TERMINATOR.test(text) || COMMON_SECTION_HEADING.test(text) ||
         STRUCTURAL_FOLLOWER.test(text)) return false;
   }
@@ -727,8 +730,14 @@ function isMlaAnnotatedEntryStart(lines, index) {
   const line = String(lines[index]?.text || "").trim();
   const corporate = /^(?:(?:[\p{Lu}][\p{L}\p{M}&'’.-]{1,50}|of|and|the|for)[ ,]+){2,16}[\p{Lu}][\p{L}\p{M}&'’.-]{1,50}\.\s*(?:["“‘]|$)/u.test(line);
   const lowerName = /^[\p{Ll}][\p{L}\p{M}'’.-]{1,50},\s+[\p{Ll}][\p{L}\p{M}'’.-]{1,50}\.\s*/u.test(line);
-  if (!corporate && !lowerName) return false;
-  const nearby = lines.slice(index, index + 10).map(item => item.text.trim()).join(" ");
+  // Institutional MLA references may contain abbreviations, commas and
+  // lowercase conjunctions, e.g. "U.S. Department of Health ... General."
+  const institutionalAuthor = /^(?:U\.S\.\s+(?:Department|Office|Agency|Commission)\b|National\s+Academies\s+of\b|[\p{Lu}][\p{L}\p{M}'’\-]+\s+(?:Department|Institute|Association|University|Council|Organization|Commission|Agency|Office)\b)/u.test(line);
+  const institutional = institutionalAuthor &&
+    /\.\s+[\p{Lu}“"‘][^\n]{5,}/u.test(line) &&
+    !/\b(?:is|are|was|were|has|have|because|although|however)\b/iu.test(line.split(". ").slice(0, 2).join(". "));
+  if (!corporate && !lowerName && !institutional) return false;
+  const nearby = lines.slice(index, index + 8).map(item => item.text.trim()).join(" ");
   return /\b(?:19|20)\d{2}\b|https?:\/\/|www\.|\bdoi\b/iu.test(nearby);
 }
 function annotatedBibliographyRanges(source, start, lines) {
@@ -738,6 +747,14 @@ function annotatedBibliographyRanges(source, start, lines) {
   let current = null;      // entry being accumulated
   let state = "SEEK";      // SEEK | ENTRY | ANNOTATION
   let sectionEnd = source.length;
+  let prefaceContinuation = false;
+  let prefaceLines = 0;
+  // Source Evaluation sections are part of this academic assignment.
+  // Their citations are excluded, while all evaluation prose remains.
+  const sourceEvaluationHeading = /^source\s+evaluation\s+\d{1,3}\s*[:.\-–]?\s*[^\n]*$/iu;
+  // Allow an introductory research question before the first cited source.
+  // It is authored text, not a citation, and is therefore retained.
+  const preface = /^(?:research\s+question|research\s+topic|guiding\s+question|thesis\s+statement)\s*:/iu;
   const closed = entry => {
     const text = entry.lines.map(line => line.text.trim()).join(" ");
     const last = entry.lines[entry.lines.length - 1].text.trim();
@@ -759,9 +776,25 @@ function annotatedBibliographyRanges(source, start, lines) {
       sectionEnd = line.start;
       break;
     }
+    if (sourceEvaluationHeading.test(text)) {
+      current = null;
+      state = "SEEK";
+      prefaceContinuation = false;
+      continue;
+    }
     const lastNumber = current ? numberOf(current.lines[0].text.trim()) : null;
     const startsEntry = isReferenceEntryStart(text) || isMlaAnnotatedEntryStart(lines, i) ||
       (lastNumber !== null && numberOf(text) === lastNumber + 1);
+    if (!current && !startsEntry && preface.test(text)) {
+      prefaceContinuation = true;
+      prefaceLines = 1;
+      continue;
+    }
+    if (!current && !startsEntry && prefaceContinuation && prefaceLines < 5) {
+      prefaceLines++;
+      continue;
+    }
+    if (startsEntry) prefaceContinuation = false;
     if (state === "ENTRY" && current) {
       const lastLine = current.lines[current.lines.length - 1];
       const hanging = Number.isFinite(line.layoutX) && Number.isFinite(current.lines[0].layoutX) &&
@@ -787,7 +820,7 @@ function annotatedBibliographyRanges(source, start, lines) {
       state = "ENTRY";
       continue;
     }
-    if (!current) return null;          // prose before any citation: not this layout
+    if (!current) return null;          // Unexpected prose before a citation: fail closed
     current.annotation += " " + text;
     state = "ANNOTATION";
   }
