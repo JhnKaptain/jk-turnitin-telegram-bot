@@ -732,8 +732,10 @@ function isMlaAnnotatedEntryStart(lines, index) {
   const lowerName = /^[\p{Ll}][\p{L}\p{M}'’.-]{1,50},\s+[\p{Ll}][\p{L}\p{M}'’.-]{1,50}\.\s*/u.test(line);
   // Institutional MLA references may contain abbreviations, commas and
   // lowercase conjunctions, e.g. "U.S. Department of Health ... General."
-  const institutional = /^(?:U\.S\.\s+)?[\p{Lu}][\p{L}\p{M}.,&'’\- ]{18,170}\.\s+[\p{Lu}“"‘]/u.test(line) &&
-    !/\b(?:is|are|was|were|has|have|because|although|that|which|however)\b/iu.test(line.split(". ").slice(0, 2).join(". "));
+  const institutionalAuthor = /^(?:U\.S\.\s+(?:Department|Office|Agency|Commission)\b|National\s+Academies\s+of\b|[\p{Lu}][\p{L}\p{M}'’\-]+\s+(?:Department|Institute|Association|University|Council|Organization|Commission|Agency|Office)\b)/u.test(line);
+  const institutional = institutionalAuthor &&
+    /\.\s+[\p{Lu}“"‘][^\n]{5,}/u.test(line) &&
+    !/\b(?:is|are|was|were|has|have|because|although|however)\b/iu.test(line.split(". ").slice(0, 2).join(". "));
   if (!corporate && !lowerName && !institutional) return false;
   const nearby = lines.slice(index, index + 8).map(item => item.text.trim()).join(" ");
   return /\b(?:19|20)\d{2}\b|https?:\/\/|www\.|\bdoi\b/iu.test(nearby);
@@ -812,8 +814,6 @@ function annotatedBibliographyRanges(source, start, lines) {
           (!looksLikeUnheadedBodyLine(text) && (text.match(/[\p{L}][\p{L}'’-]*/gu) || []).length <= 20))));
       if (continuation) { current.lines.push(line); continue; }
     }
-    if (process.env.JK_REFERENCE_DIAGNOSTIC === "1" && source.length < 2000)
-      console.log("REF_PARSER_LINE", JSON.stringify({line:text.slice(0,75), startsEntry, state, closed:current ? closed(current) : null, entryCount:entries.length}));
     if (startsEntry) {
       current = { lines: [line], annotation: "" };
       entries.push(current);
@@ -824,8 +824,6 @@ function annotatedBibliographyRanges(source, start, lines) {
     current.annotation += " " + text;
     state = "ANNOTATION";
   }
-  if (process.env.JK_REFERENCE_DIAGNOSTIC === "1" && source.length < 2000)
-    console.log("REF_PARSER_SUMMARY", JSON.stringify(entries.map(e => ({citation:e.lines.map(x=>x.text).join(" ").slice(0,85),annotationWords:e.annotation.split(/\s+/u).filter(Boolean).length}))));
   if (entries.length < 2) return null;
   const annotated = entries.filter(entry => {
     const words = (entry.annotation.match(/[\p{L}][\p{L}'’-]*/gu) || []).length;
