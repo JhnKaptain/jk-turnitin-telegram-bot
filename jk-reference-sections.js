@@ -742,6 +742,8 @@ function annotatedBibliographyRanges(source, start, lines) {
   let current = null;      // entry being accumulated
   let state = "SEEK";      // SEEK | ENTRY | ANNOTATION
   let sectionEnd = source.length;
+  let prefaceContinuation = false;
+  let prefaceLines = 0;
   // Source Evaluation sections are part of this academic assignment.
   // Their citations are excluded, while all evaluation prose remains.
   const sourceEvaluationHeading = /^source\s+evaluation\s+\d{1,3}\s*[:.\-–]?\s*[^\n]*$/iu;
@@ -772,12 +774,22 @@ function annotatedBibliographyRanges(source, start, lines) {
     if (sourceEvaluationHeading.test(text)) {
       current = null;
       state = "SEEK";
+      prefaceContinuation = false;
       continue;
     }
-    if (!current && preface.test(text)) continue;
     const lastNumber = current ? numberOf(current.lines[0].text.trim()) : null;
     const startsEntry = isReferenceEntryStart(text) || isMlaAnnotatedEntryStart(lines, i) ||
       (lastNumber !== null && numberOf(text) === lastNumber + 1);
+    if (!current && !startsEntry && preface.test(text)) {
+      prefaceContinuation = true;
+      prefaceLines = 1;
+      continue;
+    }
+    if (!current && !startsEntry && prefaceContinuation && prefaceLines < 5) {
+      prefaceLines++;
+      continue;
+    }
+    if (startsEntry) prefaceContinuation = false;
     if (state === "ENTRY" && current) {
       const lastLine = current.lines[current.lines.length - 1];
       const hanging = Number.isFinite(line.layoutX) && Number.isFinite(current.lines[0].layoutX) &&
