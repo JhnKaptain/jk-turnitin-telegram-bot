@@ -126,6 +126,24 @@ function normalizeJkReport(report, inputText) {
       }
     });
   }
+  // A zero score is not evidence of originality when both primary discovery
+  // channels failed. Surface the real failure to the bot instead of issuing a
+  // deceptively clean 0% report.
+  const unavailable = new Set((report?.sources_unavailable || []).map(x => String(x).toLowerCase()));
+  const zeroScore = Number(report?.similarity_exact ?? report?.similarity) === 0;
+  const noMatches = !Array.isArray(report?.matches) || report.matches.length === 0;
+  const noCandidates = Number(report?.candidate_sources ?? 0) === 0;
+  if (zeroScore && noMatches && noCandidates &&
+      unavailable.has("core") && unavailable.has("web")) {
+    const err = new Error(
+      "INCOMPLETE SOURCE COVERAGE: CORE and Serper searches failed. " +
+      "This is NOT a verified 0% similarity result. Review provider availability and daily search limits before retrying."
+    );
+    err.code = "SIMILARITY_COVERAGE_INCOMPLETE";
+    err.reportId = report?.id || null;
+    err.sourcesUnavailable = [...unavailable];
+    throw err;
+  }
   const raw = { ...(report || {}) };
   delete raw.text; // the input is kept separately as inputText
   return {
