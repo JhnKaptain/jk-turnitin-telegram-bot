@@ -97,5 +97,52 @@ try {
   failures.push("mla_corporate_lowercase_annotated: " + error.message);
 }
 
+// Regression reproduces the real 16-page MLA annotated-bibliography shape:
+// a wrapped research question before references, repeated institutional/MLA
+// citations and substantive annotations, followed by source-evaluation sections.
+const sampleAnnotation = "The researchers compare different online experiences and assess the methodological limitations of each study. Their findings inform the research question without claiming that every correlation demonstrates causation. This critical evaluation explains how the evidence supports a careful interpretation rather than a universal claim.";
+const sourceEvaluation = "The article is credible because it presents an explicit research design and explains limitations. The findings provide a useful comparison with international surveys, but the sample cannot prove that one platform produces identical outcomes for every adolescent.";
+const mlaCases = [
+  ['American Psychological Association. "Health Advisory on Social Media Use in Adolescence." American Psychological Association, May 2023, https://www.apa.org/topics/social-media-internet/health-advisory-adolescent-social-media-use.', "American Psychological Association"],
+  ['Beyens, Ine, et al. "The Effect of Social Media on Well-Being Differs from Adolescent to Adolescent." Scientific Reports, vol. 10, 2020, article 10763, https://doi.org/10.1038/s41598-020-67727-7.', "Beyens, Ine"],
+  ["boyd, danah. It's Complicated: The Social Lives of Networked Teens. Yale UP, 2014, https://doi.org/10.12987/9780300166439.", "boyd, danah"],
+  ["National Academies of Sciences, Engineering, and Medicine. Social Media and Adolescent Health. National Academies Press, 2024, https://doi.org/10.17226/27396.", "National Academies of Sciences"],
+  ["U.S. Department of Health and Human Services, Office of the Surgeon General. Social Media and Youth Mental Health: The U.S. Surgeon General's Advisory. 2023, https://www.hhs.gov/surgeongeneral/priorities/youth-mental-health/social-media/index.html.", "U.S. Department of Health"]
+];
+const annotatedCase = [
+  "Student Name", "Annotated Bibliography",
+  "Research question: How does social media use relate to adolescent mental health, and how do",
+  "online experiences, platform design, and individual circumstances shape that relationship?",
+  ...mlaCases.flatMap(([citation], i) => [citation, sampleAnnotation.replace("The researchers", i === 0 ? "The professional association" : "The researchers")]),
+  "Source Evaluation 1: Cross-National Adolescent Research",
+  mlaCases[1][0], sourceEvaluation, "The source will be included as primary evidence alongside the broader discussion of risk.",
+  "Source Evaluation 2: Youth Perspectives in a Research-Based Book",
+  mlaCases[2][0], sourceEvaluation, "I will apply this research to differentiate personal experience from national averages.",
+  "Source Evaluation 3: Independent Scientific Consensus",
+  mlaCases[3][0], sourceEvaluation, "The synthesis strengthens the distinction between policy advice and causal conclusions."
+].join("\n");
+try {
+  const results = [
+    scan.buildSimilarityInput(annotatedCase, scan.FILTER_MODE_FILTERED),
+    scan.buildAiInput(annotatedCase)
+  ];
+  for (const result of results) {
+    assert(result.text.includes("Research question:"), "the introductory research question must remain");
+    assert(result.text.includes("online experiences, platform design"), "wrapped question must remain");
+    assert(result.text.includes("The professional association"), "first annotation must remain");
+    assert(result.text.includes("The researchers compare different"), "ordinary annotations must remain");
+    assert(result.text.includes("Source Evaluation 1:"), "evaluation heading must remain");
+    assert(result.text.includes("I will apply this research"), "evaluation commentary must remain");
+    assert(result.text.includes("The synthesis strengthens"), "final evaluation commentary must remain");
+    for (const [, label] of mlaCases) {
+      assert(!result.text.includes(label), "bibliography must exclude the citation " + label);
+    }
+    assert(result.text.split(/\s+/u).length >= 225, "substantive prose must not be eliminated");
+    assert(result.removedReferenceRanges?.length >= 8, "each citation must have a separate excluded range");
+  }
+} catch (error) {
+  failures.push("real_shape_annotated_bibliography_preface: " + error.message);
+}
+
 assert.deepEqual(failures, [], "reference corpus failures:\n" + failures.join("\n"));
 console.log("PASS: reference corpus — " + specs.length + " real-geometry documents: every bibliography excluded, annotations and following prose kept, mixed content fails closed");
