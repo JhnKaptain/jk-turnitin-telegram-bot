@@ -108,6 +108,7 @@ function publicConfig(d) {
       timeText: plainText(d.discountTimeText())
     },
     similarityFilterChoice: d.getFilterMode() === d.FILTER_MODE_CLIENT,
+    clientUnfilteredAvailable: !Boolean(f.HIDE_CLIENT_UNFILTERED),
     tillNumber: d.TILL_NUMBER || null
   };
 }
@@ -292,6 +293,11 @@ function createWebOrders(d) {
         filter = String(choice?.filter || "").toUpperCase();
         if (![d.FILTER_MODE_FILTERED, d.FILTER_MODE_UNFILTERED].includes(filter)) {
           const e = new Error("Choose similarity filtering for document " + (i + 1) + "."); e.status = 400; throw e;
+        }
+        if (d.flags().HIDE_CLIENT_UNFILTERED && filter === d.FILTER_MODE_UNFILTERED) {
+          const e = new Error("Unfiltered similarity is not available for customer orders.");
+          e.status = 403;
+          throw e;
         }
       }
       return { kind, filter };

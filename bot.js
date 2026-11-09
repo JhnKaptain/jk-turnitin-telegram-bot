@@ -198,6 +198,8 @@ const PAYMENT_OCR_TIMEOUT_MS = PAYMENT_OCR_TIMEOUT_SECONDS * 1000;
 const CHECK_PRICE_KES = readIntEnv("CHECK_PRICE_KES", 135);
 const RECHECK_PRICE_KES = readIntEnv("RECHECK_PRICE_KES", 130);
 const SIMILARITY_ONLY_ENABLED = readBoolEnv("SIMILARITY_ONLY_ENABLED", true);
+// Customer-only visibility flag. Admin free scans and admin overrides are unaffected.
+const HIDE_CLIENT_UNFILTERED = readBoolEnv("HIDE_CLIENT_UNFILTERED", false);
 const SIMILARITY_ONLY_PRICE_KES = readIntEnv("SIMILARITY_ONLY_PRICE_KES", 100);
 const RESALE_PRICE_KES = readIntEnv(
   "RESALE_PRICE_KES",
@@ -2993,27 +2995,16 @@ function institutionKeyboard() {
   return adminBackKeyboard();
 }
 
-function clientSimilarityFilterKeyboard() {
-  return Markup.inlineKeyboard([
-    [
-      Markup.button.callback(
-        "✅ FILTER QUOTES + BIBLIOGRAPHY",
-        "SIM_FILTER_FILTERED"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "📄 DO NOT FILTER",
-        "SIM_FILTER_UNFILTERED"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "❌ Cancel document",
-        "TYPE_CANCEL"
-      )
-    ]
-  ]);
+function clientSimilarityFilterKeyboard(userId) {
+  const rows = [
+    [Markup.button.callback("✅ FILTER QUOTES + BIBLIOGRAPHY", "SIM_FILTER_FILTERED")]
+  ];
+  // Keep the full choice available to admins in ordinary test flows.
+  if (!HIDE_CLIENT_UNFILTERED || Number(userId) === ADMIN_ID) {
+    rows.push([Markup.button.callback("📄 DO NOT FILTER", "SIM_FILTER_UNFILTERED")]);
+  }
+  rows.push([Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]);
+  return Markup.inlineKeyboard(rows);
 }
 
 function adminDashboardText() {
@@ -4472,13 +4463,14 @@ async function finalizeTypeWithFilterSelection(
     await ctx.reply(
       "🔎 *Choose similarity filtering*\n\n" +
       "*Filter Quotes + Bibliography*\n" +
-      "Quotations and the reference/bibliography section will not count toward the similarity percentage.\n\n" +
-      "*Do Not Filter*\n" +
-      "All detected matching text will count toward the similarity percentage.",
+      "Quotations and the reference/bibliography section will not count toward the similarity percentage." +
+      ((!HIDE_CLIENT_UNFILTERED || ctx.from.id === ADMIN_ID)
+        ? "\n\n*Do Not Filter*\nAll detected matching text will count toward the similarity percentage."
+        : ""),
       {
         parse_mode: "Markdown",
         reply_markup:
-          clientSimilarityFilterKeyboard()
+          clientSimilarityFilterKeyboard(ctx.from.id)
             .reply_markup
       }
     );
@@ -8781,7 +8773,7 @@ bot.on("document", async (ctx) => {
       {
         parse_mode: "Markdown",
         reply_markup:
-          clientSimilarityFilterKeyboard()
+          clientSimilarityFilterKeyboard(ctx.from.id)
             .reply_markup
       }
     );
@@ -9029,6 +9021,14 @@ bot.action(
   async (ctx) => {
     if (isBotInactivePeriod()) {
       return notifyInactivePeriod(ctx);
+    }
+
+    // Old callback buttons cannot bypass the client-only visibility flag.
+    if (HIDE_CLIENT_UNFILTERED && ctx.from.id !== ADMIN_ID) {
+      return ctx.answerCbQuery(
+        "Unfiltered scans are not available for customer orders.",
+        { show_alert: true }
+      );
     }
 
     const sub =
@@ -9403,7 +9403,7 @@ ${text}
       "⚠️ Choose similarity filtering first.",
       {
         reply_markup:
-          clientSimilarityFilterKeyboard()
+          clientSimilarityFilterKeyboard(ctx.from.id)
             .reply_markup
       }
     );
@@ -13954,7 +13954,7 @@ webOrders = require("./jk-web-orders.cjs").installWebOrders({
   prices: () => ({ CHECK: CHECK_PRICE_KES, SIMILARITY: SIMILARITY_ONLY_PRICE_KES, RESALE: RESALE_PRICE_KES }),
   priceFor: kind => ({ CHECK: CHECK_PRICE_KES, RECHECK: RECHECK_PRICE_KES,
     SIMILARITY: SIMILARITY_ONLY_PRICE_KES, RESALE: RESALE_PRICE_KES })[kind],
-  flags: () => ({ SIMILARITY_ONLY_ENABLED, RESALE_ENABLED, RESALE_AMOUNT_VISIBLE, RESALE_LABEL_TITLE }),
+  flags: () => ({ SIMILARITY_ONLY_ENABLED, RESALE_ENABLED, RESALE_AMOUNT_VISIBLE, RESALE_LABEL_TITLE, HIDE_CLIENT_UNFILTERED }),
   isDiscountPublicActive, isPublicDiscountExclusiveMode, discountTimeText, resellerCodeMatches,
   isBotInactivePeriod, inactiveText: () => MESSAGES.inactive(),
   getFilterMode: () => reportSettings.filterMode,
@@ -14540,6 +14540,7 @@ app.get("/health", (req, res) => {
     checkPriceKes: CHECK_PRICE_KES,
     recheckPriceKes: RECHECK_PRICE_KES,
     similarityOnlyEnabled: SIMILARITY_ONLY_ENABLED,
+    hideClientUnfiltered: HIDE_CLIENT_UNFILTERED,
     similarityOnlyPriceKes: SIMILARITY_ONLY_PRICE_KES,
     resaleEnabled: RESALE_ENABLED,
     resalePriceKes: RESALE_PRICE_KES,
