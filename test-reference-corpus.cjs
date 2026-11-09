@@ -91,7 +91,7 @@ try {
     assert(prepared.text.includes(annotationB), "lowercase-author annotation must remain");
     assert(!prepared.text.includes("Health Advisory on Social Media"), "corporate MLA entry must be excluded");
     assert(!prepared.text.includes("The Social Lives of Networked Teens"), "lowercase MLA entry must be excluded");
-    assert(prepared.text.split(/\\s+/u).length >= 60, "annotated prose must remain substantial");
+    assert(prepared.text.split(/\s+/u).length >= 60, "annotated prose must remain substantial");
   }
 } catch (error) {
   failures.push("mla_corporate_lowercase_annotated: " + error.message);
