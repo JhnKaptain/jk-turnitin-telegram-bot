@@ -8181,6 +8181,18 @@ function findPendingReferenceBoundaryReview(token) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+// Never automatically exclude an entire annotated bibliography or almost all
+// of a substantial paper. Its annotations can be the assignment's main text.
+function unsafeReferenceEndExclusion(review) {
+  const heading = safeText(review?.heading || "").replace(/\s+/gu, " ").trim();
+  const start = Number(review?.start);
+  const length = Number(review?.sourceLength);
+  return /^annotated\s+bibliography\b/iu.test(heading) ||
+    (Number.isFinite(start) && Number.isFinite(length) &&
+      length >= 2000 && start < length * 0.15 &&
+      Array.isArray(review?.candidates) && review.candidates.length > 0);
+}
+
 async function notifyReferenceBoundaryReview(job, file, review) {
   const now = Date.now();
   const previous = file.referenceBoundaryReview;
@@ -8229,7 +8241,9 @@ async function notifyReferenceBoundaryReview(job, file, review) {
     "No Quetext or Sapling request was made for this file.",
     "Choose the first text that should be INCLUDED after the references.",
     "You have " + Math.round(require("./jk-reference-review-timeout.cjs").REFERENCE_BOUNDARY_AUTO_RESOLVE_MS / 60000) + " minutes to select the correct inclusion point or cancel this file.",
-    "Otherwise the remaining text will automatically be treated as references, and provider submission will resume."
+    unsafeReferenceEndExclusion(review)
+      ? "Automatic exclusion of the remaining paper is disabled here. Choose a safe inclusion point or cancel."
+      : "Otherwise the remaining text will automatically be treated as references, and provider submission will resume."
   ];
   const keyboard = [];
   for (const candidate of (review.candidates || []).slice(0, 3)) {
@@ -8238,7 +8252,8 @@ async function notifyReferenceBoundaryReview(job, file, review) {
       callback_data: "JK_REF_BOUNDARY_" + String(candidate.id) + "_" + token
     }]);
   }
-  if (!review.hasFollowingReferenceSection && !review.hasFollowingSubstantiveSection) {
+  if (!review.hasFollowingReferenceSection && !review.hasFollowingSubstantiveSection &&
+      !unsafeReferenceEndExclusion(review)) {
     keyboard.push([{
       text: "Treat remainder as references (exclude to end)",
       callback_data: "JK_REF_BOUNDARY_END_" + token
@@ -8345,6 +8360,8 @@ bot.action(/^JK_REF_BOUNDARY_(END|\d{1,2})_([a-f0-9]{20})$/, async ctx => {
 
   let end;
   if (choice === "END") {
+    if (unsafeReferenceEndExclusion(review))
+      return ctx.answerCbQuery("Cannot exclude nearly the whole paper. Keep annotations or cancel this file.", {show_alert: true});
     if (review.hasFollowingReferenceSection || review.hasFollowingSubstantiveSection)
       return ctx.answerCbQuery("Later assignment content must be preserved.", {show_alert: true});
     end = Number(review.sourceLength);
@@ -8411,6 +8428,18 @@ async function autoResolveReferenceBoundaryReview(job, file, now = Date.now()) {
   if (!timeout.isAutoResolveDue(file, now)) return false;
 
   const review = file.referenceBoundaryReview;
+  if (unsafeReferenceEndExclusion(review)) {
+    if (!review.autoResolveBlockedAt) {
+      review.autoResolveBlockedAt = now;
+      review.autoResolveBlockedReason =
+        "Automatic reference exclusion would remove most of the paper or its annotations.";
+      file.providerStatus = "MANUAL_REQUIRED";
+      file.manualReviewRequired = true;
+      file.manualReviewReason = review.autoResolveBlockedReason;
+      savePaidJobs();
+    }
+    return false;
+  }
   const resultPath = file.providerBundleFile
     ? file.providerBundleFile + ".provider-results.json"
     : null;
