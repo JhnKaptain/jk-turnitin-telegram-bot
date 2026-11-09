@@ -428,7 +428,10 @@ function hasReferenceEntryAfterHeading(source, start, lines) {
     const text = lines[i].text.trim();
     if (!text) continue;
     examined++;
-    if (isReferenceEntryParagraph(text)) return true;
+    if (isReferenceEntryParagraph(text) || isMlaAnnotatedEntryStart(lines, i)) return true;
+    // MLA annotated assignments sometimes put a research question between
+    // their heading and first entry; do not misclassify it as the end.
+    if (/^(?:research\s+question|research\s+topic|guiding\s+question|thesis\s+statement)\s*:/iu.test(text)) continue;
     if (KNOWN_TERMINATOR.test(text) || COMMON_SECTION_HEADING.test(text) ||
         STRUCTURAL_FOLLOWER.test(text)) return false;
   }
