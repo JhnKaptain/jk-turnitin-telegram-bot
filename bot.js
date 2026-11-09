@@ -456,7 +456,7 @@ function resaleButtonLabel(resaleVerified) {
   if (!RESALE_ENABLED) return "";
 
   if (isDiscountPublicActive() || resaleVerified) {
-    return `🏷️ Use ${RESALE_LABEL_TITLE} (${RESALE_PRICE_KES} KES)`;
+    return `DISCOUNT: AI + SIMILARITY (KSh ${RESALE_PRICE_KES})`;
   }
 
   return `🏷️ ${RESALE_LABEL_TITLE} Code`;
@@ -3236,22 +3236,25 @@ function typeInlineKeyboard(allowRecheck, allowResale, resaleVerified) {
     }
   }
 
-  if (SIMILARITY_ONLY_ENABLED) {
-    rows.push([
-      Markup.button.callback(
-        `\u{1F4CA} SIMILARITY REPORT ONLY (${SIMILARITY_ONLY_PRICE_KES} KES)`,
-        "TYPE_SIMILARITY"
-      )
-    ]);
+  // During the exclusive discount window, show only these two
+  // service choices, with clear prices and no extra explanatory text.
+  if (allowResale && publicDiscountExclusive) {
+    rows.push([Markup.button.callback(
+      `DISCOUNT: AI + SIMILARITY (KSh ${RESALE_PRICE_KES})`, "TYPE_RESALE"
+    )]);
   }
-
-  if (allowResale) {
-    rows.push([
-      Markup.button.callback(
-        resaleButtonLabel(resaleVerified),
-        "TYPE_RESALE"
-      )
-    ]);
+  if (SIMILARITY_ONLY_ENABLED) {
+    rows.push([Markup.button.callback(
+      publicDiscountExclusive
+        ? `SIMILARITY ONLY (KSh ${SIMILARITY_ONLY_PRICE_KES})`
+        : `📊 SIMILARITY REPORT ONLY (${SIMILARITY_ONLY_PRICE_KES} KES)`,
+      "TYPE_SIMILARITY"
+    )]);
+  }
+  if (allowResale && !publicDiscountExclusive) {
+    rows.push([Markup.button.callback(
+      resaleButtonLabel(resaleVerified), "TYPE_RESALE"
+    )]);
   }
 
   rows.push([
