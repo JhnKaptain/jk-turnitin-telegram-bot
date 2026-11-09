@@ -66,5 +66,36 @@ for (const spec of specs) {
   if (problems.length) failures.push(spec.name + ": " + problems.join("; "));
 }
 
+// Regression: MLA-style annotated bibliography with an institutional author
+// and a lowercase surname. Annotations are substantial student-authored prose;
+// excluding them to the end must not leave an effectively empty provider input.
+const annotationA = "The professional guidance offers important context for adolescent well-being and explains why social media cannot be treated as entirely harmful or entirely beneficial. It supports a careful analysis of online experiences, developmental factors, bullying, and healthy habits.";
+const annotationB = "This longitudinal research describes how young people may experience digital platforms differently depending on their circumstances. It gives useful evidence for comparing general population trends with individual differences, and it warns against broad causal conclusions.";
+const mlaAnnotated = [
+  "Annotated Bibliography",
+  "",
+  'American Psychological Association. "Health Advisory on Social Media Use in Adolescence." American Psychological Association, May 2023, https://www.apa.org/topics/social-media-internet/health-advisory-adolescent-social-media-use.',
+  "",
+  annotationA,
+  "",
+  'boyd, danah. It\'s Complicated: The Social Lives of Networked Teens. Yale UP, 2014, https://doi.org/10.12987/9780300166439.',
+  "",
+  annotationB,
+  ""
+].join("\n");
+try {
+  const checked = scan.buildSimilarityInput(mlaAnnotated, scan.FILTER_MODE_FILTERED);
+  const ai = scan.buildAiInput(mlaAnnotated);
+  for (const prepared of [checked, ai]) {
+    assert(prepared.text.includes(annotationA), "corporate-author annotation must remain");
+    assert(prepared.text.includes(annotationB), "lowercase-author annotation must remain");
+    assert(!prepared.text.includes("Health Advisory on Social Media"), "corporate MLA entry must be excluded");
+    assert(!prepared.text.includes("The Social Lives of Networked Teens"), "lowercase MLA entry must be excluded");
+    assert(prepared.text.split(/\\s+/u).length >= 60, "annotated prose must remain substantial");
+  }
+} catch (error) {
+  failures.push("mla_corporate_lowercase_annotated: " + error.message);
+}
+
 assert.deepEqual(failures, [], "reference corpus failures:\n" + failures.join("\n"));
 console.log("PASS: reference corpus — " + specs.length + " real-geometry documents: every bibliography excluded, annotations and following prose kept, mixed content fails closed");
