@@ -9,6 +9,7 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const vm = require("node:vm");
 
 const COPIED = "Tesla cut prices on its Model 3 and Model Y vehicles in the United States on Friday";
 const TEXT =
@@ -102,6 +103,8 @@ function startServer() {
     assert.equal(result.provider, "jksimilarity");
     assert.equal(result.score, 41.67);
     assert.equal(result.inputText, TEXT);
+    assert.equal(state.received.discovery_text, undefined,
+      "legacy unfiltered client remains API-compatible");
     assert.equal(result.matches.length, 1, "uncounted and overlapped (unlisted) matches are left out");
     const [match] = result.matches;
     assert.equal(TEXT.slice(match.start, match.end), COPIED);
@@ -129,9 +132,22 @@ function startServer() {
     assert.equal(isolatedFailure.score, 0, "one failed provider alone is not enough to prove total search failure");
 
     // 1b. Filtered reports ask the service to leave out citation entries and quotes too.
-    await jk.checkPlagiarism({ text: TEXT, title: "Essay.docx", pollMs: 1, filtered: true });
+    const originalDiscoveryText = TEXT + '\nReferences\nMishra, P. (2024). 10.1177/00113921231206491';
+    await jk.checkPlagiarism({
+      text: TEXT, title: "Essay.docx", pollMs: 1, filtered: true,
+      discoveryText: originalDiscoveryText,
+      discoveryReferenceRanges: [[Array.from(TEXT).length + 1, Array.from(originalDiscoveryText).length]]
+    });
+    assert.deepEqual(
+      state.received.discovery_reference_ranges,
+      [[Array.from(TEXT).length + 1, Array.from(originalDiscoveryText).length]],
+      "checked bibliography boundaries must arrive separately from scoring text"
+    );
     assert.equal(state.received.exclude_bibliography, true);
     assert.equal(state.received.exclude_quotes, true);
+    assert.equal(state.received.text, TEXT, "scoring offsets must still use filtered text");
+    assert.equal(state.received.discovery_text, originalDiscoveryText,
+      "the original is transmitted only as a discovery input");
 
     // 2. The bot's existing alignment accepts it unchanged.
     const [aligned] = alignQuetextResultMatches(TEXT, result);
@@ -186,6 +202,16 @@ function startServer() {
     // 7. Report shows publication titles and types; Quetext-style sources stay "Internet".
     const renderer = fs.readFileSync(path.join(__dirname, "jk-report-renderer-max.js"), "utf8");
     assert.match(renderer, /JK_SOURCE_TYPES_AND_TITLES_V1/u);
+    const percentStart = renderer.indexOf("// JK_WHOLE_PERCENT_DISPLAY_V1");
+    const percentEnd = renderer.indexOf("function fmtDate(v)", percentStart);
+    assert.ok(percentStart >= 0 && percentEnd > percentStart);
+    const formatSimilarity = vm.runInNewContext(
+      renderer.slice(percentStart, percentEnd) + "\nfmtSimilarityPct;"
+    );
+    assert.equal(formatSimilarity(0), "0%");
+    assert.equal(formatSimilarity(0.47), "<1%");
+    assert.equal(formatSimilarity(0.79), "1%");
+    assert.match(renderer, /fmtSimilarityPct\(score\)/u);
 
     // 8. Admin command text and buttons.
     const admin = require("./jk-plagiarism-provider-admin.cjs");

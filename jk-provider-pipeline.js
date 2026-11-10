@@ -1014,6 +1014,20 @@ async function runProviderPipeline({
           similarityPrepared
             .text,
 
+        // Discovery-only original text: JK searches cited references and
+        // quotations even when the client excludes them from the score.
+        // Quetext ignores this optional argument.
+        discoveryText: document.text,
+
+        // The bot's established reference detector has already validated
+        // these boundaries (or blocked the scan pending admin review).
+        // Convert UTF-16 source offsets to Python Unicode code-point offsets.
+        // Do NOT recompute references using simpler API-side heuristics.
+        discoveryReferenceRanges: (aiPrepared.removedReferenceRanges || []).map(({start, end}) => [
+          Array.from(document.text.slice(0, start)).length,
+          Array.from(document.text.slice(0, end)).length
+        ]),
+
         // JK SimilarityCheck also leaves out citation entries and quotes it finds in the
         // text when the client chose the filtered report (Quetext ignores this).
         filtered:

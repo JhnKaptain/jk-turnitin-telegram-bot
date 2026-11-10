@@ -169,7 +169,7 @@ function normalizeJkReport(report, inputText) {
   };
 }
 
-async function createPlagiarismReport({ text, title, filtered = false }) {
+async function createPlagiarismReport({ text, title, filtered = false, discoveryText = null, discoveryReferenceRanges = null }) {
   // Sent as JSON (not a form upload) so the text arrives exactly as sent:
   // form uploads turn line breaks into CR LF, which would shift every offset.
   // The pipeline already removes the reference section for filtered reports; `filtered`
@@ -180,6 +180,14 @@ async function createPlagiarismReport({ text, title, filtered = false }) {
     exclude_bibliography: Boolean(filtered),
     exclude_quotes: Boolean(filtered)
   };
+  // The complete original document is used solely for finding sources.
+  // Scoring and offsets still refer to the filtered text supplied above.
+  if (typeof discoveryText === "string" && discoveryText.trim()) {
+    body.discovery_text = discoveryText;
+    if (Array.isArray(discoveryReferenceRanges)) {
+      body.discovery_reference_ranges = discoveryReferenceRanges;
+    }
+  }
   const minWords = Number(process.env.JK_SIMILARITY_MIN_WORDS);
   if (Number.isInteger(minWords) && minWords >= 5) body.min_match_words = minWords;
   const created = await jkRequest("/v1/checks/text", { method: "POST", json: body });
@@ -207,8 +215,8 @@ async function waitForPlagiarismReport(reportId, { pollMs = DEFAULT_POLL_MS, tim
   }
 }
 
-async function checkPlagiarism({ text, title, pollMs, timeoutMs, onProgress, onSubmitted = null, filtered = false }) {
-  const created = await createPlagiarismReport({ text, title, filtered });
+async function checkPlagiarism({ text, title, pollMs, timeoutMs, onProgress, onSubmitted = null, filtered = false, discoveryText = null, discoveryReferenceRanges = null }) {
+  const created = await createPlagiarismReport({ text, title, filtered, discoveryText, discoveryReferenceRanges });
   if (typeof onSubmitted === "function") {
     try {
       await onSubmitted({ provider: "jksimilarity", reportId: created.reportId });

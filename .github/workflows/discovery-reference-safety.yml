@@ -1,0 +1,46 @@
+name: Discovery and reference-exclusion safety
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'providers/jksimilarity.js'
+      - 'jk-provider-pipeline.js'
+      - 'jk-report-renderer-max.js'
+      - 'test-jksimilarity-provider.cjs'
+      - 'test-discovery-safety.cjs'
+      - 'package.json'
+      - '.github/workflows/discovery-reference-safety.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies without running postinstall scripts
+        run: npm ci --ignore-scripts
+      - name: Verify syntax
+        run: |
+          node --check providers/jksimilarity.js
+          node --check jk-provider-pipeline.js
+          node --check jk-report-renderer-max.js
+      - name: Verify new AI and similarity isolation safeguards
+        run: node test-discovery-safety.cjs
+      - name: Verify provider transport, scoring offsets and nonzero rounding
+        run: node test-jksimilarity-provider.cjs
+      - name: Validate real reference shapes and prose after bibliography
+        run: |
+          node test-reference-real-document-shapes.cjs
+          node test-ai-reference-render-integrity.cjs
+          node test-reference-review-safe-end.cjs
+          node test-reference-corpus.cjs
+      - name: Run all existing offline bot regressions
+        run: npm test
