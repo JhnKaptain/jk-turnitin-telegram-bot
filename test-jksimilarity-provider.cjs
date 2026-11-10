@@ -198,12 +198,12 @@ function startServer() {
     const percentEnd = renderer.indexOf("function fmtDate(v)", percentStart);
     assert.ok(percentStart >= 0 && percentEnd > percentStart);
     const formatSimilarity = vm.runInNewContext(
-      renderer.slice(percentStart, percentEnd) + "\\nfmtSimilarityPct;"
+      renderer.slice(percentStart, percentEnd) + "\nfmtSimilarityPct;"
     );
     assert.equal(formatSimilarity(0), "0%");
     assert.equal(formatSimilarity(0.47), "<1%");
     assert.equal(formatSimilarity(0.79), "1%");
-    assert.match(renderer, /fmtSimilarityPct\\(score\\)/u);
+    assert.match(renderer, /fmtSimilarityPct\(score\)/u);
 
     // 8. Admin command text and buttons.
     const admin = require("./jk-plagiarism-provider-admin.cjs");
