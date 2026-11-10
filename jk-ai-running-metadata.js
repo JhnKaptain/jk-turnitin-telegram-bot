@@ -108,25 +108,51 @@ function excludeAiRunningMetadata(prepared, document) {
 }
 
 function countAiPositiveSentences(bundle, ai) {
+  // Preserve the public function name; only the report summary count changes.
   const ranges = Array.isArray(bundle?.aiDetection?.ranges)
     ? bundle.aiDetection.ranges
-    : (ai?.ranges || []);
-
-  const keys = new Set();
+    : (Array.isArray(ai?.ranges) ? ai.ranges : []);
+  const source = typeof bundle?.canonicalDocument?.text === "string"
+    ? bundle.canonicalDocument.text
+    : null;
+  const unique = new Map();
   for (const r of ranges) {
-    if (!Number.isFinite(r.start) || !Number.isFinite(r.end) ||
-        r.end <= r.start) continue;
-
-    if (Number.isFinite(r.providerStart) &&
-        Number.isFinite(r.providerEnd)) {
-      keys.add("provider:" + r.providerStart + ":" + r.providerEnd);
-    } else if (r.id) {
-      keys.add("id:" + r.id);
+    if (!Number.isInteger(r?.start) || !Number.isInteger(r?.end) ||
+        r.start < 0 || r.end <= r.start ||
+        (source !== null && r.end > source.length)) continue;
+    const key = Number.isFinite(r.providerStart) && Number.isFinite(r.providerEnd)
+      ? "provider:" + r.providerStart + ":" + r.providerEnd
+      : r.id ? "id:" + r.id : "source:" + r.start + ":" + r.end;
+    const previous = unique.get(key);
+    if (previous) {
+      previous.start = Math.min(previous.start, r.start);
+      previous.end = Math.max(previous.end, r.end);
     } else {
-      keys.add("source:" + r.start + ":" + r.end);
+      unique.set(key, {start: r.start, end: r.end, id: r.id});
     }
   }
-  return keys.size;
+  const ordered = [...unique.values()].sort((a, b) =>
+    a.start - b.start || a.end - b.end);
+  let passages = 0;
+  let previous = null;
+  for (const current of ordered) {
+    if (!previous) {
+      passages++;
+    } else if (current.start > previous.end) {
+      const between = source === null
+        ? null : source.slice(previous.end, current.start);
+      const prevId = /^sentence-(\d+)$/.exec(String(previous.id || ""));
+      const currId = /^sentence-(\d+)$/.exec(String(current.id || ""));
+      const interveningSentence = prevId && currId &&
+        Number(currId[1]) !== Number(prevId[1]) + 1;
+      const separateProse = between === null
+        ? current.start - previous.end > 2
+        : /\S/u.test(between) || /\n\s*\n/u.test(between);
+      if (interveningSentence || separateProse) passages++;
+    }
+    if (!previous || current.end > previous.end) previous = current;
+  }
+  return passages;
 }
 
 module.exports = {
