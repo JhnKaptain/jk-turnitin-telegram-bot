@@ -45,7 +45,8 @@ const {
   buildSimilarityInput,
   buildAiInput,
   mapProviderRangesToSource,
-  summarizePreparedInput
+  summarizePreparedInput,
+  similarityFiltersQuotes
 } =
   require(
     "./jk-scan-text.js"
@@ -551,9 +552,11 @@ function normalizeQuetextResult(
     sources,
 
     excluded: {
+      // JK_FILTER_KEEPS_QUOTES_V1
       quotes:
         Boolean(
-          prepared?.filtered
+          prepared?.filtered &&
+          similarityFiltersQuotes()
         ),
 
       references:

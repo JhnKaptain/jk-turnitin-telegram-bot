@@ -173,12 +173,13 @@ async function createPlagiarismReport({ text, title, filtered = false, discovery
   // Sent as JSON (not a form upload) so the text arrives exactly as sent:
   // form uploads turn line breaks into CR LF, which would shift every offset.
   // The pipeline already removes the reference section for filtered reports; `filtered`
-  // also leaves out citation entries elsewhere (e.g. annotated bibliographies) and quotes.
+  // also leaves out citation entries elsewhere (e.g. annotated bibliographies). Quotes
+  // count unless JK_SIMILARITY_FILTER_QUOTES=1 (JK_FILTER_KEEPS_QUOTES_V1).
   const body = {
     text: String(text || ""),
     filename: String(title || "document").slice(0, 255),
     exclude_bibliography: Boolean(filtered),
-    exclude_quotes: Boolean(filtered)
+    exclude_quotes: Boolean(filtered) && String(process.env.JK_SIMILARITY_FILTER_QUOTES || "").trim() === "1"
   };
   // The complete original document is used solely for finding sources.
   // Scoring and offsets still refer to the filtered text supplied above.

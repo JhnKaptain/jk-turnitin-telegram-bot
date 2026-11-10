@@ -12,6 +12,7 @@ Both return the same result shape, so reports look exactly the same either way.
 | `JK_SIMILARITY_API_KEY` | (secret) | The bot's key, from `JK_API_KEYS` on the JK SimilarityCheck service |
 | `PLAGIARISM_FALLBACK` | `quetext` | Optional. If a JK SimilarityCheck scan fails, retry once on Quetext (uses Quetext credit). |
 | `JK_SIMILARITY_MIN_WORDS` | `8` | Optional smallest match; otherwise the JK SimilarityCheck default. |
+| `JK_SIMILARITY_FILTER_QUOTES` | `1` | Optional. The filtered option leaves out the reference list; quotations still count. Set to `1` to leave quotations out too (applies to Quetext and JK SimilarityCheck). |
 
 Changing a Render variable restarts the bot (about a minute).
 

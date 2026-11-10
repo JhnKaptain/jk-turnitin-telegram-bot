@@ -144,7 +144,8 @@ function startServer() {
       "checked bibliography boundaries must arrive separately from scoring text"
     );
     assert.equal(state.received.exclude_bibliography, true);
-    assert.equal(state.received.exclude_quotes, true);
+    // JK_FILTER_KEEPS_QUOTES_V1: filtered leaves out references only; quotes count.
+    assert.equal(state.received.exclude_quotes, false);
     assert.equal(state.received.text, TEXT, "scoring offsets must still use filtered text");
     assert.equal(state.received.discovery_text, originalDiscoveryText,
       "the original is transmitted only as a discovery input");
