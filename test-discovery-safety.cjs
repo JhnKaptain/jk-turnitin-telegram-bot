@@ -42,6 +42,14 @@ assert(pipeline.includes("text:\n          similarityPrepared\n            .text
   "Similarity scoring must continue using the selected filtered/unfiltered input");
 assert(pipeline.includes("text:\n          aiPrepared.text"),
   "AI request must continue using its reference-excluding prepared input");
+// UTF-16 positions from extracted Word text must map to Python code points.
+// A non-BMP symbol before a reference heading changes the numeric offsets.
+const unicodeOriginal = "😀 " + sample + "\nReferences\nSmith, J. (2024). Journal title.";
+const referenceAt = unicodeOriginal.indexOf("\nReferences") + 1;
+const pythonIndex = Array.from(unicodeOriginal.slice(0, referenceAt)).length;
+assert.equal(pythonIndex, referenceAt - 1,
+  "A leading emoji occupies two UTF-16 units but one Python code point");
+
 const provider = fs.readFileSync(path.join(__dirname,"providers/jksimilarity.js"),"utf8");
 assert(provider.includes("body.discovery_reference_ranges = discoveryReferenceRanges;"),
   "The verified spans must reach the similarity API");
