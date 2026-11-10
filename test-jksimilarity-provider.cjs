@@ -9,6 +9,7 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const vm = require("node:vm");
 
 const COPIED = "Tesla cut prices on its Model 3 and Model Y vehicles in the United States on Friday";
 const TEXT =
@@ -193,6 +194,16 @@ function startServer() {
     // 7. Report shows publication titles and types; Quetext-style sources stay "Internet".
     const renderer = fs.readFileSync(path.join(__dirname, "jk-report-renderer-max.js"), "utf8");
     assert.match(renderer, /JK_SOURCE_TYPES_AND_TITLES_V1/u);
+    const percentStart = renderer.indexOf("// JK_WHOLE_PERCENT_DISPLAY_V1");
+    const percentEnd = renderer.indexOf("function fmtDate(v)", percentStart);
+    assert.ok(percentStart >= 0 && percentEnd > percentStart);
+    const formatSimilarity = vm.runInNewContext(
+      renderer.slice(percentStart, percentEnd) + "\\nfmtSimilarityPct;"
+    );
+    assert.equal(formatSimilarity(0), "0%");
+    assert.equal(formatSimilarity(0.47), "<1%");
+    assert.equal(formatSimilarity(0.79), "1%");
+    assert.match(renderer, /fmtSimilarityPct\\(score\\)/u);
 
     // 8. Admin command text and buttons.
     const admin = require("./jk-plagiarism-provider-admin.cjs");
