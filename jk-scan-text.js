@@ -37,6 +37,13 @@ const FILTER_MODE_FILTERED =
 const FILTER_MODE_UNFILTERED =
   "UNFILTERED";
 
+// JK_FILTER_KEEPS_QUOTES_V1: filtered similarity leaves out the reference list
+// only; quoted text still counts (as Turnitin's default does). Set
+// JK_SIMILARITY_FILTER_QUOTES=1 to leave quotations out as well.
+function similarityFiltersQuotes() {
+  return String(process.env.JK_SIMILARITY_FILTER_QUOTES || "").trim() === "1";
+}
+
 /*
   --------------------------------------------------
   General helpers
@@ -317,6 +324,11 @@ function buildFilteredInput(
       ? bibliographyStart
       : source.length;
 
+  const excludeQuotes =
+    typeof options.excludeQuotes === "boolean"
+      ? options.excludeQuotes
+      : similarityFiltersQuotes();
+
   let text = "";
 
   const map = [];
@@ -372,6 +384,7 @@ function buildFilteredInput(
       ----------------------------
     */
     if (
+      excludeQuotes &&
       ch === "“"
     ) {
       const close =
@@ -424,6 +437,7 @@ function buildFilteredInput(
       ----------------------------
     */
     if (
+      excludeQuotes &&
       ch === '"' &&
       source[i - 1] !==
         "\\"
@@ -549,6 +563,9 @@ function buildFilteredInput(
 
     filtered:
       true,
+
+    quotesExcluded:
+      excludeQuotes,
 
     bibliographyStart:
       bibliographyStart >= 0
@@ -1185,6 +1202,7 @@ module.exports = {
 
   buildIdentityInput,
   buildFilteredInput,
+  similarityFiltersQuotes,
 
   buildSimilarityInput,
   buildAiInput,
@@ -1353,8 +1371,12 @@ if (
     );
   }
 
+  // JK_FILTER_KEEPS_QUOTES_V1: quote removal is optional (JK_SIMILARITY_FILTER_QUOTES=1).
   if (
-    filtered.text.includes(
+    buildFilteredInput(sample, { excludeQuotes: true }).text.includes(
+      "quoted material should disappear"
+    ) ||
+    !buildFilteredInput(sample, { excludeQuotes: false }).text.includes(
       "quoted material should disappear"
     )
   ) {

@@ -18,7 +18,14 @@ const unfiltered = scan.buildSimilarityInput(sample, scan.FILTER_MODE_UNFILTERED
 
 const quoted = "Quoted scientific evidence should remain visible to AI detection";
 assert(ai.text.includes(quoted), "AI must always retain quotation text");
-assert(!filtered.text.includes(quoted), "FILTERED similarity excludes quotations");
+// JK_FILTER_KEEPS_QUOTES_V1: FILTERED keeps quotations by default; the
+// optional JK_SIMILARITY_FILTER_QUOTES=1 setting excludes them again.
+assert(filtered.text.includes(quoted), "FILTERED similarity keeps quotations by default");
+process.env.JK_SIMILARITY_FILTER_QUOTES = "1";
+const filteredNoQuotes = scan.buildSimilarityInput(sample, scan.FILTER_MODE_FILTERED);
+delete process.env.JK_SIMILARITY_FILTER_QUOTES;
+assert(!filteredNoQuotes.text.includes(quoted), "JK_SIMILARITY_FILTER_QUOTES=1 excludes quotations");
+assert(integrity.validateExcludedSourceMappings(filteredNoQuotes, "Similarity"), "Quote-excluded map must be valid");
 assert(unfiltered.text.includes(quoted), "UNFILTERED similarity retains quotations");
 assert.equal(unfiltered.text, sample, "UNFILTERED similarity preserves the entire original");
 assert(integrity.validateExcludedSourceMappings(ai, "AI"), "AI coordinate map must be valid");

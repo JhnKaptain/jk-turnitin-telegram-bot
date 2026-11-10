@@ -1036,13 +1036,19 @@ function effectiveSimilarityFilter(file) {
   return FILTER_MODE_FILTERED;
 }
 
+// JK_FILTER_KEEPS_QUOTES_V1: the filtered option leaves out the reference list;
+// quotations are left out too only when JK_SIMILARITY_FILTER_QUOTES=1.
+const { similarityFiltersQuotes } = require("./jk-scan-text.js");
+
 function similarityFilterLabel(value) {
   return String(
     value || ""
   ).toUpperCase() ===
     FILTER_MODE_UNFILTERED
     ? "UNFILTERED"
-    : "Quotes + Bibliography";
+    : similarityFiltersQuotes()
+      ? "Quotes + Bibliography"
+      : "Bibliography";
 }
 
 loadReportSettings();
@@ -2787,7 +2793,7 @@ function adminFreeScanFilterKeyboard() {
   return Markup.inlineKeyboard([
     [
       Markup.button.callback(
-        "✅ FILTER QUOTES + BIBLIOGRAPHY",
+        "✅ FILTER " + similarityFilterLabel().toUpperCase(),
         "ADMIN_FREE_SCAN_FILTERED"
       )
     ],
@@ -2997,7 +3003,7 @@ function institutionKeyboard() {
 
 function clientSimilarityFilterKeyboard(userId) {
   const rows = [
-    [Markup.button.callback("✅ FILTER QUOTES + BIBLIOGRAPHY", "SIM_FILTER_FILTERED")]
+    [Markup.button.callback("✅ FILTER " + similarityFilterLabel().toUpperCase(), "SIM_FILTER_FILTERED")]
   ];
   // Keep the full choice available to admins in ordinary test flows.
   if (!HIDE_CLIENT_UNFILTERED || Number(userId) === ADMIN_ID) {
@@ -4465,8 +4471,10 @@ async function finalizeTypeWithFilterSelection(
 
     await ctx.reply(
       "🔎 *Choose similarity filtering*\n\n" +
-      "*Filter Quotes + Bibliography*\n" +
-      "Quotations and the reference/bibliography section will not count toward the similarity percentage." +
+      "*Filter " + similarityFilterLabel() + "*\n" +
+      (similarityFiltersQuotes()
+        ? "Quotations and the reference/bibliography section will not count toward the similarity percentage."
+        : "The reference/bibliography section will not count toward the similarity percentage. Quotations still count.") +
       ((!HIDE_CLIENT_UNFILTERED || ctx.from.id === ADMIN_ID)
         ? "\n\n*Do Not Filter*\nAll detected matching text will count toward the similarity percentage."
         : ""),
@@ -6916,7 +6924,7 @@ bot.action(
           adminReportTypeLabel(
             adminFreeScanSession.type
           ),
-        "Filter: Quotes + Bibliography",
+        "Filter: " + similarityFilterLabel(),
         "",
         "Send 1–10 PDF, DOCX, DOC or PPTX documents, then tap Review Batch.",
         "",
@@ -9008,7 +9016,7 @@ bot.action(
       file.pendingType;
 
     await ctx.answerCbQuery(
-      "Quotes + bibliography will be filtered"
+      similarityFilterLabel() + " will be filtered"
     );
 
     await finalizeFileTypeSelection(
