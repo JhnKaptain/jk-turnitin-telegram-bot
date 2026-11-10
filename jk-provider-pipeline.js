@@ -1017,7 +1017,9 @@ async function runProviderPipeline({
         // Discovery-only original text: JK searches cited references and
         // quotations even when the client excludes them from the score.
         // Quetext ignores this optional argument.
-        discoveryText: document.text,
+        discoveryText: String(similarityMode).toUpperCase() === "FILTERED"
+          ? document.text
+          : null,
 
         // JK SimilarityCheck also leaves out citation entries and quotes it finds in the
         // text when the client chose the filtered report (Quetext ignores this).
