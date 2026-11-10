@@ -103,6 +103,8 @@ function startServer() {
     assert.equal(result.provider, "jksimilarity");
     assert.equal(result.score, 41.67);
     assert.equal(result.inputText, TEXT);
+    assert.equal(state.received.discovery_text, undefined,
+      "legacy unfiltered client remains API-compatible");
     assert.equal(result.matches.length, 1, "uncounted and overlapped (unlisted) matches are left out");
     const [match] = result.matches;
     assert.equal(TEXT.slice(match.start, match.end), COPIED);
@@ -133,8 +135,14 @@ function startServer() {
     const originalDiscoveryText = TEXT + '\nReferences\nMishra, P. (2024). 10.1177/00113921231206491';
     await jk.checkPlagiarism({
       text: TEXT, title: "Essay.docx", pollMs: 1, filtered: true,
-      discoveryText: originalDiscoveryText
+      discoveryText: originalDiscoveryText,
+      discoveryReferenceRanges: [[Array.from(TEXT).length + 1, Array.from(originalDiscoveryText).length]]
     });
+    assert.deepEqual(
+      state.received.discovery_reference_ranges,
+      [[Array.from(TEXT).length + 1, Array.from(originalDiscoveryText).length]],
+      "checked bibliography boundaries must arrive separately from scoring text"
+    );
     assert.equal(state.received.exclude_bibliography, true);
     assert.equal(state.received.exclude_quotes, true);
     assert.equal(state.received.text, TEXT, "scoring offsets must still use filtered text");
