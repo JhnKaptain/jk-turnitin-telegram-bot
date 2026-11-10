@@ -60,13 +60,23 @@ function visualLines(page, source) {
   return lines.filter(line => line.words.length);
 }
 
-function tocEntry(line, page) {
+// JK_TOC_TAB_ALIGNED_V1: Word tables of contents built with tabs place the page
+// number just after each title (often mid-page), not right-aligned, and a short
+// tab can glue it to the title ("LITERATURE REVIEW8"). A separate page-number
+// segment anywhere after the title counts; a glued number counts only once the
+// block has started. Blocks still need 3 entries (2 under a contents heading).
+const GLUED_PAGE_REF = /^(.*\p{L}[)\]]?)(?:\s?\d{1,3}|\s[ivxlc]{1,6})$/u;  // "REVIEW8", "DECLARATION i"
+function tocEntry(line, page, inBlock = false) {
   if (LEADER_ENTRY.test(line.text) && wc(line.text) <= 25) return true;
   const segs = line.segments;
-  if (segs.length < 2) return false;
-  const last = segs.at(-1), title = norm(segs.slice(0, -1).map(s => s.text).join(" "));
-  return PAGE_REF.test(last.text) && last.x >= page.width * 0.6 &&
-    wc(title) >= 1 && wc(title) <= 20 && !SENTENCE_END.test(title);
+  if (segs.length >= 2) {
+    const last = segs.at(-1), title = norm(segs.slice(0, -1).map(s => s.text).join(" "));
+    if (PAGE_REF.test(last.text) && last.x >= page.width * 0.15 &&
+        wc(title) >= 1 && wc(title) <= 20 && !SENTENCE_END.test(title)) return true;
+  }
+  if (!inBlock) return false;
+  const glued = GLUED_PAGE_REF.exec(line.text);
+  return Boolean(glued) && wc(glued[1]) >= 1 && wc(glued[1]) <= 20 && !SENTENCE_END.test(glued[1]);
 }
 
 function classifyTableOfContents(lines, page, add) {
@@ -78,10 +88,10 @@ function classifyTableOfContents(lines, page, add) {
     for (let j = start; j < lines.length; j++) {
       const line = lines[j], prev = lines[j - 1];
       if (block.length && prev && prev.y - line.y > Math.max(line.height, 8) * 3.2) break;
-      if (tocEntry(line, page)) { block.push(line); entries++; continue; }
+      if (tocEntry(line, page, block.length > 0 || heading)) { block.push(line); entries++; continue; }
       // A long entry title can wrap; its page number is on the next line.
       const next = lines[j + 1];
-      if (block.length && next && tocEntry(next, page) && line.segments.length === 1 &&
+      if (block.length && next && tocEntry(next, page, true) && line.segments.length === 1 &&
           wc(line.text) <= 15 && !SENTENCE_END.test(line.text)) { block.push(line); continue; }
       break;
     }
