@@ -1152,6 +1152,13 @@ function fmtPct(v) {
   return rounded + "%";
 }
 
+// Do not present a verified nonzero similarity as an apparently clean 0%.
+function fmtSimilarityPct(v) {
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 0 && n < 0.5) return "<1%";
+  return fmtPct(v);
+}
+
 function fmtDate(v) {
   if (
     v === null ||
@@ -3476,7 +3483,7 @@ function drawSimilaritySummaryBlock(page, f, icons, groups, cats, topBase = 161.
 
     drawTextTop(
       page,
-      `${group.label}  ${fmtPct(group.percent)}`,
+      `${group.label}  ${fmtSimilarityPct(group.percent)}`,
       groupLabelX,
       top,
       7,
@@ -3488,9 +3495,9 @@ function drawSimilaritySummaryBlock(page, f, icons, groups, cats, topBase = 161.
   }
 
   const rows = [
-    [fmtPct(cats.internet), "Internet sources", "sourceInternet", 322, 1.0, 8.5, 8.5],
-    [fmtPct(cats.publications), "Publications", "sourcePublication", 322, 1.48, 9, 6.5],
-    [fmtPct(cats.submitted), "Submitted works (Student Papers)", "sourceSubmitted", 323, 1.48, 6.5, 6.5]
+    [fmtSimilarityPct(cats.internet), "Internet sources", "sourceInternet", 322, 1.0, 8.5, 8.5],
+    [fmtSimilarityPct(cats.publications), "Publications", "sourcePublication", 322, 1.48, 9, 6.5],
+    [fmtSimilarityPct(cats.submitted), "Submitted works (Student Papers)", "sourceSubmitted", 323, 1.48, 6.5, 6.5]
   ];
 
   rows.forEach((row, index) => {
@@ -3509,7 +3516,7 @@ function similarityOverviewPage(page, f, icons, bundle, groups, cats, pageNo, to
 
   const score = providerSimilarityScore(bundle);
 
-  drawTextTop(page, `${fmtPct(score)} Overall Similarity`, 36, 55, 17, f.lexMed, C.ink);
+  drawTextTop(page, `${fmtSimilarityPct(score)} Overall Similarity`, 36, 55, 17, f.lexMed, C.ink);
   drawTextTop(
     page,
     "The combined total of all matches, including overlapping sources, for each database.",
