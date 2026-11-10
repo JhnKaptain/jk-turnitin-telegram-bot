@@ -1021,6 +1021,17 @@ async function runProviderPipeline({
           ? document.text
           : null,
 
+        // The bot's established reference detector has already validated
+        // these boundaries (or blocked the scan pending admin review).
+        // Convert UTF-16 source offsets to Python Unicode code-point offsets.
+        // Do NOT recompute references using simpler API-side heuristics.
+        discoveryReferenceRanges: String(similarityMode).toUpperCase() === "FILTERED"
+          ? (similarityPrepared.removedReferenceRanges || []).map(({start, end}) => [
+              Array.from(document.text.slice(0, start)).length,
+              Array.from(document.text.slice(0, end)).length
+            ])
+          : null,
+
         // JK SimilarityCheck also leaves out citation entries and quotes it finds in the
         // text when the client chose the filtered report (Quetext ignores this).
         filtered:
