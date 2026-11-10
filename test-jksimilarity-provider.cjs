@@ -129,9 +129,16 @@ function startServer() {
     assert.equal(isolatedFailure.score, 0, "one failed provider alone is not enough to prove total search failure");
 
     // 1b. Filtered reports ask the service to leave out citation entries and quotes too.
-    await jk.checkPlagiarism({ text: TEXT, title: "Essay.docx", pollMs: 1, filtered: true });
+    const originalDiscoveryText = TEXT + '\\nReferences\\nMishra, P. (2024). 10.1177/00113921231206491';
+    await jk.checkPlagiarism({
+      text: TEXT, title: "Essay.docx", pollMs: 1, filtered: true,
+      discoveryText: originalDiscoveryText
+    });
     assert.equal(state.received.exclude_bibliography, true);
     assert.equal(state.received.exclude_quotes, true);
+    assert.equal(state.received.text, TEXT, "scoring offsets must still use filtered text");
+    assert.equal(state.received.discovery_text, originalDiscoveryText,
+      "the original is transmitted only as a discovery input");
 
     // 2. The bot's existing alignment accepts it unchanged.
     const [aligned] = alignQuetextResultMatches(TEXT, result);
