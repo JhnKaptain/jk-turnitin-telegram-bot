@@ -130,7 +130,7 @@ function startServer() {
     assert.equal(isolatedFailure.score, 0, "one failed provider alone is not enough to prove total search failure");
 
     // 1b. Filtered reports ask the service to leave out citation entries and quotes too.
-    const originalDiscoveryText = TEXT + '\\nReferences\\nMishra, P. (2024). 10.1177/00113921231206491';
+    const originalDiscoveryText = TEXT + '\nReferences\nMishra, P. (2024). 10.1177/00113921231206491';
     await jk.checkPlagiarism({
       text: TEXT, title: "Essay.docx", pollMs: 1, filtered: true,
       discoveryText: originalDiscoveryText
