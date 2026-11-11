@@ -699,7 +699,8 @@ async function runProviderPipeline({
     null
 ,
   onQuetextSubmitted = null,
-  referenceBoundaryOverrides = []
+  referenceBoundaryOverrides = [],
+  similarityOptions = null
 }) {
   sourcePath =
     path.resolve(
@@ -737,7 +738,8 @@ async function runProviderPipeline({
       document.text,
       similarityMode,
       referenceBoundaryOverrides,
-      document
+      document,
+      similarityOptions
     );
 
   const aiPrepared =
@@ -750,7 +752,9 @@ async function runProviderPipeline({
   // boundary. Verify independently before any paid API call.
   const verifyReference = require("./jk-ai-reference-proof.cjs").verifyPreparedReferenceIsolation;
   verifyReference(aiPrepared, document.text, "AI",document);
-  if (String(similarityMode).toUpperCase() === "FILTERED") {
+  const selectedFilters = require("./jk-similarity-filter-options.cjs")
+    .normalizeSimilarityFilters(similarityOptions, similarityMode);
+  if (selectedFilters.excludeBibliography) {
     verifyReference(similarityPrepared, document.text, "Similarity",document);
   }
 
@@ -897,8 +901,8 @@ async function runProviderPipeline({
       document,
 
     preparation: {
-      similarityMode:
-        similarityMode,
+      similarityMode: similarityMode,
+      similarityOptions: selectedFilters,
 
       similarity:
         summarizePreparedInput(
@@ -1033,8 +1037,8 @@ async function runProviderPipeline({
 
         // JK SimilarityCheck also leaves out citation entries and quotes it finds in the
         // text when the client chose the filtered report (Quetext ignores this).
-        filtered:
-          String(similarityMode).toUpperCase() === "FILTERED",
+        filtered: selectedFilters.excludeBibliography || selectedFilters.excludeQuotes,
+        similarityOptions: selectedFilters,
 
         title:
           fileTitle(
