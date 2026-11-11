@@ -132,7 +132,15 @@ function normalizeJkReport(report, inputText) {
         id: String(match.source_id),
         url: listedSource.url || null,
         title: listedSource.title || null,
-        type: TYPES[listedSource.type] || "internet"
+        type: TYPES[listedSource.type] || "internet",
+        // The API assigns each matched word to one source, avoiding
+        // double-counting overlapping documents. Preserve that exact
+        // contribution for the PDF source breakdown.
+        percent: listedSource.percent !== null &&
+          listedSource.percent !== undefined &&
+          listedSource.percent !== "" &&
+          Number.isFinite(Number(listedSource.percent))
+          ? Number(listedSource.percent) : null
       }
     });
   }

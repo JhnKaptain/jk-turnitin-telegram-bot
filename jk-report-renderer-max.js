@@ -1152,10 +1152,11 @@ function fmtPct(v) {
   return rounded + "%";
 }
 
-// Do not present a verified nonzero similarity as an apparently clean 0%.
+// Individual source/segment contributions display <1% when positive but
+// below one percent. The overall score always uses fmtPct (whole 0-100%).
 function fmtSimilarityPct(v) {
   const n = Number(v);
-  if (Number.isFinite(n) && n > 0 && n < 0.5) return "<1%";
+  if (Number.isFinite(n) && n > 0 && n < 1) return "<1%";
   return fmtPct(v);
 }
 
@@ -3413,18 +3414,30 @@ function groupStats(ranges, overallScore) {
   return stats;
 }
 
-function sourceCategoryStats(sources, overallScore) {
-  const total = sources.reduce((n, x) => n + Number(x.matchedWords || 0), 0) || 1;
+function sourceContributionPercent(source, sources, overallScore) {
+  // The JK SimilarityCheck API assigns each matching word to just one
+  // source. The stored value is authoritative when present.
+  if (source.percent !== null && source.percent !== undefined &&
+      source.percent !== "" && Number.isFinite(Number(source.percent))) {
+    return Math.max(0, Number(source.percent));
+  }
+  // Backward compatibility: Quetext/older bundles do not have per-source
+  // percentages. Their approximate breakdown must not change the overall.
+  const total = sources.reduce((n, x) => n + Number(x.matchedWords || 0), 0);
+  return total > 0
+    ? overallScore * Number(source.matchedWords || 0) / total
+    : 0;
+}
 
+function sourceCategoryStats(sources, overallScore) {
   const sum = (keys) =>
-    sources
-      .filter((x) => keys.includes(x.sourceType))
-      .reduce((n, x) => n + Number(x.matchedWords || 0), 0);
+    sources.filter((x) => keys.includes(x.sourceType))
+      .reduce((n, x) => n + sourceContributionPercent(x, sources, overallScore), 0);
 
   return {
-    internet: overallScore * sum(["internet"]) / total,
-    publications: overallScore * sum(["database"]) / total,
-    submitted: overallScore * sum(["repositories", "batch"]) / total
+    internet: sum(["internet"]),
+    publications: sum(["database"]),
+    submitted: sum(["repositories", "batch"])
   };
 }
 
@@ -3516,10 +3529,10 @@ function similarityOverviewPage(page, f, icons, bundle, groups, cats, pageNo, to
 
   const score = providerSimilarityScore(bundle);
 
-  drawTextTop(page, `${fmtSimilarityPct(score)} Overall Similarity`, 36, 55, 17, f.lexMed, C.ink);
+  drawTextTop(page, `${fmtPct(score)} Overall Similarity`, 36, 55, 17, f.lexMed, C.ink);
   drawTextTop(
     page,
-    "The combined total of all matches, including overlapping sources, for each database.",
+    "Unique matched words are counted once across all detected sources.",
     36,
     80.017,
     7,
@@ -3529,13 +3542,28 @@ function similarityOverviewPage(page, f, icons, bundle, groups, cats, pageNo, to
 
   let summaryTop = 161.81;
 
-  if (providerSimilarityFiltered(bundle)) {
+  const selection = bundle?.reportIdentity?.similarityOptions;
+  const exclusions = selection && typeof selection === "object"
+    ? {
+        bibliography: selection.excludeBibliography === true,
+        quotes: selection.excludeQuotes === true
+      }
+    : {
+        bibliography: providerSimilarityFiltered(bundle),
+        quotes: false // never claim quote exclusion for unknown older reports
+      };
+  const excludedLabels = [
+    ...(exclusions.bibliography ? ["Bibliography"] : []),
+    ...(exclusions.quotes ? ["Quoted Text"] : [])
+  ];
+  if (excludedLabels.length) {
     drawTextTop(page, "Filtered from the Report", 36, 100.81, 10, f.notoSemi, C.ink);
-    drawPngTop(page, icons.filterBullet, 39, 125.5, 2, 3);
-    drawTextTop(page, "Bibliography", 48, 122.017, 7, f.noto, C.ink);
-    drawPngTop(page, icons.filterBullet, 39, 139.5, 2, 3);
-    drawTextTop(page, "Quoted Text", 48, 136.017, 7, f.noto, C.ink);
-    summaryTop = 175.81;
+    excludedLabels.forEach((label, index) => {
+      const shift = index * 14;
+      drawPngTop(page, icons.filterBullet, 39, 125.5 + shift, 2, 3);
+      drawTextTop(page, label, 48, 122.017 + shift, 7, f.noto, C.ink);
+    });
+    summaryTop = excludedLabels.length === 2 ? 175.81 : 161.81;
   }
 
   // V10E separator above Match Groups / Top Sources
@@ -3705,22 +3733,13 @@ function sourceOverviewPages(doc, f, icons, bundle, groups, cats, sources, start
       // Invisible PDF link rectangle covers only the displayed source name.
       addSourceLinkAnnotation(doc, page, source, sourceName, f.notoSemi, 36, sourceNameTop, 8);
 
-      const totalMatched =
-        sources.reduce((n, item) => n + Number(item.matchedWords || 0), 0) || 1;
-
-      const score =
-        providerSimilarityScore(
-          bundle
-        );
-
-      const sourcePercent =
-        score * Number(source.matchedWords || 0) / totalMatched;
+      const sourcePercent = sourceContributionPercent(
+        source, sources, providerSimilarityScore(bundle)
+      );
 
       drawTextTop(
         page,
-        sourcePercent > 0 && sourcePercent < 1
-          ? "<1%"
-          : fmtPct(sourcePercent),
+        fmtSimilarityPct(sourcePercent),
         386,
         top + 16.931,
         8,

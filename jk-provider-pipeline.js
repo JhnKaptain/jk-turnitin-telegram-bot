@@ -355,6 +355,10 @@ function normalizeQuetextResult(
           matchedWords:
             0,
 
+          // Exact, non-overlapping contribution supplied by JK SimilarityCheck.
+          // Older providers do not provide this and retain a fallback estimate.
+          percent: safeNumber(match?.source?.percent),
+
           matchCount:
             0,
 
