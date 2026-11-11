@@ -5646,6 +5646,7 @@ async function startTzOtherPayment(ctx, sub) {
       recheckEligible: Boolean(file.recheckEligible),
       similarityFilter:
         effectiveSimilarityFilter(file),
+      similarityOptions: effectiveSimilarityOptions(file),
       jkSubmissionId:
         file.jkSubmissionId || null,
       reportName:
@@ -5823,6 +5824,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
       recheckEligible: Boolean(file.recheckEligible),
       similarityFilter:
         effectiveSimilarityFilter(file),
+      similarityOptions: effectiveSimilarityOptions(file),
       jkSubmissionId:
         file.jkSubmissionId || null,
       reportName:
