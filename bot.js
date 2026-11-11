@@ -2105,6 +2105,7 @@ function createPaidJob({ userId, apiRef, ref, invoiceId, source }) {
                 effectiveSimilarityFilter(
                   file
                 ),
+              similarityOptions: effectiveSimilarityOptions(file),
 
               jkSubmissionId:
                 file.jkSubmissionId,
@@ -5419,6 +5420,7 @@ async function startInternationalPayment(ctx, sub) {
       recheckEligible: Boolean(file.recheckEligible),
       similarityFilter:
         effectiveSimilarityFilter(file),
+      similarityOptions: effectiveSimilarityOptions(file),
       jkSubmissionId:
         file.jkSubmissionId || null,
       reportName:
@@ -7043,7 +7045,7 @@ bot.action("ADMIN_FREE_SCAN_REVIEW", async (ctx) => {
     "🧪 ADMIN FREE BATCH - REVIEW",
     "Files: " + session.files.length + " / 10",
     "Service: " + (session.adminAiOnly ? "AI REPORT ONLY" : adminReportTypeLabel(session.type)),
-    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : similarityFilterLabel(session.similarityFilter)),
+    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : selectedSimilarityLabel(session)),
     "",
     ...session.files.map((file, index) =>
       (index + 1) + ". " + safeText(file.file_name || "Document")),
@@ -7113,7 +7115,7 @@ bot.action("ADMIN_FREE_SCAN_START", async (ctx) => {
     "🧪 ADMIN FREE BATCH STARTED",
     "Files: " + session.files.length + " / 10",
     "Service: " + (session.adminAiOnly ? "AI REPORT ONLY" : adminReportTypeLabel(session.type)),
-    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : similarityFilterLabel(session.similarityFilter)),
+    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : selectedSimilarityLabel(session)),
     "Payment: BYPASSED (ADMIN)",
     "Provider API usage: LIVE",
     "Reports will be delivered to your admin account."
@@ -9263,6 +9265,7 @@ async function startWorldwideManualPayment(ctx, method) {
       type: file.type || null, price: file.price || null,
       recheckEligible: Boolean(file.recheckEligible),
       similarityFilter: effectiveSimilarityFilter(file),
+      similarityOptions: effectiveSimilarityOptions(file),
       jkSubmissionId: file.jkSubmissionId || null,
       reportName: file.reportName || null,
       reportInstitution: file.reportInstitution || null
@@ -10243,6 +10246,7 @@ async function submitPaidJobToProviders(
           reportSettings,
 
           similarityMode,
+          similarityOptions: effectiveSimilarityOptions(file),
 
           runSimilarity:
             !(job.adminFreeScan === true && file.adminFreeScan === true && file.adminAiOnly === true),
