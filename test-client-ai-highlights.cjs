@@ -39,6 +39,18 @@ async function settle() { for (let i = 0; i < 8; i++) await tick(); }
     assert.equal(price({}), 50); assert.equal(price({ AI_HIGHLIGHTS_PRICE_KES: "0" }), null);
     assert.equal(phone("0712345678"), "254712345678"); assert.equal(phone("+254112345678"), "254112345678");
     assert.equal(service.deliveryOffer(jobs.original).replyMarkup.inline_keyboard.length, 1);
+    const offerButton = service.deliveryOffer(jobs.original).replyMarkup.inline_keyboard[0][0];
+    assert.equal(offerButton.text, "AI HIGHLIGHTS - KES 50 - Example.docx");
+    assert.equal(offerButton.callback_data, "PAHL:1234567890");
+    // Long filenames are currently sliced at 45 UTF-16 code units in the
+    // customer offer. The full filename stays in the stored order/report.
+    const longName = "Research Paper on Social and Emotional Development of Young Adults.docx";
+    const previousName = file.file_name;
+    file.file_name = longName;
+    const longButton = service.deliveryOffer(jobs.original).replyMarkup.inline_keyboard[0][0];
+    assert.equal(longButton.text, "AI HIGHLIGHTS - KES 50 - " + longName.slice(0, 45));
+    assert.equal(file.file_name, longName);
+    file.file_name = previousName;
     await service.buy(ctx(222), "1234567890"); await service.buy(ctx(999), "1234567890");
     assert.equal(Object.keys(service.records).length, 0); assert.equal(charges, 0);
     await service.buy(ctx(111), "1234567890"); await settle();

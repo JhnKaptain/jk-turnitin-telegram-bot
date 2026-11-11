@@ -117,7 +117,7 @@ function createService(deps) {
       const id = idOf(file);
       if (!id || seen.has(id) || !source(job.userId, id)) continue;
       seen.add(id);
-      rows.push([{ text: "GET AI HIGHLIGHTS - KES " + getPrice() + " - " + String(file.file_name || "Document").slice(0, 45),
+      rows.push([{ text: "AI HIGHLIGHTS - KES " + getPrice() + " - " + String(file.file_name || "Document").slice(0, 45),
         callback_data: "PAHL:" + id }]);
     }
     return { text: rows.length ? "\n\nYour AI report displays *% because the result is below 20%. AI HIGHLIGHTS <b>MAY</b> be available for KES " + getPrice() + ". Select a document below to check availability." : "",
@@ -254,9 +254,9 @@ function createService(deps) {
       await ctx.answerCbQuery("Checking your existing payment; no new request."); background(r, () => verify(r, true)); return;
     }
     if (busy.has(r.token)) return ctx.answerCbQuery("Please wait for the current step.");
-    if (!["READY_TO_PAY", "WAIT_PHONE"].includes(r.status)) return ctx.answerCbQuery("Click GET AI HIGHLIGHTS to check availability again.");
+    if (!["READY_TO_PAY", "WAIT_PHONE"].includes(r.status)) return ctx.answerCbQuery("Click AI HIGHLIGHTS to check availability again.");
     if (now() >= r.quoteExpires || !pdfExists(r.outputPath)) {
-      r.status = "OFFERED"; save(); return ctx.answerCbQuery("This offer has expired. Click GET AI HIGHLIGHTS again.");
+      r.status = "OFFERED"; save(); return ctx.answerCbQuery("This offer has expired. Click AI HIGHLIGHTS again.");
     }
     if (deps.configured && !deps.configured()) return ctx.answerCbQuery("Payments are currently unavailable.");
     if (deps.userBusy?.(r.userId)) return ctx.answerCbQuery("Finish or cancel your document submission first.");
