@@ -4153,11 +4153,7 @@ function buildAdminDocumentCaption({
 
   const exclusion =
     escapeAdminHtml(
-      similarityFilterLabel(
-        effectiveSimilarityFilter(
-          file
-        )
-      )
+      selectedSimilarityLabel(file)
     );
 
   const cleanName =
@@ -6963,7 +6959,7 @@ bot.action(
           adminReportTypeLabel(
             adminFreeScanSession.type
           ),
-        "Filter: " + similarityFilterLabel(),
+        "Filter: " + selectedSimilarityLabel(adminFreeScanSession),
         "",
         "Send 1–10 PDF, DOCX, DOC or PPTX documents, then tap Review Batch.",
         "",
@@ -7969,9 +7965,7 @@ bot.action(
       "✅ File " +
         (index + 1) +
         " filter: " +
-        similarityFilterLabel(
-          file.similarityFilter
-        )
+        selectedSimilarityLabel(file)
     );
   }
 );
@@ -13963,9 +13957,7 @@ await sendAdminMessage(
         ) +
       "%\n" +
       "Filter: " +
-      similarityFilterLabel(
-        file.appliedFilter
-      ) +
+      similarityFiltersSummary(file.similarityOptions, file.appliedFilter) +
       "\n" +
       "AI: " +
       (
