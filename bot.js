@@ -1039,16 +1039,32 @@ function effectiveSimilarityFilter(file) {
 // JK_FILTER_KEEPS_QUOTES_V1: the filtered option leaves out the reference list;
 // quotations are left out too only when JK_SIMILARITY_FILTER_QUOTES=1.
 const { similarityFiltersQuotes } = require("./jk-scan-text.js");
+const {
+  normalizeSimilarityFilters,
+  similarityFiltersMode,
+  toggleSimilarityFilter,
+  similarityFiltersSummary,
+  similarityFilterButtons
+} = require("./jk-similarity-filter-options.cjs");
 
-function similarityFilterLabel(value) {
-  return String(
-    value || ""
-  ).toUpperCase() ===
-    FILTER_MODE_UNFILTERED
-    ? "UNFILTERED"
-    : similarityFiltersQuotes()
-      ? "Quotes + Bibliography"
-      : "Bibliography";
+function effectiveSimilarityOptions(file) {
+  return normalizeSimilarityFilters(file?.similarityOptions, effectiveSimilarityFilter(file));
+}
+function selectedSimilarityLabel(file) {
+  return similarityFiltersSummary(file?.similarityOptions, effectiveSimilarityFilter(file));
+}
+function saveSimilarityOptions(file, options) {
+  const selected = normalizeSimilarityFilters(options, file?.similarityFilter || FILTER_MODE_FILTERED);
+  file.similarityOptions = selected;
+  file.similarityFilter = similarityFiltersMode(selected, file.similarityFilter);
+  return selected;
+}
+
+
+function similarityFilterLabel(value, options = null) {
+  if (options) return similarityFiltersSummary(options, value);
+  return String(value || "").toUpperCase() === FILTER_MODE_UNFILTERED
+    ? "None" : similarityFiltersSummary(null, FILTER_MODE_FILTERED);
 }
 
 loadReportSettings();
@@ -4071,6 +4087,7 @@ function createStoredFileFromDocument(userId, doc) {
     recheckMatchedAt: eligibility.matchedAt,
     recheckHoursLeft: eligibility.hoursLeft,
     similarityFilter: null,
+    similarityOptions: null,
     pendingType: null,
     jkSubmissionId: generateJkSubmissionId(),
     reportName: chooseReportName(),
