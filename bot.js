@@ -4417,8 +4417,10 @@ async function finalizeFileTypeSelection(ctx, sub, kind) {
   file.pendingType = null;
 
   if (!file.similarityFilter) {
-    file.similarityFilter =
-      effectiveSimilarityFilter(file);
+    file.similarityFilter = effectiveSimilarityFilter(file);
+  }
+  if (!file.similarityOptions) {
+    file.similarityOptions = normalizeSimilarityFilters(null, file.similarityFilter);
   }
 
   if (kind === "CHECK") {
@@ -6792,6 +6794,7 @@ bot.action(
     adminFreeScanSession = {
       type: "CHECK",
       similarityFilter: null,
+      similarityOptions: normalizeSimilarityFilters(null, FILTER_MODE_FILTERED),
       stage: "WAIT_FILTER",
       startedAt: Date.now()
     };
@@ -6829,6 +6832,7 @@ bot.action(
     adminFreeScanSession = {
       type: "SIMILARITY",
       similarityFilter: null,
+      similarityOptions: normalizeSimilarityFilters(null, FILTER_MODE_FILTERED),
       stage: "WAIT_FILTER",
       startedAt: Date.now()
     };
@@ -6898,9 +6902,10 @@ bot.action(
       );
     }
 
-    adminFreeScanSession
-      .similarityFilter =
-      FILTER_MODE_FILTERED;
+    saveSimilarityOptions(adminFreeScanSession, {
+      excludeBibliography: true,
+      excludeQuotes: similarityFiltersQuotes()
+    });
 
     adminFreeScanSession.stage =
       "WAIT_DOCUMENT";
@@ -6954,9 +6959,10 @@ bot.action(
       );
     }
 
-    adminFreeScanSession
-      .similarityFilter =
-      FILTER_MODE_UNFILTERED;
+    saveSimilarityOptions(adminFreeScanSession, {
+      excludeBibliography: false,
+      excludeQuotes: false
+    });
 
     adminFreeScanSession.stage =
       "WAIT_DOCUMENT";
@@ -7909,10 +7915,9 @@ bot.action(
       );
     }
 
-    file.similarityFilter =
-      choice === "F"
-        ? FILTER_MODE_FILTERED
-        : FILTER_MODE_UNFILTERED;
+    saveSimilarityOptions(file, choice === "F"
+      ? { excludeBibliography: true, excludeQuotes: similarityFiltersQuotes() }
+      : { excludeBibliography: false, excludeQuotes: false });
 
     savePaidJobs();
 
@@ -8652,6 +8657,7 @@ bot.on("document", async (ctx) => {
     storedFile.type = session.type;
     storedFile.price = 0;
     storedFile.similarityFilter = session.similarityFilter;
+    storedFile.similarityOptions = normalizeSimilarityFilters(session.similarityOptions, session.similarityFilter);
     storedFile.pendingType = null;
     storedFile.adminFreeScan = true;
     storedFile.adminAiOnly = session.adminAiOnly === true;
@@ -9003,8 +9009,10 @@ bot.action(
       );
     }
 
-    file.similarityFilter =
-      FILTER_MODE_FILTERED;
+    saveSimilarityOptions(file, {
+      excludeBibliography: true,
+      excludeQuotes: similarityFiltersQuotes()
+    });
 
     const kind =
       file.pendingType;
@@ -9060,8 +9068,10 @@ bot.action(
       );
     }
 
-    file.similarityFilter =
-      FILTER_MODE_UNFILTERED;
+    saveSimilarityOptions(file, {
+      excludeBibliography: false,
+      excludeQuotes: false
+    });
 
     const kind =
       file.pendingType;
