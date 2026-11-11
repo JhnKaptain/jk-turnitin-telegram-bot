@@ -136,7 +136,10 @@ function normalizeJkReport(report, inputText) {
         // The API assigns each matched word to one source, avoiding
         // double-counting overlapping documents. Preserve that exact
         // contribution for the PDF source breakdown.
-        percent: Number.isFinite(Number(listedSource.percent))
+        percent: listedSource.percent !== null &&
+          listedSource.percent !== undefined &&
+          listedSource.percent !== "" &&
+          Number.isFinite(Number(listedSource.percent))
           ? Number(listedSource.percent) : null
       }
     });
