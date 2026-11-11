@@ -2806,25 +2806,12 @@ function adminFreeScanServiceKeyboard() {
 }
 
 function adminFreeScanFilterKeyboard() {
+  const labels = similarityFilterButtons(adminFreeScanSession?.similarityOptions, FILTER_MODE_FILTERED);
   return Markup.inlineKeyboard([
-    [
-      Markup.button.callback(
-        "✅ FILTER " + similarityFilterLabel().toUpperCase(),
-        "ADMIN_FREE_SCAN_FILTERED"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "📄 DO NOT FILTER",
-        "ADMIN_FREE_SCAN_UNFILTERED"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "❌ Cancel",
-        "ADMIN_FREE_SCAN_CANCEL"
-      )
-    ]
+    [Markup.button.callback(labels.bibliography, "ADMIN_FREE_SCAN_TOGGLE_BIB")],
+    [Markup.button.callback(labels.quotes, "ADMIN_FREE_SCAN_TOGGLE_QUOTES")],
+    [Markup.button.callback("➡️ Continue", "ADMIN_FREE_SCAN_CONTINUE")],
+    [Markup.button.callback("❌ Cancel", "ADMIN_FREE_SCAN_CANCEL")]
   ]);
 }
 
@@ -3018,15 +3005,15 @@ function institutionKeyboard() {
 }
 
 function clientSimilarityFilterKeyboard(userId) {
-  const rows = [
-    [Markup.button.callback("✅ FILTER " + similarityFilterLabel().toUpperCase(), "SIM_FILTER_FILTERED")]
-  ];
-  // Keep the full choice available to admins in ordinary test flows.
-  if (!HIDE_CLIENT_UNFILTERED || Number(userId) === ADMIN_ID) {
-    rows.push([Markup.button.callback("📄 DO NOT FILTER", "SIM_FILTER_UNFILTERED")]);
-  }
-  rows.push([Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]);
-  return Markup.inlineKeyboard(rows);
+  const sub = submissions[userId];
+  const file = getCurrentPendingFile(sub);
+  const labels = similarityFilterButtons(file?.similarityOptions, FILTER_MODE_FILTERED);
+  return Markup.inlineKeyboard([
+    [Markup.button.callback(labels.bibliography, "SIM_FILTER_TOGGLE_BIB")],
+    [Markup.button.callback(labels.quotes, "SIM_FILTER_TOGGLE_QUOTES")],
+    [Markup.button.callback("➡️ Continue", "SIM_FILTER_CONTINUE")],
+    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
+  ]);
 }
 
 function adminDashboardText() {
@@ -4486,31 +4473,21 @@ async function finalizeTypeWithFilterSelection(
     file.pendingType = kind;
     sub.stage = STAGE_WAIT_SIM_FILTER;
 
+    saveSimilarityOptions(file, normalizeSimilarityFilters(file.similarityOptions, FILTER_MODE_FILTERED));
     await ctx.reply(
-      "🔎 *Choose similarity filtering*\n\n" +
-      "*Filter " + similarityFilterLabel() + "*\n" +
-      (similarityFiltersQuotes()
-        ? "Quotations and the reference/bibliography section will not count toward the similarity percentage."
-        : "The reference/bibliography section will not count toward the similarity percentage. Quotations still count.") +
-      ((!HIDE_CLIENT_UNFILTERED || ctx.from.id === ADMIN_ID)
-        ? "\n\n*Do Not Filter*\nAll detected matching text will count toward the similarity percentage."
-        : ""),
-      {
-        parse_mode: "Markdown",
-        reply_markup:
-          clientSimilarityFilterKeyboard(ctx.from.id)
-            .reply_markup
-      }
+      "🔎 Similarity filters\nSelect what to exclude, then Continue.",
+      { reply_markup: clientSimilarityFilterKeyboard(ctx.from.id).reply_markup }
     );
 
     return;
   }
 
   file.similarityFilter =
-    reportSettings.filterMode ===
-    FILTER_MODE_UNFILTERED
-      ? FILTER_MODE_UNFILTERED
-      : FILTER_MODE_FILTERED;
+    reportSettings.filterMode === FILTER_MODE_UNFILTERED
+      ? FILTER_MODE_UNFILTERED : FILTER_MODE_FILTERED;
+  saveSimilarityOptions(file, reportSettings.filterMode === FILTER_MODE_UNFILTERED
+    ? { excludeBibliography: false, excludeQuotes: false }
+    : { excludeBibliography: true, excludeQuotes: similarityFiltersQuotes() });
 
   await finalizeFileTypeSelection(
     ctx,
