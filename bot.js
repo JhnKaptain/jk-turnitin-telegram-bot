@@ -6810,7 +6810,7 @@ bot.action(
         "",
         "Service: CHECK - FULL REPORT",
         "",
-        "Choose similarity filtering."
+        "Select exclusions, then Continue."
       ].join("\n"),
       adminFreeScanFilterKeyboard(),
       true
@@ -6848,7 +6848,7 @@ bot.action(
         "",
         "Service: SIMILARITY ONLY",
         "",
-        "Choose similarity filtering."
+        "Select exclusions, then Continue."
       ].join("\n"),
       adminFreeScanFilterKeyboard(),
       true
@@ -6873,6 +6873,42 @@ bot.action("ADMIN_FREE_SCAN_AI_ONLY", async (ctx) => {
     "Similarity API: NOT REQUESTED",
     "References excluded from AI analysis.",
     "",
+    "Send 1–10 PDF, DOCX, DOC or PPTX documents, then tap Review Batch.",
+    "No bot payment will be requested."
+  ].join("\n"), adminFreeScanWaitingKeyboard(), true);
+});
+
+// Independent exclusions for the admin's free scan. The selection is
+// confirmed before any document is accepted or charged to a provider.
+bot.action(/^ADMIN_FREE_SCAN_TOGGLE_(BIB|QUOTES)$/, async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  const session = adminFreeScanSession;
+  if (!session || session.stage !== "WAIT_FILTER") {
+    return ctx.answerCbQuery("Start Admin Free Scan first.");
+  }
+  session.similarityOptions = toggleSimilarityFilter(
+    session.similarityOptions, ctx.match[1] === "BIB" ? "bibliography" : "quotes",
+    FILTER_MODE_FILTERED
+  );
+  await ctx.answerCbQuery();
+  return showAdminScreen(ctx,
+    "🧪 ADMIN FREE SCAN\nSelect exclusions, then Continue.",
+    adminFreeScanFilterKeyboard(), true);
+});
+
+bot.action("ADMIN_FREE_SCAN_CONTINUE", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  const session = adminFreeScanSession;
+  if (!session || session.stage !== "WAIT_FILTER") {
+    return ctx.answerCbQuery("Start Admin Free Scan first.");
+  }
+  saveSimilarityOptions(session, session.similarityOptions);
+  session.stage = "WAIT_DOCUMENT";
+  await ctx.answerCbQuery("Filters saved");
+  return showAdminScreen(ctx, [
+    "🧪 ADMIN FREE SCAN READY",
+    "Service: " + adminReportTypeLabel(session.type),
+    "Exclude: " + selectedSimilarityLabel(session),
     "Send 1–10 PDF, DOCX, DOC or PPTX documents, then tap Review Batch.",
     "No bot payment will be requested."
   ].join("\n"), adminFreeScanWaitingKeyboard(), true);
@@ -8976,6 +9012,55 @@ bot.action("TYPE_RESALE", async (ctx) => {
     ctx,
     "RESALE"
   );
+});
+
+bot.action(/^SIM_FILTER_TOGGLE_(BIB|QUOTES)$/, async (ctx) => {
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+  const sub = submissions[ctx.from.id];
+  const file = getCurrentPendingFile(sub);
+  if (!sub || sub.stage !== STAGE_WAIT_SIM_FILTER || !file?.pendingType) {
+    return ctx.answerCbQuery("No filter selection pending.");
+  }
+  const updated = toggleSimilarityFilter(
+    effectiveSimilarityOptions(file),
+    ctx.match[1] === "BIB" ? "bibliography" : "quotes",
+    FILTER_MODE_FILTERED
+  );
+  // Preserve the existing safeguard against completely unfiltered customer
+  // scans. Admins can select both checkboxes off.
+  if (HIDE_CLIENT_UNFILTERED && Number(ctx.from.id) !== Number(ADMIN_ID) &&
+      !updated.excludeBibliography && !updated.excludeQuotes) {
+    return ctx.answerCbQuery("Select at least one exclusion.", { show_alert: true });
+  }
+  saveSimilarityOptions(file, updated);
+  await ctx.answerCbQuery();
+  try {
+    return await ctx.editMessageReplyMarkup(
+      clientSimilarityFilterKeyboard(ctx.from.id).reply_markup
+    );
+  } catch (err) {
+    return ctx.reply("🔎 Similarity filters\nSelect exclusions, then Continue.", {
+      reply_markup: clientSimilarityFilterKeyboard(ctx.from.id).reply_markup
+    });
+  }
+});
+
+bot.action("SIM_FILTER_CONTINUE", async (ctx) => {
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+  const sub = submissions[ctx.from.id];
+  const file = getCurrentPendingFile(sub);
+  if (!sub || sub.stage !== STAGE_WAIT_SIM_FILTER || !file?.pendingType) {
+    return ctx.answerCbQuery("No filter selection pending.");
+  }
+  const filters = effectiveSimilarityOptions(file);
+  if (HIDE_CLIENT_UNFILTERED && Number(ctx.from.id) !== Number(ADMIN_ID) &&
+      !filters.excludeBibliography && !filters.excludeQuotes) {
+    return ctx.answerCbQuery("Select at least one exclusion.", { show_alert: true });
+  }
+  saveSimilarityOptions(file, filters);
+  const kind = file.pendingType;
+  await ctx.answerCbQuery("Filters saved");
+  return finalizeFileTypeSelection(ctx, sub, kind);
 });
 
 bot.action(
