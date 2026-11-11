@@ -109,7 +109,7 @@ function startServer() {
     const [match] = result.matches;
     assert.equal(TEXT.slice(match.start, match.end), COPIED);
     assert.equal(match.text, COPIED);
-    assert.deepEqual(match.source, { id: "web:https://news.example/a", url: "https://news.example/a", title: "News page", type: "internet" });
+    assert.deepEqual(match.source, { id: "web:https://news.example/a", url: "https://news.example/a", title: "News page", type: "internet", percent: 41.67 });
     assert.equal(match.inputTokenCount, 16);
     assert.equal(result.raw.text, undefined, "raw copy should not duplicate the text");
     // Failed CORE + web discovery must not become a falsely clean 0% report.
@@ -206,13 +206,43 @@ function startServer() {
     const percentStart = renderer.indexOf("// JK_WHOLE_PERCENT_DISPLAY_V1");
     const percentEnd = renderer.indexOf("function fmtDate(v)", percentStart);
     assert.ok(percentStart >= 0 && percentEnd > percentStart);
-    const formatSimilarity = vm.runInNewContext(
-      renderer.slice(percentStart, percentEnd) + "\nfmtSimilarityPct;"
+    const formatting = vm.runInNewContext(
+      renderer.slice(percentStart, percentEnd) + "\n({ fmtPct, fmtSimilarityPct });"
     );
-    assert.equal(formatSimilarity(0), "0%");
-    assert.equal(formatSimilarity(0.47), "<1%");
-    assert.equal(formatSimilarity(0.79), "1%");
-    assert.match(renderer, /fmtSimilarityPct\(score\)/u);
+    assert.equal(formatting.fmtPct(0), "0%");
+    assert.equal(formatting.fmtPct(0.47), "0%", "overall similarity rounds to a whole number");
+    assert.equal(formatting.fmtPct(0.79), "1%");
+    assert.equal(formatting.fmtPct(1.50), "2%");
+    assert.equal(formatting.fmtSimilarityPct(0), "0%");
+    assert.equal(formatting.fmtSimilarityPct(0.47), "<1%", "positive source under 1% shows <1%");
+    assert.equal(formatting.fmtSimilarityPct(0.79), "<1%", "source 0.79% does not round to 1%");
+    assert.equal(formatting.fmtSimilarityPct(1.01), "1%");
+    assert.match(renderer, /fmtPct\(score\).*Overall Similarity/u);
+    assert.doesNotMatch(renderer, /fmtSimilarityPct\(score\).*Overall Similarity/u);
+
+    // The API's exact source contribution takes precedence over estimates
+    // based on matched word counts (which can double-count overlapping text).
+    const sourcesStart = renderer.indexOf("function sourceContributionPercent(");
+    const sourcesEnd = renderer.indexOf("function drawGroupIcon(", sourcesStart);
+    assert.ok(sourcesStart > 0 && sourcesEnd > sourcesStart);
+    const calc = vm.runInNewContext(
+      renderer.slice(sourcesStart, sourcesEnd) +
+      "\n({ sourceContributionPercent, sourceCategoryStats });"
+    );
+    const assigned = [
+      { sourceType: "internet", matchedWords: 15, percent: 0.28 },
+      { sourceType: "database", matchedWords: 22, percent: 0.51 }
+    ];
+    assert.equal(calc.sourceContributionPercent(assigned[0], assigned, 0.79), 0.28);
+    assert.equal(calc.sourceContributionPercent(assigned[1], assigned, 0.79), 0.51);
+    const category = calc.sourceCategoryStats(assigned, 0.79);
+    assert.equal(category.internet, 0.28);
+    assert.equal(category.publications, 0.51);
+    assert.equal(category.submitted, 0);
+    const legacy = [{ sourceType: "internet", matchedWords: 10 }, { sourceType: "database", matchedWords: 10 }];
+    assert.equal(calc.sourceContributionPercent(legacy[0], legacy, 2), 1);
+    assert.match(renderer, /selection.excludeBibliography === true/u);
+    assert.match(renderer, /selection.excludeQuotes === true/u);
 
     // 8. Admin command text and buttons.
     const admin = require("./jk-plagiarism-provider-admin.cjs");
