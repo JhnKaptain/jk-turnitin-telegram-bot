@@ -43,6 +43,7 @@ async function buildProviderJobBundle({
   reportSettings = {},
 
   similarityMode = "FILTERED",
+  similarityOptions = file.similarityOptions || null,
 
   runSimilarity = true,
   runAi = true,
@@ -226,6 +227,7 @@ async function buildProviderJobBundle({
       onQuetextSubmitted,
 
       similarityMode,
+      similarityOptions,
 
       runSimilarity,
       runAi,
@@ -325,8 +327,9 @@ async function buildProviderJobBundle({
     originalFilePath:
       sourcePath,
 
-    similarityFilter:
-      identitySimilarityMode,
+    similarityFilter: identitySimilarityMode,
+    similarityOptions: require("./jk-similarity-filter-options.cjs")
+      .normalizeSimilarityFilters(similarityOptions, similarityMode),
 
     serviceType:
       serviceType,

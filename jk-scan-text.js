@@ -1164,17 +1164,28 @@ function buildAiInput(rawText, document, referenceBoundaryOverrides = []) {
 }
 
 // JK_COMPLETE_REFERENCE_SECTIONS_V1
-function buildSimilarityInput(rawText, mode, referenceBoundaryOverrides = [], document = null) {
-  const normalized = safeText(mode).trim().toUpperCase();
+function buildSimilarityInput(rawText, mode, referenceBoundaryOverrides = [], document = null, similarityOptions = null) {
+  const filters = require("./jk-similarity-filter-options.cjs")
+    .normalizeSimilarityFilters(similarityOptions, mode);
+  if (!filters.excludeBibliography && !filters.excludeQuotes) {
+    return buildIdentityInput(rawText);
+  }
 
-  if (normalized !== FILTER_MODE_FILTERED) {
-    return buildSimilarityInputBeforeReferenceSections(rawText, mode);
+  // Quote-only filtering must never remove bibliography or any other prose.
+  if (!filters.excludeBibliography) {
+    return buildFilteredInput(rawText, {
+      skipBibliographyFilter: true,
+      excludeQuotes: filters.excludeQuotes
+    });
   }
 
   return require("./jk-reference-sections.js")
     .prepareWithoutReferences(
       rawText,
-      (text, options) => buildSimilarityInputBeforeReferenceSections(text, mode, options),
+      (text, options) => buildFilteredInput(text, {
+        ...options,
+        excludeQuotes: filters.excludeQuotes
+      }),
       findBibliographyStart(safeText(rawText)),
       referenceBoundaryOverrides,
       document

@@ -1039,16 +1039,32 @@ function effectiveSimilarityFilter(file) {
 // JK_FILTER_KEEPS_QUOTES_V1: the filtered option leaves out the reference list;
 // quotations are left out too only when JK_SIMILARITY_FILTER_QUOTES=1.
 const { similarityFiltersQuotes } = require("./jk-scan-text.js");
+const {
+  normalizeSimilarityFilters,
+  similarityFiltersMode,
+  toggleSimilarityFilter,
+  similarityFiltersSummary,
+  similarityFilterButtons
+} = require("./jk-similarity-filter-options.cjs");
 
-function similarityFilterLabel(value) {
-  return String(
-    value || ""
-  ).toUpperCase() ===
-    FILTER_MODE_UNFILTERED
-    ? "UNFILTERED"
-    : similarityFiltersQuotes()
-      ? "Quotes + Bibliography"
-      : "Bibliography";
+function effectiveSimilarityOptions(file) {
+  return normalizeSimilarityFilters(file?.similarityOptions, effectiveSimilarityFilter(file));
+}
+function selectedSimilarityLabel(file) {
+  return similarityFiltersSummary(file?.similarityOptions, effectiveSimilarityFilter(file));
+}
+function saveSimilarityOptions(file, options) {
+  const selected = normalizeSimilarityFilters(options, file?.similarityFilter || FILTER_MODE_FILTERED);
+  file.similarityOptions = selected;
+  file.similarityFilter = similarityFiltersMode(selected, file.similarityFilter);
+  return selected;
+}
+
+
+function similarityFilterLabel(value, options = null) {
+  if (options) return similarityFiltersSummary(options, value);
+  return String(value || "").toUpperCase() === FILTER_MODE_UNFILTERED
+    ? "None" : similarityFiltersSummary(null, FILTER_MODE_FILTERED);
 }
 
 loadReportSettings();
@@ -2089,6 +2105,7 @@ function createPaidJob({ userId, apiRef, ref, invoiceId, source }) {
                 effectiveSimilarityFilter(
                   file
                 ),
+              similarityOptions: effectiveSimilarityOptions(file),
 
               jkSubmissionId:
                 file.jkSubmissionId,
@@ -2790,25 +2807,12 @@ function adminFreeScanServiceKeyboard() {
 }
 
 function adminFreeScanFilterKeyboard() {
+  const labels = similarityFilterButtons(adminFreeScanSession?.similarityOptions, FILTER_MODE_FILTERED);
   return Markup.inlineKeyboard([
-    [
-      Markup.button.callback(
-        "✅ FILTER " + similarityFilterLabel().toUpperCase(),
-        "ADMIN_FREE_SCAN_FILTERED"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "📄 DO NOT FILTER",
-        "ADMIN_FREE_SCAN_UNFILTERED"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "❌ Cancel",
-        "ADMIN_FREE_SCAN_CANCEL"
-      )
-    ]
+    [Markup.button.callback(labels.bibliography, "ADMIN_FREE_SCAN_TOGGLE_BIB")],
+    [Markup.button.callback(labels.quotes, "ADMIN_FREE_SCAN_TOGGLE_QUOTES")],
+    [Markup.button.callback("➡️ Continue", "ADMIN_FREE_SCAN_CONTINUE")],
+    [Markup.button.callback("❌ Cancel", "ADMIN_FREE_SCAN_CANCEL")]
   ]);
 }
 
@@ -3002,15 +3006,15 @@ function institutionKeyboard() {
 }
 
 function clientSimilarityFilterKeyboard(userId) {
-  const rows = [
-    [Markup.button.callback("✅ FILTER " + similarityFilterLabel().toUpperCase(), "SIM_FILTER_FILTERED")]
-  ];
-  // Keep the full choice available to admins in ordinary test flows.
-  if (!HIDE_CLIENT_UNFILTERED || Number(userId) === ADMIN_ID) {
-    rows.push([Markup.button.callback("📄 DO NOT FILTER", "SIM_FILTER_UNFILTERED")]);
-  }
-  rows.push([Markup.button.callback("❌ Cancel document", "TYPE_CANCEL")]);
-  return Markup.inlineKeyboard(rows);
+  const sub = submissions[userId];
+  const file = getCurrentPendingFile(sub);
+  const labels = similarityFilterButtons(file?.similarityOptions, FILTER_MODE_FILTERED);
+  return Markup.inlineKeyboard([
+    [Markup.button.callback(labels.bibliography, "SIM_FILTER_TOGGLE_BIB")],
+    [Markup.button.callback(labels.quotes, "SIM_FILTER_TOGGLE_QUOTES")],
+    [Markup.button.callback("➡️ Continue", "SIM_FILTER_CONTINUE")],
+    [Markup.button.callback("❌ Cancel", "TYPE_CANCEL")]
+  ]);
 }
 
 function adminDashboardText() {
@@ -4071,6 +4075,7 @@ function createStoredFileFromDocument(userId, doc) {
     recheckMatchedAt: eligibility.matchedAt,
     recheckHoursLeft: eligibility.hoursLeft,
     similarityFilter: null,
+    similarityOptions: null,
     pendingType: null,
     jkSubmissionId: generateJkSubmissionId(),
     reportName: chooseReportName(),
@@ -4148,11 +4153,7 @@ function buildAdminDocumentCaption({
 
   const exclusion =
     escapeAdminHtml(
-      similarityFilterLabel(
-        effectiveSimilarityFilter(
-          file
-        )
-      )
+      selectedSimilarityLabel(file)
     );
 
   const cleanName =
@@ -4413,8 +4414,10 @@ async function finalizeFileTypeSelection(ctx, sub, kind) {
   file.pendingType = null;
 
   if (!file.similarityFilter) {
-    file.similarityFilter =
-      effectiveSimilarityFilter(file);
+    file.similarityFilter = effectiveSimilarityFilter(file);
+  }
+  if (!file.similarityOptions) {
+    file.similarityOptions = normalizeSimilarityFilters(null, file.similarityFilter);
   }
 
   if (kind === "CHECK") {
@@ -4469,31 +4472,21 @@ async function finalizeTypeWithFilterSelection(
     file.pendingType = kind;
     sub.stage = STAGE_WAIT_SIM_FILTER;
 
+    saveSimilarityOptions(file, normalizeSimilarityFilters(file.similarityOptions, FILTER_MODE_FILTERED));
     await ctx.reply(
-      "🔎 *Choose similarity filtering*\n\n" +
-      "*Filter " + similarityFilterLabel() + "*\n" +
-      (similarityFiltersQuotes()
-        ? "Quotations and the reference/bibliography section will not count toward the similarity percentage."
-        : "The reference/bibliography section will not count toward the similarity percentage. Quotations still count.") +
-      ((!HIDE_CLIENT_UNFILTERED || ctx.from.id === ADMIN_ID)
-        ? "\n\n*Do Not Filter*\nAll detected matching text will count toward the similarity percentage."
-        : ""),
-      {
-        parse_mode: "Markdown",
-        reply_markup:
-          clientSimilarityFilterKeyboard(ctx.from.id)
-            .reply_markup
-      }
+      "🔎 Similarity filters\nSelect what to exclude, then Continue.",
+      { reply_markup: clientSimilarityFilterKeyboard(ctx.from.id).reply_markup }
     );
 
     return;
   }
 
   file.similarityFilter =
-    reportSettings.filterMode ===
-    FILTER_MODE_UNFILTERED
-      ? FILTER_MODE_UNFILTERED
-      : FILTER_MODE_FILTERED;
+    reportSettings.filterMode === FILTER_MODE_UNFILTERED
+      ? FILTER_MODE_UNFILTERED : FILTER_MODE_FILTERED;
+  saveSimilarityOptions(file, reportSettings.filterMode === FILTER_MODE_UNFILTERED
+    ? { excludeBibliography: false, excludeQuotes: false }
+    : { excludeBibliography: true, excludeQuotes: similarityFiltersQuotes() });
 
   await finalizeFileTypeSelection(
     ctx,
@@ -5423,6 +5416,7 @@ async function startInternationalPayment(ctx, sub) {
       recheckEligible: Boolean(file.recheckEligible),
       similarityFilter:
         effectiveSimilarityFilter(file),
+      similarityOptions: effectiveSimilarityOptions(file),
       jkSubmissionId:
         file.jkSubmissionId || null,
       reportName:
@@ -5648,6 +5642,7 @@ async function startTzOtherPayment(ctx, sub) {
       recheckEligible: Boolean(file.recheckEligible),
       similarityFilter:
         effectiveSimilarityFilter(file),
+      similarityOptions: effectiveSimilarityOptions(file),
       jkSubmissionId:
         file.jkSubmissionId || null,
       reportName:
@@ -5825,6 +5820,7 @@ async function attemptStkPush(ctx, sub, { mode }) {
       recheckEligible: Boolean(file.recheckEligible),
       similarityFilter:
         effectiveSimilarityFilter(file),
+      similarityOptions: effectiveSimilarityOptions(file),
       jkSubmissionId:
         file.jkSubmissionId || null,
       reportName:
@@ -6798,6 +6794,7 @@ bot.action(
     adminFreeScanSession = {
       type: "CHECK",
       similarityFilter: null,
+      similarityOptions: normalizeSimilarityFilters(null, FILTER_MODE_FILTERED),
       stage: "WAIT_FILTER",
       startedAt: Date.now()
     };
@@ -6813,7 +6810,7 @@ bot.action(
         "",
         "Service: CHECK - FULL REPORT",
         "",
-        "Choose similarity filtering."
+        "Select exclusions, then Continue."
       ].join("\n"),
       adminFreeScanFilterKeyboard(),
       true
@@ -6835,6 +6832,7 @@ bot.action(
     adminFreeScanSession = {
       type: "SIMILARITY",
       similarityFilter: null,
+      similarityOptions: normalizeSimilarityFilters(null, FILTER_MODE_FILTERED),
       stage: "WAIT_FILTER",
       startedAt: Date.now()
     };
@@ -6850,7 +6848,7 @@ bot.action(
         "",
         "Service: SIMILARITY ONLY",
         "",
-        "Choose similarity filtering."
+        "Select exclusions, then Continue."
       ].join("\n"),
       adminFreeScanFilterKeyboard(),
       true
@@ -6880,6 +6878,42 @@ bot.action("ADMIN_FREE_SCAN_AI_ONLY", async (ctx) => {
   ].join("\n"), adminFreeScanWaitingKeyboard(), true);
 });
 
+// Independent exclusions for the admin's free scan. The selection is
+// confirmed before any document is accepted or charged to a provider.
+bot.action(/^ADMIN_FREE_SCAN_TOGGLE_(BIB|QUOTES)$/, async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  const session = adminFreeScanSession;
+  if (!session || session.stage !== "WAIT_FILTER") {
+    return ctx.answerCbQuery("Start Admin Free Scan first.");
+  }
+  session.similarityOptions = toggleSimilarityFilter(
+    session.similarityOptions, ctx.match[1] === "BIB" ? "bibliography" : "quotes",
+    FILTER_MODE_FILTERED
+  );
+  await ctx.answerCbQuery();
+  return showAdminScreen(ctx,
+    "🧪 ADMIN FREE SCAN\nSelect exclusions, then Continue.",
+    adminFreeScanFilterKeyboard(), true);
+});
+
+bot.action("ADMIN_FREE_SCAN_CONTINUE", async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
+  const session = adminFreeScanSession;
+  if (!session || session.stage !== "WAIT_FILTER") {
+    return ctx.answerCbQuery("Start Admin Free Scan first.");
+  }
+  saveSimilarityOptions(session, session.similarityOptions);
+  session.stage = "WAIT_DOCUMENT";
+  await ctx.answerCbQuery("Filters saved");
+  return showAdminScreen(ctx, [
+    "🧪 ADMIN FREE SCAN READY",
+    "Service: " + adminReportTypeLabel(session.type),
+    "Exclude: " + selectedSimilarityLabel(session),
+    "Send 1–10 PDF, DOCX, DOC or PPTX documents, then tap Review Batch.",
+    "No bot payment will be requested."
+  ].join("\n"), adminFreeScanWaitingKeyboard(), true);
+});
+
 bot.action(
   "ADMIN_FREE_SCAN_FILTERED",
   async (ctx) => {
@@ -6904,9 +6938,10 @@ bot.action(
       );
     }
 
-    adminFreeScanSession
-      .similarityFilter =
-      FILTER_MODE_FILTERED;
+    saveSimilarityOptions(adminFreeScanSession, {
+      excludeBibliography: true,
+      excludeQuotes: similarityFiltersQuotes()
+    });
 
     adminFreeScanSession.stage =
       "WAIT_DOCUMENT";
@@ -6924,7 +6959,7 @@ bot.action(
           adminReportTypeLabel(
             adminFreeScanSession.type
           ),
-        "Filter: " + similarityFilterLabel(),
+        "Filter: " + selectedSimilarityLabel(adminFreeScanSession),
         "",
         "Send 1–10 PDF, DOCX, DOC or PPTX documents, then tap Review Batch.",
         "",
@@ -6960,9 +6995,10 @@ bot.action(
       );
     }
 
-    adminFreeScanSession
-      .similarityFilter =
-      FILTER_MODE_UNFILTERED;
+    saveSimilarityOptions(adminFreeScanSession, {
+      excludeBibliography: false,
+      excludeQuotes: false
+    });
 
     adminFreeScanSession.stage =
       "WAIT_DOCUMENT";
@@ -7007,7 +7043,7 @@ bot.action("ADMIN_FREE_SCAN_REVIEW", async (ctx) => {
     "🧪 ADMIN FREE BATCH - REVIEW",
     "Files: " + session.files.length + " / 10",
     "Service: " + (session.adminAiOnly ? "AI REPORT ONLY" : adminReportTypeLabel(session.type)),
-    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : similarityFilterLabel(session.similarityFilter)),
+    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : selectedSimilarityLabel(session)),
     "",
     ...session.files.map((file, index) =>
       (index + 1) + ". " + safeText(file.file_name || "Document")),
@@ -7077,7 +7113,7 @@ bot.action("ADMIN_FREE_SCAN_START", async (ctx) => {
     "🧪 ADMIN FREE BATCH STARTED",
     "Files: " + session.files.length + " / 10",
     "Service: " + (session.adminAiOnly ? "AI REPORT ONLY" : adminReportTypeLabel(session.type)),
-    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : similarityFilterLabel(session.similarityFilter)),
+    "Filter: " + (session.adminAiOnly ? "AI reference exclusion (no similarity request)" : selectedSimilarityLabel(session)),
     "Payment: BYPASSED (ADMIN)",
     "Provider API usage: LIVE",
     "Reports will be delivered to your admin account."
@@ -7915,10 +7951,9 @@ bot.action(
       );
     }
 
-    file.similarityFilter =
-      choice === "F"
-        ? FILTER_MODE_FILTERED
-        : FILTER_MODE_UNFILTERED;
+    saveSimilarityOptions(file, choice === "F"
+      ? { excludeBibliography: true, excludeQuotes: similarityFiltersQuotes() }
+      : { excludeBibliography: false, excludeQuotes: false });
 
     savePaidJobs();
 
@@ -7930,9 +7965,7 @@ bot.action(
       "✅ File " +
         (index + 1) +
         " filter: " +
-        similarityFilterLabel(
-          file.similarityFilter
-        )
+        selectedSimilarityLabel(file)
     );
   }
 );
@@ -8658,6 +8691,7 @@ bot.on("document", async (ctx) => {
     storedFile.type = session.type;
     storedFile.price = 0;
     storedFile.similarityFilter = session.similarityFilter;
+    storedFile.similarityOptions = normalizeSimilarityFilters(session.similarityOptions, session.similarityFilter);
     storedFile.pendingType = null;
     storedFile.adminFreeScan = true;
     storedFile.adminAiOnly = session.adminAiOnly === true;
@@ -8978,6 +9012,55 @@ bot.action("TYPE_RESALE", async (ctx) => {
   );
 });
 
+bot.action(/^SIM_FILTER_TOGGLE_(BIB|QUOTES)$/, async (ctx) => {
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+  const sub = submissions[ctx.from.id];
+  const file = getCurrentPendingFile(sub);
+  if (!sub || sub.stage !== STAGE_WAIT_SIM_FILTER || !file?.pendingType) {
+    return ctx.answerCbQuery("No filter selection pending.");
+  }
+  const updated = toggleSimilarityFilter(
+    effectiveSimilarityOptions(file),
+    ctx.match[1] === "BIB" ? "bibliography" : "quotes",
+    FILTER_MODE_FILTERED
+  );
+  // Preserve the existing safeguard against completely unfiltered customer
+  // scans. Admins can select both checkboxes off.
+  if (HIDE_CLIENT_UNFILTERED && Number(ctx.from.id) !== Number(ADMIN_ID) &&
+      !updated.excludeBibliography && !updated.excludeQuotes) {
+    return ctx.answerCbQuery("Select at least one exclusion.", { show_alert: true });
+  }
+  saveSimilarityOptions(file, updated);
+  await ctx.answerCbQuery();
+  try {
+    return await ctx.editMessageReplyMarkup(
+      clientSimilarityFilterKeyboard(ctx.from.id).reply_markup
+    );
+  } catch (err) {
+    return ctx.reply("🔎 Similarity filters\nSelect exclusions, then Continue.", {
+      reply_markup: clientSimilarityFilterKeyboard(ctx.from.id).reply_markup
+    });
+  }
+});
+
+bot.action("SIM_FILTER_CONTINUE", async (ctx) => {
+  if (isBotInactivePeriod()) return notifyInactivePeriod(ctx);
+  const sub = submissions[ctx.from.id];
+  const file = getCurrentPendingFile(sub);
+  if (!sub || sub.stage !== STAGE_WAIT_SIM_FILTER || !file?.pendingType) {
+    return ctx.answerCbQuery("No filter selection pending.");
+  }
+  const filters = effectiveSimilarityOptions(file);
+  if (HIDE_CLIENT_UNFILTERED && Number(ctx.from.id) !== Number(ADMIN_ID) &&
+      !filters.excludeBibliography && !filters.excludeQuotes) {
+    return ctx.answerCbQuery("Select at least one exclusion.", { show_alert: true });
+  }
+  saveSimilarityOptions(file, filters);
+  const kind = file.pendingType;
+  await ctx.answerCbQuery("Filters saved");
+  return finalizeFileTypeSelection(ctx, sub, kind);
+});
+
 bot.action(
   "SIM_FILTER_FILTERED",
   async (ctx) => {
@@ -9009,8 +9092,10 @@ bot.action(
       );
     }
 
-    file.similarityFilter =
-      FILTER_MODE_FILTERED;
+    saveSimilarityOptions(file, {
+      excludeBibliography: true,
+      excludeQuotes: similarityFiltersQuotes()
+    });
 
     const kind =
       file.pendingType;
@@ -9066,8 +9151,10 @@ bot.action(
       );
     }
 
-    file.similarityFilter =
-      FILTER_MODE_UNFILTERED;
+    saveSimilarityOptions(file, {
+      excludeBibliography: false,
+      excludeQuotes: false
+    });
 
     const kind =
       file.pendingType;
@@ -9174,6 +9261,7 @@ async function startWorldwideManualPayment(ctx, method) {
       type: file.type || null, price: file.price || null,
       recheckEligible: Boolean(file.recheckEligible),
       similarityFilter: effectiveSimilarityFilter(file),
+      similarityOptions: effectiveSimilarityOptions(file),
       jkSubmissionId: file.jkSubmissionId || null,
       reportName: file.reportName || null,
       reportInstitution: file.reportInstitution || null
@@ -10154,6 +10242,7 @@ async function submitPaidJobToProviders(
           reportSettings,
 
           similarityMode,
+          similarityOptions: effectiveSimilarityOptions(file),
 
           runSimilarity:
             !(job.adminFreeScan === true && file.adminFreeScan === true && file.adminAiOnly === true),
@@ -13868,9 +13957,7 @@ await sendAdminMessage(
         ) +
       "%\n" +
       "Filter: " +
-      similarityFilterLabel(
-        file.appliedFilter
-      ) +
+      similarityFiltersSummary(file.similarityOptions, file.appliedFilter) +
       "\n" +
       "AI: " +
       (

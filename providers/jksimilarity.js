@@ -169,17 +169,19 @@ function normalizeJkReport(report, inputText) {
   };
 }
 
-async function createPlagiarismReport({ text, title, filtered = false, discoveryText = null, discoveryReferenceRanges = null }) {
+async function createPlagiarismReport({ text, title, filtered = false, similarityOptions = null, discoveryText = null, discoveryReferenceRanges = null }) {
   // Sent as JSON (not a form upload) so the text arrives exactly as sent:
   // form uploads turn line breaks into CR LF, which would shift every offset.
   // The pipeline already removes the reference section for filtered reports; `filtered`
   // also leaves out citation entries elsewhere (e.g. annotated bibliographies). Quotes
   // count unless JK_SIMILARITY_FILTER_QUOTES=1 (JK_FILTER_KEEPS_QUOTES_V1).
+  const filters = require("../jk-similarity-filter-options.cjs")
+    .normalizeSimilarityFilters(similarityOptions, filtered ? "FILTERED" : "UNFILTERED");
   const body = {
     text: String(text || ""),
     filename: String(title || "document").slice(0, 255),
-    exclude_bibliography: Boolean(filtered),
-    exclude_quotes: Boolean(filtered) && String(process.env.JK_SIMILARITY_FILTER_QUOTES || "").trim() === "1"
+    exclude_bibliography: filters.excludeBibliography,
+    exclude_quotes: filters.excludeQuotes
   };
   // The complete original document is used solely for finding sources.
   // Scoring and offsets still refer to the filtered text supplied above.
@@ -216,8 +218,8 @@ async function waitForPlagiarismReport(reportId, { pollMs = DEFAULT_POLL_MS, tim
   }
 }
 
-async function checkPlagiarism({ text, title, pollMs, timeoutMs, onProgress, onSubmitted = null, filtered = false, discoveryText = null, discoveryReferenceRanges = null }) {
-  const created = await createPlagiarismReport({ text, title, filtered, discoveryText, discoveryReferenceRanges });
+async function checkPlagiarism({ text, title, pollMs, timeoutMs, onProgress, onSubmitted = null, filtered = false, similarityOptions = null, discoveryText = null, discoveryReferenceRanges = null }) {
+  const created = await createPlagiarismReport({ text, title, filtered, similarityOptions, discoveryText, discoveryReferenceRanges });
   if (typeof onSubmitted === "function") {
     try {
       await onSubmitted({ provider: "jksimilarity", reportId: created.reportId });

@@ -10,7 +10,7 @@ const choices=source.slice(source.indexOf("function adminFreeScanServiceKeyboard
 assert(choices.includes("ADMIN_FREE_SCAN_CHECK"));
 assert(choices.includes("ADMIN_FREE_SCAN_SIMILARITY"));
 assert(choices.includes("ADMIN_FREE_SCAN_AI_ONLY"));
-const handler=source.slice(source.indexOf('bot.action("ADMIN_FREE_SCAN_AI_ONLY"'),source.indexOf('bot.action(\n  "ADMIN_FREE_SCAN_FILTERED"'));
+const handler=source.slice(source.indexOf('bot.action("ADMIN_FREE_SCAN_AI_ONLY"'),source.indexOf('bot.action(/^ADMIN_FREE_SCAN_TOGGLE_'));
 assert(handler.includes("ctx.from.id !== ADMIN_ID"));
 assert(handler.includes('type: "CHECK"'));
 assert(handler.includes("adminAiOnly: true"));
