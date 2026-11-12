@@ -10244,6 +10244,15 @@ async function submitPaidJobToProviders(
           similarityMode,
           similarityOptions: effectiveSimilarityOptions(file),
 
+          // JK_AI_VERDICT_FREEZE_V1: resubmissions keep unchanged AI verdicts.
+          // Admin test runs share one "test" owner, so they never link to a client's essay.
+          aiVerdicts: {
+            dir: DATA_DIR,
+            owner: (job.adminFreeScan === true || Number(job.userId) === Number(ADMIN_ID))
+              ? "admin-test"
+              : "client:" + String(job.userId)
+          },
+
           runSimilarity:
             !(job.adminFreeScan === true && file.adminFreeScan === true && file.adminAiOnly === true),
 
