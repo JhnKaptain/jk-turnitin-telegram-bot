@@ -45,7 +45,10 @@ function fitReportSourcePage(width, height, gutters = {}) {
     pageHeight: TEMPLATE_HEIGHT,
     sourceScale,
     sourceX: (TEMPLATE_WIDTH - fittedWidth) / 2,
-    sourceY: FOOTER_BAND + (availableHeight - fittedHeight) / 2
+    // Use the established Letter-like header clearance, not vertical centering.
+    // Posters and slides can leave extra space below; they must never start
+    // hundreds of points below the logo and submission ID.
+    sourceY: TEMPLATE_HEIGHT - HEADER_BAND - fittedHeight
   });
 }
 
