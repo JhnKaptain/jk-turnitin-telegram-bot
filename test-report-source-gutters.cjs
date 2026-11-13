@@ -27,19 +27,26 @@ assert.equal(oversized.pageHeight,792);
 assert(oversized.sourceScale>0 && oversized.sourceScale<1);
 assert(Math.abs(oversized.sourceScale*2592-612)<0.01,"slide/poster stays proportional, not stretched");
 assert(oversized.sourceY>=FOOTER_BAND,"poster graphics clear branded footer");
-assert(oversized.sourceY+oversized.sourceScale*1761<=792-HEADER_BAND+1e-7,
-  "full-bleed Human Rights banner clears branded header");
+assert(Math.abs(oversized.sourceY+oversized.sourceScale*1761-(792-HEADER_BAND))<1e-7,
+  "full-bleed Human Rights banner begins just below the standard report header, not centered low");
+assert(Math.abs(oversized.sourceY-330.2083333333333)<1e-7,
+  "2592x1761 real poster moves up by 133.1pt versus the previous centered layout");
 const a4=template(595,842,{top:0,bottom:0});
 assert.equal(a4.pageWidth,612);assert.equal(a4.pageHeight,792);
-assert(a4.sourceX>0 && a4.sourceY>=FOOTER_BAND,"A4 fits and centers within template");
+assert(a4.sourceX>0 && a4.sourceY>=FOOTER_BAND,"A4 fits horizontally with safe footer clearance");
+assert(Math.abs(a4.sourceY+842*a4.sourceScale-(792-HEADER_BAND))<1e-7,
+  "A4 begins at the same header tolerance as poster and ordinary Letter content");
 const crowded=template(612,792,{top:36,bottom:62});
 assert(crowded.sourceScale<1,"text hitting the header/footer must not overlap the shell");
-assert(crowded.sourceY>=FOOTER_BAND && crowded.sourceY+crowded.sourceScale*792<=792-HEADER_BAND+1e-7);
+assert(crowded.sourceY>=FOOTER_BAND &&
+  Math.abs(crowded.sourceY+crowded.sourceScale*792-(792-HEADER_BAND))<1e-7);
 for(const [w,h] of [[612,792],[595,842],[792,612],[2592,1761],[7680,4320]]){
  const g=template(w,h,{top:8,bottom:9});
  assert.equal(g.pageWidth,612); assert.equal(g.pageHeight,792);
  assert(g.sourceX>=0 && g.sourceX+w*g.sourceScale<=612+1e-7);
- assert(g.sourceY>=FOOTER_BAND && g.sourceY+h*g.sourceScale<=792-HEADER_BAND+1e-7);
+ assert(g.sourceY>=FOOTER_BAND);
+ assert(Math.abs(g.sourceY+h*g.sourceScale-(792-HEADER_BAND))<1e-7,
+   "fitted pages must share the normal report header tolerance");
 }
 assert.throws(()=>template(0,792),/Invalid original PDF page dimensions/);
 assert.throws(()=>template(612,Infinity),/Invalid original PDF page dimensions/);
