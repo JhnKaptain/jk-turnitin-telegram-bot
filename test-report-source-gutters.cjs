@@ -16,7 +16,7 @@ assert.deepEqual(reportSourceGutters([{height:792,elements:[{text:"",style:{bott
 // End.docx's real source first text starts at ~48.4pt, already clear.
 assert.equal(reportSourceGutters([sourcePage(792,[10,12],[731.6,12])]).top,0);
 const renderer=fs.readFileSync(path.join(__dirname,"jk-report-renderer-max.js"),"utf8");
-const {fitReportSourcePage, HEADER_BAND, FOOTER_BAND}=require("./jk-report-page-geometry.cjs");
+const {fitReportSourcePage, assertReportTemplatePages, HEADER_BAND, FOOTER_BAND}=require("./jk-report-page-geometry.cjs");
 const template=(width,height,gutters)=>fitReportSourcePage(width,height,gutters);
 const letter=template(612,792,{top:0,bottom:0});
 assert.deepEqual([letter.pageWidth,letter.pageHeight,letter.sourceScale,letter.sourceX,letter.sourceY],[612,792,1,0,0],
@@ -43,6 +43,12 @@ for(const [w,h] of [[612,792],[595,842],[792,612],[2592,1761],[7680,4320]]){
 }
 assert.throws(()=>template(0,792),/Invalid original PDF page dimensions/);
 assert.throws(()=>template(612,Infinity),/Invalid original PDF page dimensions/);
+const mkPage=(width,height)=>({getWidth:()=>width,getHeight:()=>height});
+assert.equal(assertReportTemplatePages({getPages:()=>[mkPage(612,792),mkPage(612,792)]}),2);
+assert.throws(()=>assertReportTemplatePages({getPages:()=>[
+  mkPage(612,792),mkPage(2592,1761)]}),/template violation: page 2/);
+assert.equal(renderer.split("assertReportTemplatePages(doc);").length-1,2,
+  "both AI and similarity PDFs must pass final physical page-size audit");
 for(const token of [
  'require("./jk-report-source-gutters.cjs")',
  'require("./jk-report-page-geometry.cjs")',
