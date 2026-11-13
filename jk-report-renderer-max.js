@@ -23,6 +23,7 @@ const {
 const fontkit = require("@pdf-lib/fontkit");
 const { prepareOriginalLayout } = require("./jk-original-layout.js");
 const { reportSourceGutters } = require("./jk-report-source-gutters.cjs");
+const { fitReportSourcePage, assertReportTemplatePages } = require("./jk-report-page-geometry.cjs");
 
 // JK_PRESERVE_ORIGINAL_LAYOUT_V1
 
@@ -4181,7 +4182,6 @@ async function drawOriginalPages(
   const aiProtectedElements = new Set(
     classifyAiRunningMetadata(originalPages).map(entry => entry.item)
   );
-  const sourceGutters = reportSourceGutters(originalPages);
 
   const id = bundle.reportIdentity || {};
   let pageNo = startPageNo;
@@ -4323,31 +4323,24 @@ async function drawOriginalPages(
         PAGE_H
       );
 
-    // JK_NATIVE_SOURCE_PAGE_V1
+    // JK_FIXED_REPORT_TEMPLATE_PAGES_V1
     //
-    // Preserve the submitted PDF page at its
-    // canonical/native dimensions. Letter stays
-    // Letter; A4 stays A4.
-    const page =
-      doc.addPage([
-        sourceWidth,
-        sourceHeight + sourceGutters.top + sourceGutters.bottom
-      ]);
-
-    const pageWidth =
-      page.getWidth();
-
-    const pageHeight =
-      page.getHeight();
-
-    /*
-      The output page now has the same dimensions
-      as the source page, so no fit-to-Letter
-      transformation is required.
-    */
-    const sourceScale = 1;
-    const sourceX = 0;
-    const sourceY = sourceGutters.bottom;
+    // Page geometry is ALWAYS the existing 612 x 792 JK report template.
+    // Normal Letter source pages remain native 1:1 when their content
+    // already respects the branded header/footer. Larger or non-Letter
+    // submissions are proportionally fitted inside those protected bands.
+    // Every existing highlight uses these same X/Y/scale coordinates.
+    const sourceGutters = reportSourceGutters([original]);
+    const geometry = fitReportSourcePage(
+      sourceWidth, sourceHeight, sourceGutters
+    );
+    const page = doc.addPage([
+      geometry.pageWidth,
+      geometry.pageHeight
+    ]);
+    const pageWidth = page.getWidth();
+    const pageHeight = page.getHeight();
+    const { sourceScale, sourceX, sourceY } = geometry;
 
     if (original.embeddedPage) {
       page.drawPage(
@@ -6389,6 +6382,8 @@ async function renderSimilarity(
     totalPages
   );
 
+  // Fail safely instead of delivering a report with mixed physical page sizes.
+  assertReportTemplatePages(doc);
   fs.writeFileSync(
     outputPath,
     await doc.save()
@@ -6562,6 +6557,8 @@ async function renderAi(
     totalPages
   );
 
+  // Fail safely instead of delivering a report with mixed physical page sizes.
+  assertReportTemplatePages(doc);
   fs.writeFileSync(
     outputPath,
     await doc.save()
