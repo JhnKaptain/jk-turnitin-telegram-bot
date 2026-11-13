@@ -49,8 +49,26 @@ function fitReportSourcePage(width, height, gutters = {}) {
   });
 }
 
+function assertReportTemplatePages(document) {
+  if (!document || typeof document.getPages !== "function") {
+    throw new Error("Report PDF page validation unavailable.");
+  }
+  const pages = document.getPages();
+  for (const [index, page] of pages.entries()) {
+    if (Math.abs(page.getWidth() - TEMPLATE_WIDTH) > EPSILON ||
+        Math.abs(page.getHeight() - TEMPLATE_HEIGHT) > EPSILON) {
+      throw new Error(
+        "JK report template violation: page " + (index + 1) +
+        " is not 612 x 792 points."
+      );
+    }
+  }
+  return pages.length;
+}
+
 module.exports = {
   fitReportSourcePage,
+  assertReportTemplatePages,
   TEMPLATE_WIDTH,
   TEMPLATE_HEIGHT,
   HEADER_BAND,
