@@ -23,7 +23,7 @@ const {
 const fontkit = require("@pdf-lib/fontkit");
 const { prepareOriginalLayout } = require("./jk-original-layout.js");
 const { reportSourceGutters } = require("./jk-report-source-gutters.cjs");
-const { fitReportSourcePage } = require("./jk-report-page-geometry.cjs");
+const { fitReportSourcePage, assertReportTemplatePages } = require("./jk-report-page-geometry.cjs");
 
 // JK_PRESERVE_ORIGINAL_LAYOUT_V1
 
@@ -6382,6 +6382,8 @@ async function renderSimilarity(
     totalPages
   );
 
+  // Fail safely instead of delivering a report with mixed physical page sizes.
+  assertReportTemplatePages(doc);
   fs.writeFileSync(
     outputPath,
     await doc.save()
@@ -6555,6 +6557,8 @@ async function renderAi(
     totalPages
   );
 
+  // Fail safely instead of delivering a report with mixed physical page sizes.
+  assertReportTemplatePages(doc);
   fs.writeFileSync(
     outputPath,
     await doc.save()
