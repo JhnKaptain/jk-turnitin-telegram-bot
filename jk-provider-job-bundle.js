@@ -51,7 +51,8 @@ async function buildProviderJobBundle({
   live = false
 ,
   onQuetextSubmitted = null,
-  referenceBoundaryOverrides = file.referenceBoundaryOverrides || []
+  referenceBoundaryOverrides = file.referenceBoundaryOverrides || [],
+  aiVerdicts = null
 } = {}) {
   if (!sourcePath) {
     throw new Error(
@@ -235,7 +236,8 @@ async function buildProviderJobBundle({
       live,
 
       outputPath,
-      referenceBoundaryOverrides
+      referenceBoundaryOverrides,
+      aiVerdicts
     });
 
   /*

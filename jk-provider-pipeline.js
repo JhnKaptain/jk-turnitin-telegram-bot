@@ -704,6 +704,9 @@ async function runProviderPipeline({
 ,
   onQuetextSubmitted = null,
   referenceBoundaryOverrides = [],
+  // JK_AI_VERDICT_FREEZE_V1: { dir, owner } keeps unchanged sentences' AI verdicts
+  // from the owner's last successful check. Null = no freeze (unchanged behaviour).
+  aiVerdicts = null,
   similarityOptions = null
 }) {
   sourcePath =
@@ -1187,12 +1190,31 @@ async function runProviderPipeline({
         state.status ===
         "fulfilled"
       ) {
+        let aiValue = state.value;
+        let aiFlags = null;
+        if (aiVerdicts && aiVerdicts.dir && aiVerdicts.owner) {
+          const verdicts = require("./jk-ai-verdicts.cjs");
+          const baseline = verdicts.loadBaseline(aiVerdicts.dir, aiVerdicts.owner);
+          const frozen = verdicts.applyFreeze(state.value, baseline);
+          aiValue = frozen.result;
+          aiFlags = frozen.flags;
+          result.aiVerdictFreeze = frozen.stats;
+        }
         result
           .aiDetection =
           normalizeSaplingResult(
-            state.value,
+            aiValue,
             aiPrepared
           );
+        // Only a successful check becomes the baseline for the next resubmission.
+        if (aiVerdicts && aiVerdicts.dir && aiVerdicts.owner && result.aiDetection.available) {
+          const verdicts = require("./jk-ai-verdicts.cjs");
+          const sentences = (state.value.sentenceScores || []).map((s, i) => ({
+            sentence: s.sentence,
+            flag: aiFlags ? aiFlags[i] : Number(s.score) >= verdicts.FLAG_THRESHOLD
+          }));
+          verdicts.saveBaseline(aiVerdicts.dir, aiVerdicts.owner, sentences);
+        }
       } else {
         result
           .aiDetection = {
