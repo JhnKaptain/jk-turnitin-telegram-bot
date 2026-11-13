@@ -8,12 +8,12 @@ const path = require("node:path");
 const v = require("./jk-ai-verdicts.cjs");
 
 const sentences = Array.from({ length: 20 }, (_, i) => `Synthetic sentence number ${i} about topic ${i * 7}.`);
-const scored = (scores) => ({
-  sentenceScores: sentences.map((s, i) => ({ sentence: s, start: i * 10, end: i * 10 + 9, score: scores[i] })),
-  aiFraction: 0,
-  percent: 0,
-  ranges: []
-});
+const scored = (scores) => {
+  const items = sentences.map((s, i) => ({ sentence: s, start: i * 10, end: i * 10 + 9, score: scores[i] }));
+  const total = items.reduce((n, s) => n + [...s.sentence].length, 0);
+  const flagged = items.reduce((n, s) => n + (s.score >= 0.5 ? [...s.sentence].length : 0), 0);
+  return { sentenceScores: items, aiFraction: flagged / total, percent: 0, ranges: [] };
+};
 const baselineFrom = (result, now = Date.now()) => ({
   v: 1, savedAt: now,
   sentences: result.sentenceScores.map(s => ({ k: v.sentenceKey(s.sentence), f: s.score >= 0.5 ? 1 : 0 }))
@@ -82,3 +82,12 @@ try {
 console.log("PASS: no baseline or under 70% overlap leaves the fresh AI result unchanged.");
 console.log("PASS: unchanged sentences keep their verdict in both directions; edits take fresh scores.");
 console.log("PASS: headline recalculated from final flags; baseline per owner, 30 days, hashes only.");
+
+// 9. Unchanged text reproduces Sapling's own fraction exactly (same counting as before).
+{
+  const same = scored(sentences.map((_, i) => (i < 4 ? 0.9 : 0.1)));
+  const r9 = v.applyFreeze(same, baselineFrom(same));
+  assert.equal(r9.result.aiFraction, same.aiFraction, "no change, no difference in counting");
+  assert.equal(r9.result.ranges.length, same.sentenceScores.filter(s => s.score >= 0.5).length);
+}
+console.log("PASS: unchanged text reproduces Sapling's fraction and flagged ranges exactly.");

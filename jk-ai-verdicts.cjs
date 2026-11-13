@@ -99,10 +99,16 @@ function applyFreeze(result, baseline) {
     return matched[i].frozen;
   });
 
+  // Sapling's own fraction is the starting point, so unchanged text reproduces it
+  // exactly. Only the change caused by the frozen flags is applied on top.
   const chars = s => [...String(s.sentence ?? "")].length;
   const total = sentences.reduce((n, s) => n + chars(s), 0) || 1;
-  const flaggedChars = sentences.reduce((n, s, i) => n + (flags[i] ? chars(s) : 0), 0);
-  const aiFraction = flaggedChars / total;
+  const frozenChars = sentences.reduce((n, s, i) => n + (flags[i] ? chars(s) : 0), 0);
+  const freshChars = sentences.reduce((n, s, i) => n + (freshFlags[i] ? chars(s) : 0), 0);
+  const base = Number(result?.aiFraction);
+  const aiFraction = Number.isFinite(base)
+    ? base + (frozenChars - freshChars) / total
+    : frozenChars / total;
   const ranges = sentences.filter((_, i) => flags[i]);
 
   const frozen = {
