@@ -43,10 +43,13 @@ function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
   }
 
   if (stage === "failed") {
+    // JK_PROVIDER_AUTO_RETRY_V1
+    const retry = require("./jk-provider-auto-retry.cjs").statusLine(file);
     return [
       "REPORT PROCESSING FAILED",
       ...lines,
-      "Reason: " + String(error || "See service logs")
+      "Reason: " + String(error || "See service logs"),
+      ...(retry ? [retry] : [])
     ].join("\n");
   }
 
@@ -102,7 +105,8 @@ async function updateAdminStatus(options) {
 
   const replyMarkup = { inline_keyboard: [
     ...require("./jk-ai-highlights-button.cjs").replyMarkup(options).inline_keyboard,
-    ...require("./jk-provider-recovery-button.cjs").replyMarkup(options).inline_keyboard
+    ...require("./jk-provider-recovery-button.cjs").replyMarkup(options).inline_keyboard,
+    ...require("./jk-provider-auto-retry.cjs").replyMarkup(options).inline_keyboard
   ] };
   const markupKey = JSON.stringify(replyMarkup);
   if (file.providerAdminStatusText === text &&

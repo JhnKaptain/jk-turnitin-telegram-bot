@@ -552,6 +552,7 @@ let checkHistory = [];
 let usedProofCodes = {};
 let paidJobs = {};
 let paidAiHighlights;
+let providerAutoRetry; // JK_PROVIDER_AUTO_RETRY_V1
 let dailySalesSummary = {};
 let dailySalesLedger = {};
 let botUsers = {};
@@ -9391,6 +9392,23 @@ require("./jk-provider-recovery-button.cjs").register(bot, {
   getJobs: () => paidJobs
 });
 
+// JK_PROVIDER_AUTO_RETRY_V1: temporary provider failures (simcheck restarting)
+// are retried automatically; admins get RETRY NOW when retries are used up.
+providerAutoRetry = require("./jk-provider-auto-retry.cjs").createAutoRetry({
+  getJobs: () => paidJobs,
+  save: savePaidJobs,
+  runJob: jobId => submitPaidJobToActiveProvider(jobId),
+  sendAdmin: text => sendAdminMessage(text),
+  // Wait for simcheck to be healthy only while it is the active similarity provider.
+  healthUrl: () => {
+    const base = String(process.env.JK_SIMILARITY_URL || "").trim().replace(/\/+$/u, "");
+    return require("./providers/plagiarism.js").currentProvider().name === "jksimilarity" && base
+      ? base + "/v1/health" : null;
+  }
+});
+providerAutoRetry.register(bot, ADMIN_ID);
+providerAutoRetry.resume();
+
 // JK_PAID_AI_HIGHLIGHTS_V1
 paidAiHighlights = require("./jk-client-ai-highlights.cjs").createService({
   dataDir: DATA_DIR,
@@ -10362,6 +10380,20 @@ async function submitPaidJobToProviders(
       file.providerFailedAt =
         null;
 
+      // JK_PROVIDER_AUTO_RETRY_V1
+      file.providerRetryAt = null;
+      file.providerRetryExhausted = false;
+
+      // JK_AI_VERDICT_FREEZE_V1: only a completed check becomes the AI baseline.
+      if (result?.aiVerdictBaseline) {
+        try {
+          const { dir, owner, sentences } = result.aiVerdictBaseline;
+          require("./jk-ai-verdicts.cjs").saveBaseline(dir, owner, sentences);
+        } catch (error) {
+          console.error("AI verdict baseline not saved:", error?.message || error);
+        }
+      }
+
       file.providerStatus =
         "COMPLETE";
 
@@ -10517,6 +10549,9 @@ async function submitPaidJobToProviders(
       });
 
       savePaidJobs();
+
+      // JK_PROVIDER_AUTO_RETRY_V1: schedule a retry before the admin status is shown.
+      providerAutoRetry?.onFailure(job, file, err);
 
       await updateProviderAdminStatus(job, file, "failed", null, 0, err?.message || err);
     }

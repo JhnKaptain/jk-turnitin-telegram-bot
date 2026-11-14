@@ -58,7 +58,7 @@ function saveBaseline(dir, owner, sentences, now = Date.now()) {
   const record = {
     v: 1,
     savedAt: now,
-    sentences: sentences.map(s => ({ k: sentenceKey(s.sentence), f: s.flag ? 1 : 0 }))
+    sentences: sentences.map(s => ({ k: s.k || sentenceKey(s.sentence), f: s.flag ? 1 : 0 }))
   };
   const temp = file + ".tmp-" + crypto.randomBytes(6).toString("hex");
   fs.writeFileSync(temp, JSON.stringify(record), { mode: 0o600, flag: "wx" });

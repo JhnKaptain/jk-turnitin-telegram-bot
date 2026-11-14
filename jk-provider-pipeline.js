@@ -1206,14 +1206,19 @@ async function runProviderPipeline({
             aiValue,
             aiPrepared
           );
-        // Only a successful check becomes the baseline for the next resubmission.
+        // The bot saves this as the next baseline only after the whole check
+        // completes, so a check that fails later (e.g. similarity) never replaces it.
         if (aiVerdicts && aiVerdicts.dir && aiVerdicts.owner && result.aiDetection.available) {
           const verdicts = require("./jk-ai-verdicts.cjs");
-          const sentences = (state.value.sentenceScores || []).map((s, i) => ({
-            sentence: s.sentence,
-            flag: aiFlags ? aiFlags[i] : Number(s.score) >= verdicts.FLAG_THRESHOLD
-          }));
-          verdicts.saveBaseline(aiVerdicts.dir, aiVerdicts.owner, sentences);
+          result.aiVerdictBaseline = {
+            dir: aiVerdicts.dir,
+            owner: aiVerdicts.owner,
+            // Hashes and flags only: no sentence text in the bundle.
+            sentences: (state.value.sentenceScores || []).map((s, i) => ({
+              k: verdicts.sentenceKey(s.sentence),
+              flag: aiFlags ? aiFlags[i] : Number(s.score) >= verdicts.FLAG_THRESHOLD
+            }))
+          };
         }
       } else {
         result
