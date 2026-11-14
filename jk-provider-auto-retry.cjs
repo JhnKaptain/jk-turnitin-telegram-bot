@@ -4,9 +4,10 @@
   -------------------------
   A check that fails because a provider was briefly unreachable (simcheck
   restarting: HTTP 502/503/504, "fetch failed", connection reset, timeout) is
-  retried automatically: up to 3 times, after 2, 8 and 20 minutes. Before each
-  attempt the similarity service must report healthy; otherwise the attempt
-  waits 2 more minutes, giving up 60 minutes after the first failure.
+  retried automatically: up to 3 times, 2, 3 and 5 minutes apart (about 10
+  minutes in all). Before each attempt the similarity service must report
+  healthy; otherwise the attempt waits 1 more minute, giving up 10 minutes
+  after the first failure. Then the admin gets RETRY NOW.
 
   - The same stored job is rerun through the same path (same Telegram file).
   - The failed attempt's saved provider results are moved aside (renamed, not
@@ -19,9 +20,9 @@
 
 const fs = require("fs");
 
-const DELAYS_MINUTES = [2, 8, 20];
-const HEALTH_WAIT_MINUTES = 2;
-const GIVE_UP_MINUTES = 60;
+const DELAYS_MINUTES = [2, 3, 5];
+const HEALTH_WAIT_MINUTES = 1;
+const GIVE_UP_MINUTES = 10;
 const TRANSIENT = /HTTP 50[0234]\b|temporarily unavailable|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|network error|scan timed out|The operation was aborted/i;
 const NEVER = /cannot be aligned|ambiguous interpretations|manual review|reference boundary|Unsupported|exceeds/i;
 

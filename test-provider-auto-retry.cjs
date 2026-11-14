@@ -1,6 +1,6 @@
 "use strict";
 // JK_PROVIDER_AUTO_RETRY_V1: temporary provider failures are retried automatically
-// (2, 8, 20 minutes), only while the similarity service is healthy, through the same
+// (2, 3, 5 minutes apart), only while the similarity service is healthy, through the same
 // stored job; admins get RETRY NOW when retries are used up. Offline: fake timers,
 // fake health checks and a fake job runner. No Telegram or provider requests.
 const assert = require("node:assert/strict");
@@ -56,27 +56,27 @@ const { createAutoRetry, isTransient, statusLine, replyMarkup } = require("./jk-
     assert.match(statusLine(file, clock), /Automatic retry 1\/3 in about 2 min/);
     assert.deepEqual(replyMarkup({ file, stage: "failed" }).inline_keyboard, []);
 
-    // 3. Service unhealthy at retry time: wait 2 more minutes, do not run, keep saved results.
+    // 3. Service unhealthy at retry time: wait 1 more minute, do not run, keep saved results.
     await advance(2 * 60000);
     assert.equal(runs, 0);
     assert(fs.existsSync(saved), "saved results untouched while waiting");
-    assert.equal(file.providerRetryAt, clock + 2 * 60000);
+    assert.equal(file.providerRetryAt, clock + 1 * 60000);
 
     // 4. Healthy: saved results moved aside (not deleted), job rerun through the same path.
     healthy = true;
-    await advance(2 * 60000);
+    await advance(1 * 60000);
     assert.equal(runs, 1);
     assert(!fs.existsSync(saved), "pipeline will not refuse the rerun");
     assert(fs.readdirSync(dir).some(n => /\.failed-\d+\.provider-results\.json$/.test(n)), "failed results kept aside");
 
-    // 5. Further failures: retries 2 and 3 at 8 and 20 minutes, then exhausted with a button.
+    // 5. Further failures: retries 2 and 3 after 3 and 5 minutes, then exhausted with a button.
     d = retry.onFailure(jobs.job1, file, "fetch failed");
-    assert.deepEqual([d.attempt, file.providerRetryAt - clock], [2, 8 * 60000]);
-    await advance(8 * 60000);
+    assert.deepEqual([d.attempt, file.providerRetryAt - clock], [2, 3 * 60000]);
+    await advance(3 * 60000);
     assert.equal(runs, 2);
     d = retry.onFailure(jobs.job1, file, "fetch failed");
-    assert.deepEqual([d.attempt, file.providerRetryAt - clock], [3, 20 * 60000]);
-    await advance(20 * 60000);
+    assert.deepEqual([d.attempt, file.providerRetryAt - clock], [3, 5 * 60000]);
+    await advance(5 * 60000);
     assert.equal(runs, 3);
     d = retry.onFailure(jobs.job1, file, "fetch failed");
     assert.deepEqual([d.scheduled, d.exhausted], [false, true]);
@@ -93,11 +93,11 @@ const { createAutoRetry, isTransient, statusLine, replyMarkup } = require("./jk-
     assert.equal(res.ran, true);
     assert.equal(runs, 4);
 
-    // 8. Gives up 60 minutes after the first failure if the service never recovers.
+    // 8. Gives up 10 minutes after the first failure if the service never recovers.
     const late = { jkSubmissionId: "trn:oid:::1:1234567892", providerStatus: "FAILED", providerBundleFile: path.join(dir, "b2.json") };
     jobs.job2 = { jobId: "job2", files: [late] };
     retry.onFailure(jobs.job2, late, "HTTP 503");
-    late.providerRetryFirstFailedAt = clock - 61 * 60000;
+    late.providerRetryFirstFailedAt = clock - 11 * 60000;
     await advance(2 * 60000);
     assert.equal(late.providerRetryExhausted, true);
     assert(admin.some(t => /Automatic retry stopped/.test(t)));
@@ -122,7 +122,7 @@ const { createAutoRetry, isTransient, statusLine, replyMarkup } = require("./jk-
   assert(!pipeline.includes("saveBaseline("), "pipeline never saves the baseline itself");
   assert(bot.includes("providerAutoRetry.resume();"));
 
-  console.log("PASS: temporary failures retried at 2/8/20 min, only when the service is healthy.");
+  console.log("PASS: temporary failures retried 2, 3 and 5 min apart, only when the service is healthy.");
   console.log("PASS: saved results moved aside, same job rerun, RETRY NOW after retries, restart-safe.");
   console.log("PASS: non-temporary failures never retried; AI baseline saved only after a completed check.");
 })().catch(error => { console.error(error); process.exitCode = 1; });
