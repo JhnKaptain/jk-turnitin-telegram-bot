@@ -553,6 +553,7 @@ let usedProofCodes = {};
 let paidJobs = {};
 let paidAiHighlights;
 let providerAutoRetry; // JK_PROVIDER_AUTO_RETRY_V1
+let tillAutoConfirm; // JK_TILL_AUTO_CONFIRM_V1
 let dailySalesSummary = {};
 let dailySalesLedger = {};
 let botUsers = {};
@@ -5196,11 +5197,22 @@ async function handleMpesaProofText(ctx, sub, text) {
   const found = findLatestPendingPaymentRefByUser(user.id);
   const parsed = parsePaymentProofText(text, expectedAmount);
 
+  // JK_TILL_AUTO_CONFIRM_V1: when the last file was sent, for the payment-time check.
+  const uploadTimes = (sub?.files || []).map(f => Number(f?.uploadedAt)).filter(Number.isFinite);
+  const filesSentAt = uploadTimes.length ? Math.max(...uploadTimes) : null;
+  const tillCheck = require("./jk-till-auto-confirm.cjs");
+  const proofTimeWarnings = tillCheck.timeWarnings({
+    detectedTime: parsed.detectedTime, filesSentAt, receivedAt: Date.now()
+  });
+  parsed.warnings.push(...proofTimeWarnings);
+  let autoConfirmLine = "Auto-confirm: NO (no pending payment found)";
+
   if (found) {
     const [apiRef] = found;
     updatePaymentRef(apiRef, {
       pendingProof: {
         type: "mpesa-text",
+        filesSentAt,
         amount: parsed.amount,
         amountMatch: parsed.amountMatch,
         code: parsed.code || null,
@@ -5213,6 +5225,7 @@ async function handleMpesaProofText(ctx, sub, text) {
         receivedAt: Date.now()
       }
     });
+    autoConfirmLine = tillAutoConfirm?.onProof(apiRef) || autoConfirmLine;
   }
 
   const warningsText = parsed.warnings.length ? parsed.warnings.map((w) => `• ${w}`).join("\n") : "None";
@@ -5228,7 +5241,7 @@ async function handleMpesaProofText(ctx, sub, text) {
       parsed.code
     )}\nCode already used: ${proofValue(parsed.duplicateCode)}\nTime/date: ${proofValue(
       parsed.detectedTime
-    )}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}`,
+    )}\nConfidence: ${parsed.confidence}\n\nWarnings:\n${warningsText}\n\n${autoConfirmLine}`,
     { adminButtons: "paymentProof" }
   );
 
@@ -9408,6 +9421,21 @@ providerAutoRetry = require("./jk-provider-auto-retry.cjs").createAutoRetry({
 });
 providerAutoRetry.register(bot, ADMIN_ID);
 providerAutoRetry.resume();
+
+// JK_TILL_AUTO_CONFIRM_V1: till proofs passing every check are confirmed after
+// 4 minutes if the admin has not confirmed or cancelled them.
+tillAutoConfirm = require("./jk-till-auto-confirm.cjs").createTillAutoConfirm({
+  getRefs: () => paymentRefs,
+  save: saveStore,
+  isClosed: ref => isPaymentRefClosedForAdmin(ref),
+  confirm: async (userId, apiRef) => {
+    const latest = findLatestPendingPaymentRefByUser(userId);
+    if (!latest || latest[0] !== apiRef) return { ok: false, message: "a different payment is now pending" };
+    return manuallyConfirmLatestPaymentForUser(userId, "till-auto-confirm-4min");
+  },
+  sendAdmin: text => sendAdminMessage(text)
+});
+tillAutoConfirm.resume();
 
 // JK_PAID_AI_HIGHLIGHTS_V1
 paidAiHighlights = require("./jk-client-ai-highlights.cjs").createService({
