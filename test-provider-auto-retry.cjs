@@ -48,13 +48,14 @@ const { createAutoRetry, isTransient, statusLine, replyMarkup } = require("./jk-
       setTimer
     });
 
-    // 2. First failure: retry 1/3 in 2 minutes; status line and no button while pending.
+    // 2. First failure: retry 1/3 in 2 minutes; status line and STOP RETRIES while pending.
     fs.writeFileSync(saved, "{}");
     let d = retry.onFailure(jobs.job1, file, new Error("HTTP 502"));
     assert.deepEqual([d.scheduled, d.attempt], [true, 1]);
     assert.equal(file.providerRetryAt, clock + 2 * 60000);
     assert.match(statusLine(file, clock), /Automatic retry 1\/3 in about 2 min/);
-    assert.deepEqual(replyMarkup({ file, stage: "failed" }).inline_keyboard, []);
+    // While waiting, the admin can stop automatic retries (JK_RETRY_STOP_BUTTON_V1).
+    assert.equal(replyMarkup({ file, stage: "failed" }).inline_keyboard[0][0].text, "STOP RETRIES");
 
     // 3. Service unhealthy at retry time: wait 1 more minute, do not run, keep saved results.
     await advance(2 * 60000);
@@ -112,6 +113,51 @@ const { createAutoRetry, isTransient, statusLine, replyMarkup } = require("./jk-
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
+  // 11. STOP RETRIES (JK_RETRY_STOP_BUTTON_V1).
+  {
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "jk-retry-stop-"));
+    try {
+      const f = { jkSubmissionId: "trn:oid:::1:1234567899", providerStatus: "FAILED", providerBundleFile: path.join(dir2, "b.json") };
+      const jobs = { j: { jobId: "j", files: [f] } };
+      let runs = 0; const refreshed = [];
+      const r = createAutoRetry({
+        getJobs: () => jobs, save: () => {},
+        runJob: async () => { runs++; f.providerStatus = "FAILED"; },
+        refreshStatus: async (job, file) => refreshed.push(file.jkSubmissionId),
+        now: () => clock, setTimer
+      });
+      timers.length = 0;
+      r.onFailure(jobs.j, f, "HTTP 502");
+      // While waiting: STOP RETRIES is offered.
+      assert.equal(replyMarkup({ file: f, stage: "failed" }).inline_keyboard[0][0].callback_data, "PRSTOP:1234567899");
+      const stopped = await r.stop("1234567899");
+      assert.deepEqual(stopped, { stopped: true, running: false });
+      assert.deepEqual(refreshed, ["trn:oid:::1:1234567899"], "admin message re-rendered");
+      assert.match(statusLine(f, clock), /stopped by admin/);
+      assert.equal(replyMarkup({ file: f, stage: "failed" }).inline_keyboard[0][0].callback_data, "PRETRY:1234567899");
+      // The waiting retry never runs, even if a timer fires.
+      await advance(10 * 60000);
+      assert.equal(runs, 0);
+      // A later temporary failure is not rescheduled; a restart does not re-arm it.
+      assert.equal(r.onFailure(jobs.j, f, "fetch failed").stopped, true);
+      assert.equal(f.providerRetryAt, null);
+      timers.length = 0; r.resume();
+      assert.equal(timers.length, 0);
+      // Stopping while an attempt is running: it finishes, nothing follows.
+      jobs.j.providerRetryRunning = true;
+      f.providerRetryStopped = false;
+      assert.equal((await r.stop("1234567899")).running, true);
+      jobs.j.providerRetryRunning = false;
+      // RETRY NOW still works after stopping (forced attempt clears nothing it shouldn't).
+      f.providerRetryStopped = false;
+      const res = await r.attempt("j", { force: true });
+      assert.equal(res.ran, true);
+      assert.equal(runs, 1);
+    } finally {
+      fs.rmSync(dir2, { recursive: true, force: true });
+    }
+  }
+
   // 10. The bot is wired: retry scheduled on failure, cleared on success; the AI baseline
   // is saved only after a completed check, never by the pipeline itself.
   const bot = fs.readFileSync(path.join(__dirname, "bot.js"), "utf8");
@@ -125,4 +171,5 @@ const { createAutoRetry, isTransient, statusLine, replyMarkup } = require("./jk-
   console.log("PASS: temporary failures retried 2, 3 and 5 min apart, only when the service is healthy.");
   console.log("PASS: saved results moved aside, same job rerun, RETRY NOW after retries, restart-safe.");
   console.log("PASS: non-temporary failures never retried; AI baseline saved only after a completed check.");
+  console.log("PASS: STOP RETRIES cancels waiting retries, survives restarts, and RETRY NOW still works.");
 })().catch(error => { console.error(error); process.exitCode = 1; });
