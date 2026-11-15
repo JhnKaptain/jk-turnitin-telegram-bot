@@ -39,6 +39,7 @@ function createAutoRetry({
   save,
   runJob,
   sendAdmin = async () => {},
+  refreshStatus = async () => {},   // re-renders the admin status message for (job, file)
   healthUrl = null,
   fetchImpl = globalThis.fetch,
   now = () => Date.now(),
@@ -58,6 +59,12 @@ function createAutoRetry({
   function onFailure(job, file, error) {
     if (!job || !file || !isTransient(error) || file.providerAutoResubmitBlocked) {
       return { scheduled: false };
+    }
+    // JK_RETRY_STOP_BUTTON_V1: the admin stopped automatic retries for this file.
+    if (file.providerRetryStopped) {
+      file.providerRetryAt = null;
+      save();
+      return { scheduled: false, stopped: true };
     }
     const count = Number(file.providerRetryCount || 0);
     if (!file.providerRetryFirstFailedAt) file.providerRetryFirstFailedAt = now();
@@ -102,7 +109,7 @@ function createAutoRetry({
     const due = (job.files || []).filter(file =>
       String(file?.providerStatus || "").toUpperCase() === "FAILED" &&
       !file.providerAutoResubmitBlocked &&
-      (force || (file.providerRetryAt && file.providerRetryAt <= now())));
+      (force || (!file.providerRetryStopped && file.providerRetryAt && file.providerRetryAt <= now())));
     if (!due.length) return { ran: false, reason: "nothing-due" };
 
     if (!force && !(await healthy())) {
@@ -140,9 +147,32 @@ function createAutoRetry({
   // Re-arms retries that were pending when the bot restarted.
   function resume() {
     for (const job of Object.values(getJobs() || {})) {
-      const pending = (job?.files || []).map(f => f?.providerRetryAt).filter(Number.isFinite);
+      const pending = (job?.files || [])
+        .filter(f => !f?.providerRetryStopped)
+        .map(f => f?.providerRetryAt).filter(Number.isFinite);
       if (pending.length) schedule(job.jobId, Math.min(...pending));
     }
+  }
+
+  // Stops automatic retries for one file. A retry already running finishes,
+  // but nothing is scheduled after it. RETRY NOW still works afterwards.
+  async function stop(id) {
+    const found = findBySubmission(id);
+    if (!found) return { stopped: false, reason: "not-found" };
+    const { job, file } = found;
+    const running = job.providerRetryRunning === true;
+    file.providerRetryStopped = true;
+    file.providerRetryAt = null;
+    file.providerRetryExhausted = false;
+    save();
+    // Keep the job's timer only for other files that still have a retry waiting.
+    const others = (job.files || [])
+      .filter(f => f !== file && !f.providerRetryStopped)
+      .map(f => f.providerRetryAt).filter(Number.isFinite);
+    if (others.length) schedule(job.jobId, Math.min(...others));
+    else { clearTimeout(timers.get(job.jobId)); timers.delete(job.jobId); }
+    await refreshStatus(job, file);
+    return { stopped: true, running };
   }
 
   function findBySubmission(id) {
@@ -160,6 +190,7 @@ function createAutoRetry({
       found.file.providerRetryCount = 0;
       found.file.providerRetryFirstFailedAt = now();
       found.file.providerRetryExhausted = false;
+      found.file.providerRetryStopped = false;
       save();
       await ctx.answerCbQuery("Retrying now…");
       const result = await attempt(found.job.jobId, { force: true });
@@ -167,20 +198,36 @@ function createAutoRetry({
         await sendAdmin("Retry not started: " + result.reason.replace(/-/g, " ") + ".");
       }
     });
+
+    // JK_RETRY_STOP_BUTTON_V1
+    bot.action(/^PRSTOP:([1-9]\d{9})$/, async ctx => {
+      if (Number(ctx.from?.id) !== Number(adminId)) return ctx.answerCbQuery("Admin only.");
+      const result = await stop(ctx.match[1]);
+      if (!result.stopped) return ctx.answerCbQuery("Check not found.", { show_alert: true });
+      await ctx.answerCbQuery(result.running
+        ? "Stopped. The attempt already running will finish; no more retries."
+        : "Automatic retries stopped.");
+    });
   }
 
-  return { isTransient, onFailure, attempt, resume, replyMarkup, register, schedule };
+  return { isTransient, onFailure, attempt, resume, stop, replyMarkup, register, schedule };
 }
 
-// Admin status button, shown once automatic retries are not pending.
+// Admin status buttons: STOP RETRIES while an automatic retry is waiting,
+// RETRY NOW once none is waiting (used up or stopped).
 function replyMarkup({ file, stage }) {
   const id = idOf(file);
-  const show = stage === "failed" && id && !file.providerAutoResubmitBlocked &&
-    !file.providerRetryAt && String(file.providerStatus || "").toUpperCase() === "FAILED";
-  return { inline_keyboard: show ? [[{ text: "RETRY NOW", callback_data: "PRETRY:" + id }]] : [] };
+  const failed = stage === "failed" && id && !file.providerAutoResubmitBlocked &&
+    String(file.providerStatus || "").toUpperCase() === "FAILED";
+  if (!failed) return { inline_keyboard: [] };
+  if (file.providerRetryAt && !file.providerRetryStopped) {
+    return { inline_keyboard: [[{ text: "STOP RETRIES", callback_data: "PRSTOP:" + id }]] };
+  }
+  return { inline_keyboard: [[{ text: "RETRY NOW", callback_data: "PRETRY:" + id }]] };
 }
 
 function statusLine(file, nowMs = Date.now()) {
+  if (file?.providerRetryStopped) return "Automatic retries stopped by admin. Tap RETRY NOW to resend.";
   if (file?.providerRetryAt && file.providerRetryAt > nowMs) {
     const mins = Math.max(1, Math.ceil((file.providerRetryAt - nowMs) / 60000));
     return `Automatic retry ${file.providerRetryCount}/${DELAYS_MINUTES.length} in about ${mins} min.`;

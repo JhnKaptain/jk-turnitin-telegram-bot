@@ -9412,6 +9412,10 @@ providerAutoRetry = require("./jk-provider-auto-retry.cjs").createAutoRetry({
   save: savePaidJobs,
   runJob: jobId => submitPaidJobToActiveProvider(jobId),
   sendAdmin: text => sendAdminMessage(text),
+  // JK_RETRY_STOP_BUTTON_V1: re-render the failure message after STOP RETRIES.
+  refreshStatus: (job, file) => updateProviderAdminStatus(
+    job, file, "failed", null, 0, String(file.providerError || "").split("\n")[0] || null
+  ),
   // Wait for simcheck to be healthy only while it is the active similarity provider.
   healthUrl: () => {
     const base = String(process.env.JK_SIMILARITY_URL || "").trim().replace(/\/+$/u, "");
