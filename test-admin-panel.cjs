@@ -45,7 +45,8 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     supportedScanUpload: n => /\.(pdf|docx|doc|pptx)$/i.test(n),
     freeScanEnabled: () => true,
     isWebUserId: id => String(id).startsWith("9"),
-    sendAdmin: async t => calls.push(["admin", t])
+    sendAdmin: async t => calls.push(["admin", t]),
+    deleteFiles: async (ids, by) => { calls.push(["delete", ids, by]); return { deleted: ids, skipped: [] }; }
   });
   const app = express();
   panel.install(app, express);
@@ -130,6 +131,18 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
       headers: { ...S, "X-To-User": "5189765792", "X-File-Name": "Report.pdf", "X-Caption": encodeURIComponent("Your report") }, body: "PDFDATA" });
     assert.equal(sent.status, 200);
     assert.deepEqual(calls.at(-1), ["send", "5189765792", "Report.pdf", 7, "Your report"]);
+
+    // 10b. Delete selected files: valid report IDs only, passed to the shared delete.
+    const del = (body) => req("/admin/api/files/delete", { method: "POST", headers: { ...S, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    assert.equal((await del({ ids: [] })).status, 400);
+    assert.equal((await del({ ids: ["../x"] })).status, 400);
+    const dr = await (await del({ ids: ["1234567890"] })).json();
+    assert.deepEqual(dr.deleted, ["1234567890"]);
+    assert.deepEqual(calls.at(-1), ["delete", ["1234567890"], "admin-web-panel"]);
+    jobs.job1.files[0].providerFilesDeletedAt = 9;
+    const ov2 = await (await req("/admin/api/overview", { headers: S })).json();
+    assert.equal(ov2.jobs[0].files[0].deleted, 9);
+    assert.deepEqual(ov2.jobs[0].files[0].reports, [], "no report links once deleted");
 
     // 11. Logout ends the session.
     await req("/admin/api/logout", { method: "POST", headers: S });

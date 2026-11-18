@@ -175,7 +175,8 @@ function createAdminPanel(d) {
           retryExhausted: f.providerRetryExhausted === true,
           similarity: f.providerSimilarityPercent ?? null,
           ai: f.providerAiPercent ?? null,
-          reports: reportsFor(f)
+          deleted: f.providerFilesDeletedAt || null,
+          reports: f.providerFilesDeletedAt ? [] : reportsFor(f)
         }))
       }));
     const payments = Object.entries(d.getPaymentRefs() || {})
@@ -230,6 +231,13 @@ function createAdminPanel(d) {
     const id = String(fileId).slice(FILE_PREFIX.length);
     if (!ID_RE.test(id)) throw new Error("Invalid admin upload id.");
     return fs.readFileSync(path.join(uploadRoot, id, "file"));
+  }
+
+  function removeUpload(fileId) {
+    const id = String(fileId).slice(FILE_PREFIX.length);
+    if (!ID_RE.test(id)) return false;
+    fs.rmSync(path.join(uploadRoot, id), { recursive: true, force: true });
+    return true;
   }
 
   function cleanupUploads() {
@@ -301,6 +309,16 @@ function createAdminPanel(d) {
       const r = await d.autoRetry().stop(String(req.params.id));
       res.status(r.stopped ? 200 : 404).json(r);
     }));
+    // JK_DELETE_FILES_NOW_V1: delete the stored copies of selected files.
+    app.post("/admin/api/files/delete", guard, express.json({ limit: "16kb" }), handle(async (req, res) => {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+      if (!ids.length || ids.length > 200 || ids.some(id => !/^[1-9]\d{9}$/.test(id))) {
+        return res.status(400).json({ error: "Choose 1 to 200 files." });
+      }
+      if (typeof d.deleteFiles !== "function") return res.status(501).json({ error: "Deleting is not available." });
+      res.json(await d.deleteFiles(ids, "admin-web-panel"));
+    }));
+
     app.get("/admin/api/files/:id/reports/:name", guard, handle(async (req, res) => {
       const found = findFile(String(req.params.id));
       const name = String(req.params.name);
@@ -366,7 +384,7 @@ function createAdminPanel(d) {
     t.unref?.();
   }
 
-  return { install, login, sessionValid, overview, saveUpload, readUpload, uploadMeta, cleanupUploads, configured };
+  return { install, login, sessionValid, overview, saveUpload, readUpload, removeUpload, uploadMeta, cleanupUploads, configured };
 }
 
 module.exports = { createAdminPanel, isPanelFileId, totpAt, totpValid, base32Decode, FILE_PREFIX };

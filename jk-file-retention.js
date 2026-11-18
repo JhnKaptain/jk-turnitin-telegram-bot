@@ -290,7 +290,78 @@ function selfTest() {
   console.log("Tests used temporary folders only.");
 }
 
-module.exports = { cleanFiles, startFileCleanup };
+// JK_DELETE_FILES_NOW_V1: the admin deletes selected files' stored copies now,
+// from the web panel or Telegram, with the same safeguards as the 24-hour
+// cleanup (never while processing or delivering, never with an unresolved AI
+// highlights purchase). A small record stays, and resubmission is blocked.
+function deleteFilesNow({ dataDir, paidJobs, persist, submissionIds, by, now = Date.now() }) {
+  const root = path.resolve(dataDir, "provider-runs");
+  const idOf = file => /^trn:oid:::1:([1-9]\d{9})$/.exec(String(file?.jkSubmissionId || ""))?.[1] || null;
+  const wanted = new Set((submissionIds || []).map(String));
+  const result = { deleted: [], skipped: [] };
+
+  const owners = new Map(); // run folder -> files that use it
+  const dirOf = file => {
+    if (!file?.providerBundleFile) return null;
+    const relative = path.relative(root, path.resolve(file.providerBundleFile));
+    if (!relative || relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) return null;
+    const parts = relative.split(path.sep);
+    return parts.length < 2 ? null : path.join(root, parts[0]);
+  };
+  for (const job of Object.values(paidJobs || {})) {
+    for (const file of job?.files || []) {
+      const dir = dirOf(file);
+      if (dir) owners.set(dir, [...(owners.get(dir) || []), file]);
+    }
+  }
+
+  for (const job of Object.values(paidJobs || {})) {
+    for (const file of job?.files || []) {
+      const id = idOf(file);
+      if (!id || !wanted.has(id)) continue;
+      wanted.delete(id);
+      if (file.providerFilesDeletedAt) { result.skipped.push({ id, reason: "Already deleted" }); continue; }
+      if (processing(file) || job.providerRetryRunning) {
+        result.skipped.push({ id, reason: "Processing or delivery still active" });
+        continue;
+      }
+      const dir = dirOf(file);
+      if (dir && (owners.get(dir) || []).some(other => other !== file && !wanted.has(idOf(other)) && !other.providerFilesDeletedAt)) {
+        result.skipped.push({ id, reason: "Folder shared with another file" });
+        continue;
+      }
+      if (dir && fs.existsSync(dir) && require("./jk-client-ai-highlights.cjs").hasProtectedPurchase(dataDir, dir, now)) {
+        result.skipped.push({ id, reason: "AI highlights payment, preparation or delivery unresolved" });
+        continue;
+      }
+      const previous = { ...file };
+      file.providerAutoResubmitBlocked = true;
+      file.providerFilesDeletedAt = now;
+      file.providerFilesDeletedBy = String(by || "admin");
+      file.providerRetryAt = null;
+      file.providerRetryStopped = true;
+      try {
+        persist();
+      } catch (error) {
+        for (const key of Object.keys(file)) delete file[key];
+        Object.assign(file, previous);
+        throw new Error("Records could not be saved; files were not deleted: " + error.message);
+      }
+      if (dir && fs.existsSync(dir)) {
+        if (fs.lstatSync(dir).isSymbolicLink()) {
+          result.skipped.push({ id, reason: "Symbolic link; folder kept" });
+          continue;
+        }
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+      result.deleted.push(id);
+    }
+  }
+  for (const id of wanted) result.skipped.push({ id, reason: "Not found" });
+  return result;
+}
+
+module.exports = { cleanFiles, startFileCleanup, deleteFilesNow };
 
 if (require.main === module) {
   try {

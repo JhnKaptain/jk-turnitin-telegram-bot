@@ -3140,7 +3140,10 @@ function adminAllCommandsText() {
     "",
     "Payments",
     "/paiduser <userId> - Confirm latest user payment",
-    "/paidref <apiRef> - Confirm payment reference"
+    "/paidref <apiRef> - Confirm payment reference",
+    "",
+    "Files",
+    "/deletefiles <report ID> [more] - Delete stored files and reports"
   ].join("\n");
 }
 
@@ -6024,6 +6027,58 @@ async function sendOneTimeSavedAiCorrection() {
     console.error("ADMIN SAVED AI REPLAY: not delivered",String(e?.message||e));
   }
 }
+
+// JK_DELETE_FILES_NOW_V1: Telegram side of the admin delete.
+const pendingFileDeletes = new Map(); // token -> { ids, at }
+
+bot.command("deletefiles", async (ctx) => {
+  if (Number(ctx.from?.id) !== Number(ADMIN_ID)) return;
+  const ids = [...new Set((String(ctx.message?.text || "").match(/\b[1-9]\d{9}\b/g) || []))].slice(0, 50);
+  if (!ids.length) {
+    return ctx.reply(
+      "Usage: /deletefiles <report ID> [more IDs]\n" +
+      "Example: /deletefiles 1234567890 2345678901\n\n" +
+      "Deletes the bot's stored copies and reports for those files. " +
+      "Files sent in Telegram also stay on Telegram's own servers."
+    );
+  }
+  const token = require("crypto").randomBytes(6).toString("hex");
+  pendingFileDeletes.set(token, { ids, at: Date.now() });
+  for (const [key, value] of pendingFileDeletes) {
+    if (Date.now() - value.at > 10 * 60 * 1000) pendingFileDeletes.delete(key);
+  }
+  return ctx.reply(
+    "Delete the stored files for " + ids.length + " report ID(s)?\n" + ids.join(", ") + "\n\nThis cannot be undone.",
+    { reply_markup: { inline_keyboard: [[
+      { text: "🗑 DELETE", callback_data: "DELF:" + token },
+      { text: "Keep", callback_data: "DELFX:" + token }
+    ]] } }
+  );
+});
+
+bot.action(/^DELF:([a-f0-9]{12})$/, async (ctx) => {
+  if (Number(ctx.from?.id) !== Number(ADMIN_ID)) return ctx.answerCbQuery("Admin only.");
+  const pending = pendingFileDeletes.get(ctx.match[1]);
+  pendingFileDeletes.delete(ctx.match[1]);
+  if (!pending || Date.now() - pending.at > 10 * 60 * 1000) {
+    return ctx.answerCbQuery("This request expired. Send /deletefiles again.", { show_alert: true });
+  }
+  await ctx.answerCbQuery("Deleting…");
+  let text;
+  try {
+    text = describeDeleteResult(deleteStoredFilesNow(pending.ids, "admin-telegram"));
+  } catch (error) {
+    text = "Delete failed: " + error.message;
+  }
+  await ctx.editMessageText(text).catch(() => ctx.reply(text));
+});
+
+bot.action(/^DELFX:([a-f0-9]{12})$/, async (ctx) => {
+  if (Number(ctx.from?.id) !== Number(ADMIN_ID)) return ctx.answerCbQuery("Admin only.");
+  pendingFileDeletes.delete(ctx.match[1]);
+  await ctx.answerCbQuery("Kept.");
+  await ctx.editMessageText("Kept. Nothing was deleted.").catch(() => {});
+});
 
 bot.command("adminhelp", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
@@ -14165,8 +14220,49 @@ app.use(
 require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR });
 
 // JK_ADMIN_WEB_PANEL_V1: /admin, the Telegram admin tools on the web.
+// JK_DELETE_FILES_NOW_V1: one delete used by the web panel and Telegram.
+// Removes the bot's stored copies (original, bundle, reports) and the
+// website/panel upload; a small record stays and resubmission is blocked.
+// Files a customer sent in Telegram also remain on Telegram's own servers.
+function deleteStoredFilesNow(ids, by) {
+  const result = require("./jk-file-retention.js").deleteFilesNow({
+    dataDir: DATA_DIR,
+    paidJobs,
+    submissionIds: ids,
+    by,
+    persist: () => {
+      const temporaryPath = PAID_JOBS_FILE + ".delete.tmp";
+      fs.writeFileSync(temporaryPath, JSON.stringify(paidJobs, null, 2), "utf8");
+      fs.renameSync(temporaryPath, PAID_JOBS_FILE);
+    }
+  });
+  const deleted = new Set(result.deleted);
+  for (const job of Object.values(paidJobs)) {
+    for (const file of job?.files || []) {
+      const id = /^trn:oid:::1:(\d{10})$/.exec(String(file?.jkSubmissionId || ""))?.[1];
+      if (!id || !deleted.has(id)) continue;
+      const fileId = String(file.file_id || file.fileId || "");
+      try {
+        if (fileId.startsWith("web:")) webOrders?.removeWebFile?.(fileId);
+        else if (adminPanel && require("./jk-admin-panel.cjs").isPanelFileId(fileId)) adminPanel.removeUpload(fileId);
+      } catch (error) {
+        console.error("Stored upload delete failed:", fileId, error.message);
+      }
+    }
+  }
+  return result;
+}
+
+function describeDeleteResult(result) {
+  const lines = [];
+  if (result.deleted.length) lines.push("🗑 Deleted " + result.deleted.length + " file(s): " + result.deleted.join(", "));
+  for (const s of result.skipped) lines.push("⏭ " + s.id + ": " + s.reason);
+  return lines.join("\n") || "Nothing to delete.";
+}
+
 adminPanel = require("./jk-admin-panel.cjs").createAdminPanel({
   DATA_DIR, MAX_BATCH_FILES, bot,
+  deleteFiles: (ids, by) => deleteStoredFilesNow(ids, by),
   getPaidJobs: () => paidJobs,
   getPaymentRefs: () => paymentRefs,
   isPaymentRefClosed: ref => isPaymentRefClosedForAdmin(ref),
