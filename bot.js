@@ -554,6 +554,7 @@ let paidJobs = {};
 let paidAiHighlights;
 let providerAutoRetry; // JK_PROVIDER_AUTO_RETRY_V1
 let tillAutoConfirm; // JK_TILL_AUTO_CONFIRM_V1
+let adminPanel; // JK_ADMIN_WEB_PANEL_V1
 let dailySalesSummary = {};
 let dailySalesLedger = {};
 let botUsers = {};
@@ -7080,6 +7081,51 @@ bot.action("ADMIN_FREE_SCAN_MORE", async (ctx) => {
     adminFreeScanWaitingKeyboard(), true);
 });
 
+// JK_ADMIN_WEB_PANEL_V1: the web panel's free scan builds the same job as the
+// Telegram Admin Free Scan below; reports go to the admin as usual.
+async function startAdminWebFreeScan({ uploads, type, adminAiOnly, similarityOptions }) {
+  if (!require("./jk-admin-free-scan-control.cjs").enabled()) {
+    const e = new Error("Admin Free Scan is disabled."); e.status = 409; throw e;
+  }
+  const mode = similarityFiltersMode(similarityOptions, FILTER_MODE_FILTERED);
+  const files = uploads.map(u => {
+    const storedFile = createStoredFileFromDocument(ADMIN_ID, {
+      file_id: u.fileId, file_unique_id: u.fileId, file_name: u.name, file_size: u.size
+    });
+    storedFile.type = type;
+    storedFile.price = 0;
+    storedFile.similarityFilter = mode;
+    storedFile.similarityOptions = normalizeSimilarityFilters(similarityOptions, mode);
+    storedFile.pendingType = null;
+    storedFile.adminFreeScan = true;
+    storedFile.adminAiOnly = adminAiOnly === true;
+    storedFile.sourceUsername = "admin-web";
+    storedFile.file_unique_id = u.fileId;
+    requireFileReportIdentity(storedFile);
+    return storedFile;
+  });
+  const now = Date.now();
+  const batchId = "JK_ADMIN_WEB_" + ADMIN_ID + "_" + now;
+  const job = createPaidJob({
+    userId: ADMIN_ID,
+    apiRef: "ADMINWEB_" + now,
+    ref: { batchId, amount: 0, kind: "ADMIN_FREE_SCAN", summary: "Admin Free Scan (web panel)",
+      name: "Admin (web panel)", username: "admin-web", phone: null, files },
+    invoiceId: null,
+    source: "admin-web-free-scan"
+  });
+  job.reportPipeline = PROVIDER_NEUTRAL_PIPELINE;
+  job.adminFreeScan = true;
+  job.amount = 0;
+  job.reportModeSnapshot = REPORT_MODE_AUTO;
+  job.route = "PENDING";
+  job.status = "PROCESSING";
+  savePaidJobs();
+  setImmediate(() => submitPaidJobToActiveProvider(job.jobId).catch(err =>
+    sendAdminMessage("❌ ADMIN WEB FREE BATCH FAILED\nBatch: " + batchId + "\nError: " + safeText(err?.message || err))));
+  return { jobId: job.jobId, files: files.length };
+}
+
 // JK_ADMIN_FREE_BATCH_CONFIRM_V1
 bot.action("ADMIN_FREE_SCAN_START", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery("Admin only.");
@@ -9882,6 +9928,11 @@ async function downloadTelegramFileBuffer(
   // JK_WEB_ORDERS_V1: website uploads are stored on disk, not on Telegram.
   if (webOrders && require("./jk-web-orders.cjs").isWebFileId(fileId)) {
     return webOrders.readWebFile(fileId);
+  }
+
+  // JK_ADMIN_WEB_PANEL_V1: admin web-panel uploads are on disk too.
+  if (adminPanel && require("./jk-admin-panel.cjs").isPanelFileId(fileId)) {
+    return adminPanel.readUpload(fileId);
   }
 
   const link =
@@ -14112,6 +14163,23 @@ app.use(
 
 // JK_SHOP_STORE_V1: the website shop's order list lives on this disk.
 require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR });
+
+// JK_ADMIN_WEB_PANEL_V1: /admin, the Telegram admin tools on the web.
+adminPanel = require("./jk-admin-panel.cjs").createAdminPanel({
+  DATA_DIR, MAX_BATCH_FILES, bot,
+  getPaidJobs: () => paidJobs,
+  getPaymentRefs: () => paymentRefs,
+  isPaymentRefClosed: ref => isPaymentRefClosedForAdmin(ref),
+  confirmPayment: (userId, source) => manuallyConfirmLatestPaymentForUser(userId, source),
+  cancelPayment: (userId, source) => cancelPaymentProcessForUser(userId, source),
+  autoRetry: () => providerAutoRetry,
+  startFreeScan: options => startAdminWebFreeScan(options),
+  supportedScanUpload,
+  freeScanEnabled: () => require("./jk-admin-free-scan-control.cjs").enabled(),
+  isWebUserId: id => require("./jk-web-orders.cjs").isWebUserId(id),
+  sendAdmin: text => sendAdminMessage(text)
+});
+adminPanel.install(app, express);
 
 // JK_WEB_ORDERS_V1: website front door to the same report service.
 webOrders = require("./jk-web-orders.cjs").installWebOrders({

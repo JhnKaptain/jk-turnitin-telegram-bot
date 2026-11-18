@@ -182,20 +182,27 @@ function createAutoRetry({
     return null;
   }
 
+  // RETRY NOW, shared by the Telegram button and the admin web panel.
+  async function retryNow(id) {
+    const found = findBySubmission(id);
+    if (!found) return { ok: false, reason: "not-found" };
+    found.file.providerRetryCount = 0;
+    found.file.providerRetryFirstFailedAt = now();
+    found.file.providerRetryExhausted = false;
+    found.file.providerRetryStopped = false;
+    save();
+    const result = await attempt(found.job.jobId, { force: true });
+    return { ok: result.ran === true, reason: result.reason || null };
+  }
+
   function register(bot, adminId) {
     bot.action(/^PRETRY:([1-9]\d{9})$/, async ctx => {
       if (Number(ctx.from?.id) !== Number(adminId)) return ctx.answerCbQuery("Admin only.");
-      const found = findBySubmission(ctx.match[1]);
-      if (!found) return ctx.answerCbQuery("Check not found.", { show_alert: true });
-      found.file.providerRetryCount = 0;
-      found.file.providerRetryFirstFailedAt = now();
-      found.file.providerRetryExhausted = false;
-      found.file.providerRetryStopped = false;
-      save();
+      if (!findBySubmission(ctx.match[1])) return ctx.answerCbQuery("Check not found.", { show_alert: true });
       await ctx.answerCbQuery("Retrying now…");
-      const result = await attempt(found.job.jobId, { force: true });
-      if (!result.ran && result.reason !== "busy-or-missing") {
-        await sendAdmin("Retry not started: " + result.reason.replace(/-/g, " ") + ".");
+      const result = await retryNow(ctx.match[1]);
+      if (!result.ok && result.reason !== "busy-or-missing") {
+        await sendAdmin("Retry not started: " + String(result.reason || "unknown").replace(/-/g, " ") + ".");
       }
     });
 
@@ -210,7 +217,7 @@ function createAutoRetry({
     });
   }
 
-  return { isTransient, onFailure, attempt, resume, stop, replyMarkup, register, schedule };
+  return { isTransient, onFailure, attempt, resume, stop, retryNow, replyMarkup, register, schedule };
 }
 
 // Admin status buttons: STOP RETRIES while an automatic retry is waiting,
