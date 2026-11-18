@@ -22,6 +22,18 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
   fs.writeFileSync(path.join(run, "reports", "Essay_similarity.pdf"), "%PDF-1.4 fake");
 
   const calls = [];
+  const shopCalls = [];
+  let shopUrl = "https://shop.example.com";
+  const shopOrders = {
+    ORD_1700000000001_1: { id: "ORD_1700000000001_1", productName: "Grammarly", amount: 350, paymentState: "COMPLETE",
+      paymentPhone: "254712345678", createdAt: 3, paymentConfirmedAt: 3, messages: [] },
+    ORD_1700000000002_2: { id: "ORD_1700000000002_2", productName: "Chegg", amount: 500, paymentState: "COMPLETE", createdAt: 2,
+      messages: [{ at: 10, from: "support", text: "Login: a" }, { at: 20, from: "client", text: "It says wrong password" }] },
+    ORD_1700000000003_3: { id: "ORD_1700000000003_3", productName: "Quillbot", amount: 200, paymentState: "COMPLETE", createdAt: 1,
+      messages: [{ at: 10, from: "support", text: "Done" }] },
+    ORD_1700000000004_4: { id: "ORD_1700000000004_4", productName: "Turnitin", amount: 100, paymentState: "PENDING", createdAt: 4 },
+    ORD_1700000000999_9: { id: "ORD_1700000000999_9", productName: "Old", paymentState: "COMPLETE", createdAt: 0, messages: [] }
+  };
   const env = { ADMIN_PANEL_PASSWORD: "" };
   const jobs = { job1: { jobId: "job1", userId: 111, createdAt: 1, status: "API_FAILED", files: [
     { jkSubmissionId: "trn:oid:::1:1234567890", file_name: "Essay.docx", providerStatus: "FAILED",
@@ -55,7 +67,15 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     sendFileToUser: async (u, f, c) => calls.push(["deliver", u, f.name, f.buffer.length, c]),
     finishDelivery: async (u, n) => { calls.push(["done", u, n]); return { jobId: "job1" }; },
     customerOriginal: async f => ({ buffer: Buffer.from("ORIGINAL"), name: f.file_name }),
-    processingMaxMinutes: () => 20
+    processingMaxMinutes: () => 20,
+    // JK_ADMIN_OTHER_SERVICES_V1: website shop orders
+    shop: { enabled: () => true, key: () => "K".repeat(20), serviceUrl: () => shopUrl, readOrders: () => shopOrders },
+    fetchImpl: async (url, init) => {
+      shopCalls.push([url, init.method, init.headers.Authorization, init.headers["X-File-Name"] || null,
+        Buffer.isBuffer(init.body) ? init.body.length : JSON.parse(init.body || "{}").text]);
+      if (String(url).includes("ORD_1700000000999_9")) return { ok: false, status: 404, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    }
   };
   const panel = createAdminPanel(panelDeps);
   const app = express();
@@ -208,6 +228,53 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     assert.equal(th.messages[0].text, "Hello, where is my report?");
     assert(th.waiting);
 
+    // 10d. Free scans never fill Needs action; Mark done clears an order until the customer writes again.
+    jobs.job5 = { jobId: "job5", userId: 666, adminFreeScan: true, createdAt: Date.now(), status: "API_FAILED",
+      files: [{ jkSubmissionId: "trn:oid:::1:5555555555", providerStatus: "FAILED" }] };
+    act = await (await req("/admin/api/overview?view=action", { headers: S })).json();
+    assert(!act.jobs.some(j => j.jobId === "job5"), "free scans stay out of Needs action");
+    assert.equal((await req("/admin/api/jobs/job2/done", { method: "POST", headers: J, body: "{}" })).status, 200);
+    act = await (await req("/admin/api/overview?view=action", { headers: S })).json();
+    assert(!act.jobs.some(j => j.jobId === "job2"), "marked done");
+    await new Promise(r => setTimeout(r, 5));
+    panelDeps.messages.log(333, "customer", "One more question");
+    act = await (await req("/admin/api/overview?view=action", { headers: S })).json();
+    assert.deepEqual(act.jobs.find(j => j.jobId === "job2").needs, ["Customer waiting for a reply"], "back when the customer writes");
+    await req("/admin/api/jobs/job2/done", { method: "POST", headers: J, body: JSON.stringify({ done: false }) });
+    assert.equal((await req("/admin/api/jobs/nope/done", { method: "POST", headers: J, body: "{}" })).status, 404);
+
+    // 10e. Other services: website shop orders.
+    let shop = await (await req("/admin/api/shop?view=action", { headers: S })).json();
+    assert.deepEqual(shop.orders.map(o => [o.id, o.needs]), [
+      ["ORD_1700000000001_1", ["Paid — not delivered yet"]],
+      ["ORD_1700000000002_2", ["Customer waiting for a reply"]],
+      ["ORD_1700000000999_9", ["Paid — not delivered yet"]]]);
+    assert.equal(shop.counts.action, 3);
+    assert.equal(shop.orders[1].messages[1].from, "customer");
+    shop = await (await req("/admin/api/shop?view=all&q=quill", { headers: S })).json();
+    assert.deepEqual(shop.orders.map(o => o.id), ["ORD_1700000000003_3"]);
+    shop = await (await req("/admin/api/shop?view=paid", { headers: S })).json();
+    assert(!shop.orders.some(o => o.id === "ORD_1700000000004_4"), "unpaid hidden from Paid");
+    // Mark done
+    await req("/admin/api/shop/ORD_1700000000001_1/done", { method: "POST", headers: J, body: "{}" });
+    shop = await (await req("/admin/api/shop?view=action", { headers: S })).json();
+    assert(!shop.orders.some(o => o.id === "ORD_1700000000001_1"));
+    assert.equal((await req("/admin/api/shop/bad/done", { method: "POST", headers: J, body: "{}" })).status, 400);
+    // Reply and file go through the shop service with the shared key.
+    assert.equal((await req("/admin/api/shop/ORD_1700000000002_2/reply", { method: "POST", headers: J, body: JSON.stringify({ text: "Try again now" }) })).status, 200);
+    assert.deepEqual(shopCalls.at(-1), ["https://shop.example.com/api/admin/orders/ORD_1700000000002_2/reply", "POST", "Bearer " + "K".repeat(20), null, "Try again now"]);
+    assert.equal((await req("/admin/api/shop/ORD_1700000000002_2/file", { method: "PUT",
+      headers: { ...S, "X-File-Name": encodeURIComponent("Guide.pdf") }, body: "PDF" })).status, 200);
+    assert.deepEqual(shopCalls.at(-1).slice(1), ["PUT", "Bearer " + "K".repeat(20), encodeURIComponent("Guide.pdf"), 3]);
+    // Shop not updated yet → clear message; address unknown → clear message.
+    const old = await req("/admin/api/shop/ORD_1700000000999_9/reply", { method: "POST", headers: J, body: JSON.stringify({ text: "x" }) });
+    assert.equal(old.status, 502);
+    assert.match((await old.json()).error, /deploy the shop update/);
+    shopUrl = null;
+    const unknown = await req("/admin/api/shop/ORD_1700000000002_2/reply", { method: "POST", headers: J, body: JSON.stringify({ text: "x" }) });
+    assert.equal(unknown.status, 503);
+    shopUrl = "https://shop.example.com";
+
     // 11. Logout ends the session.
     await req("/admin/api/logout", { method: "POST", headers: S });
     assert.equal((await req("/admin/api/overview", { headers: S })).status, 401);
@@ -231,5 +298,7 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
   console.log("PASS: /admin is off without a 12+ character password; secure headers, header + session on every call.");
   console.log("PASS: 5 wrong passwords lock an address; authenticator codes (RFC 6238); secure session cookie; logout.");
   console.log("PASS: order desk: Needs action inbox, search, customer file, conversation, reply, notes, send files + done.");
+  console.log("PASS: free scans out of Needs action; Mark done until the customer writes again.");
+  console.log("PASS: other services: shop orders inbox, search, Mark done, reply + file via the shop service.");
   console.log("PASS: orders, report downloads (no path tricks), retry/stop, confirm/cancel, upload + free scan, send file.");
 })().catch(error => { console.error(error); process.exitCode = 1; });

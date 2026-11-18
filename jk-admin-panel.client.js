@@ -11,6 +11,12 @@
   let view = "action";
   let search = "";
   let drawerUser = null;
+  // JK_ADMIN_OTHER_SERVICES_V1: Reports <-> Other services (website shop).
+  let section = "reports";
+  try { if (localStorage.getItem("jkSection") === "shop") section = "shop"; } catch {}
+  let shopView = "action";
+  let shopSearch = "";
+  let shopData = null;
   const selected = new Set(); // JK_DELETE_FILES_NOW_V1: chosen report IDs
 
   function toast(text, ms = 3500) {
@@ -109,6 +115,8 @@
         (j.adminFreeScan ? '' : '<div class="row actions">' +
           '<button class="btn primary" data-send="' + esc(j.userId) + '">📤 Send files</button>' +
           '<button class="btn" data-open="' + esc(j.userId) + '">💬 Reply / notes</button>' +
+          (j.done ? '<button class="btn" data-jobundo="' + esc(j.jobId) + '">↩ Undo done</button>'
+            : '<button class="btn" data-jobdone="' + esc(j.jobId) + '">✔ Mark done</button>') +
           (pendingPay.has(String(j.userId)) ?
             '<button class="btn" data-confirm="' + esc(j.userId) + '">✅ Confirm pay</button>' +
             '<button class="btn danger" data-cancel="' + esc(j.userId) + '">🛑 Cancel pay</button>' : '') +
@@ -144,9 +152,70 @@
         '<button class="btn" data-open="' + esc(p.userId) + '">💬 Reply / notes</button></div></div>';
     }).join("");
   }
+  // --- Other services: website shop orders --------------------------------
+  const kes = v => v == null ? "" : "KES " + esc(v);
+  function shopBusy() {
+    const box = $("shopList"); if (!box) return false;
+    const a = document.activeElement;
+    if (a && box.contains(a) && /^(TEXTAREA|INPUT)$/.test(a.tagName) && a.type !== "checkbox") return true;
+    return [...box.querySelectorAll("input[type=file]")].some(i => i.files && i.files.length);
+  }
+  function renderShop() {
+    const box = $("shopList");
+    document.querySelectorAll("[data-sview]").forEach(b => b.classList.toggle("on", b.dataset.sview === shopView));
+    if (!shopData.enabled) {
+      box.innerHTML = '<div class="card muted">The shop is not connected: SHOP_STORE_KEY is not set on this service.</div>';
+      return;
+    }
+    const warn = shopData.serviceKnown ? "" : '<div class="card warn">Replies and files need the shop update deployed. Until then you can read orders here and reply on Telegram.</div>';
+    const empty = shopView === "action" ? "Nothing needs you right now. 🎉" : "No shop orders found.";
+    box.innerHTML = warn + (shopData.orders.map(o => (
+      '<div class="card' + (o.needs.length ? ' need' : '') + '" data-shop="' + esc(o.id) + '">' +
+      '<div class="row"><strong>🛍 ' + esc(o.product) + '</strong>' +
+      (o.amount != null ? '<span class="muted">' + kes(o.amount) + '</span>' : '') +
+      (o.paid ? '<span class="chip ok">Paid</span>' : '<span class="chip">' + esc((o.paymentState || "Unpaid").toLowerCase()) + '</span>') +
+      (o.done ? '<span class="chip">Done</span>' : '') +
+      '<span class="muted">' + esc(o.id) + ' · ' + esc(when(o.paidAt || o.createdAt)) + '</span></div>' +
+      (o.needs.length ? '<div class="row" style="margin-top:6px">' + o.needs.map(n => '<span class="chip bad">⚠ ' + esc(n) + '</span>').join("") + '</div>' : '') +
+      '<p class="muted" style="margin:8px 0 0">' +
+      (o.phone ? 'Paid from ' + esc(o.phone) : '') + (o.mpesaName ? ' · M-Pesa name: ' + esc(o.mpesaName) : '') +
+      (o.whatsapp ? ' · <a class="dl" target="_blank" rel="noopener noreferrer" href="https://wa.me/' + esc(o.whatsapp) + '">WhatsApp ' + esc(o.whatsapp) + '</a>' : '') + '</p>' +
+      (o.paid ? (
+        '<div class="thread">' + (o.messages.length ? o.messages.map(m => (
+          '<div class="msg ' + (m.from === "customer" ? "in" : "out") + (m.file ? " file" : "") + '">' +
+          (m.file ? "📎 " + esc(m.file.name) + (m.text ? " — " : "") : "") + esc(m.text) +
+          '<div class="meta">' + (m.from === "customer" ? "Customer" : "You") + ' · ' + esc(when(m.at)) + '</div></div>'
+        )).join("") : '<p class="muted">No messages yet.</p>') + '</div>' +
+        '<label>Reply (logins, instructions…)</label><textarea rows="2" data-sreplytext="' + esc(o.id) + '"></textarea>' +
+        '<div class="row" style="margin-top:8px"><button class="btn primary" data-sreply="' + esc(o.id) + '">💬 Send reply</button></div>' +
+        '<label>Send a file</label><input type="file" data-sfile="' + esc(o.id) + '">' +
+        '<div class="row" style="margin-top:8px"><button class="btn" data-sfilebtn="' + esc(o.id) + '">📎 Send file</button>' +
+        (o.done ? '<button class="btn" data-sundo="' + esc(o.id) + '">↩ Undo done</button>'
+          : '<button class="btn" data-sdone="' + esc(o.id) + '">✔ Mark done</button>') + '</div>'
+      ) : '<p class="muted">Not paid — nothing to deliver.</p>') +
+      '</div>'
+    )).join("") || '<div class="card muted">' + empty + '</div>');
+    box.querySelectorAll(".thread").forEach(t => { t.scrollTop = t.scrollHeight; });
+  }
+  function applySection() {
+    document.querySelectorAll("[data-section]").forEach(b => b.classList.toggle("on", b.dataset.section === section));
+    $("reportsSection").classList.toggle("hidden", section !== "reports");
+    $("reportsNav").classList.toggle("hidden", section !== "reports");
+    $("shopSection").classList.toggle("hidden", section !== "shop");
+  }
+  async function refreshShop() {
+    const r = await api("/admin/api/shop?view=" + shopView + "&q=" + encodeURIComponent(shopSearch));
+    shopData = r;
+    $("cntShop").textContent = r.counts.action ? " (" + r.counts.action + ")" : "";
+    $("cntShopTab").textContent = r.counts.action ? " (" + r.counts.action + ")" : "";
+    if (section === "shop" && !shopBusy()) renderShop();
+  }
+
   async function refresh() {
     try {
+      await refreshShop().catch(e => { if (e.message === "Please log in.") throw e; });
       data = await api("/admin/api/overview?view=" + view + "&q=" + encodeURIComponent(search));
+      $("cntReports").textContent = data.counts?.action ? " (" + data.counts.action + ")" : "";
       renderOrders(); renderPayments();
       $("scanState").textContent = data.freeScanEnabled ? "" : "Admin Free Scan is currently disabled in the bot settings.";
       $("updated").textContent = "Updated " + new Date(data.now).toLocaleTimeString([], { timeStyle: "short" });
@@ -250,6 +319,13 @@
     renderOrders();
   });
 
+  let shopSearchTimer = null;
+  $("shopSearch").addEventListener("input", () => {
+    clearTimeout(shopSearchTimer);
+    shopSearchTimer = setTimeout(() => { shopSearch = $("shopSearch").value.trim(); refreshShop().catch(e => toast(e.message)); }, 300);
+  });
+  applySection();
+
   let searchTimer = null;
   $("search").addEventListener("input", () => {
     clearTimeout(searchTimer);
@@ -260,6 +336,60 @@
     const t = ev.target.closest("button,a");
     if (!t) return;
     if (t.dataset.view) { view = t.dataset.view; selected.clear(); refresh(); return; }
+    if (t.dataset.section) {
+      section = t.dataset.section;
+      try { localStorage.setItem("jkSection", section); } catch {}
+      applySection(); if (section === "shop" && shopData) renderShop(); refresh(); return;
+    }
+    if (t.dataset.sview) { shopView = t.dataset.sview; refreshShop().catch(e => toast(e.message)); return; }
+    if (t.dataset.jobdone || t.dataset.jobundo) {
+      const id = t.dataset.jobdone || t.dataset.jobundo;
+      t.disabled = true;
+      try {
+        await api("/admin/api/jobs/" + encodeURIComponent(id) + "/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ done: !!t.dataset.jobdone }) });
+        toast(t.dataset.jobdone ? "Marked done." : "Back in Needs action."); await refresh();
+      } catch (e) { toast(e.message); } finally { t.disabled = false; }
+      return;
+    }
+    if (t.dataset.sdone || t.dataset.sundo) {
+      const id = t.dataset.sdone || t.dataset.sundo;
+      t.disabled = true;
+      try {
+        await api("/admin/api/shop/" + id + "/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ done: !!t.dataset.sdone }) });
+        toast(t.dataset.sdone ? "Marked done." : "Back in Needs action."); await refreshShop();
+      } catch (e) { toast(e.message); } finally { t.disabled = false; }
+      return;
+    }
+    if (t.dataset.sreply) {
+      const id = t.dataset.sreply;
+      const box = document.querySelector('[data-sreplytext="' + id + '"]');
+      const text = (box.value || "").trim();
+      if (!text) return toast("Write a message first.");
+      t.disabled = true;
+      try {
+        await api("/admin/api/shop/" + id + "/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+        box.value = ""; box.blur(); toast("Reply sent — it shows on the customer's order page.");
+        setTimeout(() => refreshShop().catch(() => {}), 2500);
+      } catch (e) { toast(e.message, 7000); } finally { t.disabled = false; }
+      return;
+    }
+    if (t.dataset.sfilebtn) {
+      const id = t.dataset.sfilebtn;
+      const input = document.querySelector('[data-sfile="' + id + '"]');
+      const f = input.files && input.files[0];
+      if (!f) return toast("Choose a file first.");
+      if (f.size > 20 * 1024 * 1024) return toast("Files must be 20 MB or smaller.");
+      const caption = (document.querySelector('[data-sreplytext="' + id + '"]').value || "").trim();
+      t.disabled = true; toast("Sending " + f.name + "…", 20000);
+      try {
+        await api("/admin/api/shop/" + id + "/file", { method: "PUT", body: f, headers: {
+          "X-File-Name": encodeURIComponent(f.name), "X-Caption": encodeURIComponent(caption), "Content-Type": "application/octet-stream" } });
+        input.value = ""; document.querySelector('[data-sreplytext="' + id + '"]').value = "";
+        toast("File sent — the customer can download it on their order page.");
+        setTimeout(() => refreshShop().catch(() => {}), 2500);
+      } catch (e) { toast(e.message, 7000); } finally { t.disabled = false; }
+      return;
+    }
     if (t.id === "delClear") { selected.clear(); renderOrders(); return; }
     if (t.id === "delBtn") {
       const ids = [...selected];

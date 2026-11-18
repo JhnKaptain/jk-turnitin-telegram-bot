@@ -14187,7 +14187,7 @@ app.use(
 );
 
 // JK_SHOP_STORE_V1: the website shop's order list lives on this disk.
-require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR });
+const shopStore = require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR });
 
 // JK_ADMIN_WEB_PANEL_V1: /admin, the Telegram admin tools on the web.
 // JK_ADMIN_ORDER_DESK_V1: what the Telegram order buttons do, as functions the
@@ -14319,6 +14319,7 @@ adminPanel = require("./jk-admin-panel.cjs").createAdminPanel({
   sendFileToUser: (userId, file, caption) => adminSendFileToUser(userId, file, caption),
   finishDelivery: (userId, count) => adminFinishDelivery(userId, count),
   customerOriginal: file => adminCustomerOriginal(file),
+  shop: shopStore, // JK_ADMIN_OTHER_SERVICES_V1: website shop orders (Grammarly, Chegg...)
   processingMaxMinutes: () => REPORT_PROCESSING_MAX_MINUTES,
   getPaidJobs: () => paidJobs,
   getPaymentRefs: () => paymentRefs,

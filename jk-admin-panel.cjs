@@ -151,14 +151,31 @@ function createAdminPanel(d) {
     return null;
   }
 
+  // JK_ADMIN_OTHER_SERVICES_V1: "Mark done" for orders and shop orders. An item
+  // comes back to Needs action only when the customer writes again afterwards.
+  const doneFile = path.join(path.resolve(d.DATA_DIR), "admin-done.json");
+  let doneMarks = {};
+  try { doneMarks = JSON.parse(fs.readFileSync(doneFile, "utf8")) || {}; } catch {}
+  function setDone(key, on) {
+    if (on) doneMarks[key] = now(); else delete doneMarks[key];
+    const cutoff = now() - 120 * 86400000;
+    for (const [k, at] of Object.entries(doneMarks)) if (at < cutoff) delete doneMarks[k];
+    const tmp = doneFile + ".tmp";
+    fs.mkdirSync(path.dirname(doneFile), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(doneMarks));
+    fs.renameSync(tmp, doneFile);
+  }
+
   // JK_ADMIN_ORDER_DESK_V1: why an order needs the admin (empty = nothing to do).
   const CLOSED = new Set(["DELIVERED", "CLOSED", "CANCELLED", "ADMIN_CANCELLED"]);
   const ACTION_DAYS = 7;
   function actionReasons(job) {
     const status = String(job.status || "").toUpperCase();
     const reasons = [];
+    const doneAt = doneMarks["job:" + job.jobId] || 0;
     const waitingSince = d.messages?.waiting(job.userId);
-    if (waitingSince) reasons.push("Customer waiting for a reply");
+    if (waitingSince && waitingSince > doneAt) reasons.push("Customer waiting for a reply");
+    if (doneAt || job.adminFreeScan) return reasons; // marked done / the admin's own test scans
     if (now() - Number(job.createdAt || job.paidAt || 0) > ACTION_DAYS * 86400000) return reasons;
     if (CLOSED.has(status)) return reasons;
     const live = (job.files || []).filter(f => !f.providerFilesDeletedAt);
@@ -172,6 +189,77 @@ function createAdminPanel(d) {
       reasons.push("Not delivered after " + maxMin + " min");
     }
     return reasons;
+  }
+
+  // JK_ADMIN_OTHER_SERVICES_V1: website shop orders (Grammarly, Chegg...).
+  const SHOP_ID_RE = /^ORD_\d{10,16}_\d{1,6}$/;
+  function shopNeeds(o) {
+    if (o.paymentState !== "COMPLETE") return [];
+    const msgs = Array.isArray(o.messages) ? o.messages : [];
+    const doneAt = doneMarks["shop:" + o.id] || 0;
+    const last = msgs[msgs.length - 1];
+    const reasons = [];
+    if (last && last.from === "client" && Number(last.at || 0) > doneAt) reasons.push("Customer waiting for a reply");
+    if (!doneAt && !msgs.some(m => m.from === "support")) reasons.push("Paid — not delivered yet");
+    return reasons;
+  }
+  function shopOverview(query = {}) {
+    const view = ["action", "paid", "all"].includes(query.view) ? query.view : "action";
+    const q = String(query.q || "").trim().toLowerCase().slice(0, 80);
+    const all = Object.values(d.shop?.readOrders?.() || {})
+      .filter(o => o && SHOP_ID_RE.test(String(o.id || "")))
+      .sort((a, b) => Number(b.paymentConfirmedAt || b.createdAt || 0) - Number(a.paymentConfirmedAt || a.createdAt || 0));
+    const action = all.filter(o => shopNeeds(o).length);
+    const list = (view === "action" ? action : view === "paid" ? all.filter(o => o.paymentState === "COMPLETE") : all)
+      .filter(o => !q || [o.id, o.productName, o.paymentPhone, o.mpesaName, o.deliveryWhatsAppNumber]
+        .some(v => String(v ?? "").toLowerCase().includes(q)))
+      .slice(0, 60)
+      .map(o => ({
+        id: o.id,
+        product: o.productName || "Product",
+        amount: o.amount ?? null,
+        phone: o.paymentPhone || null,
+        mpesaName: o.mpesaName || null,
+        whatsapp: o.deliveryWhatsAppNumber || null,
+        paid: o.paymentState === "COMPLETE",
+        paymentState: o.paymentState || null,
+        createdAt: o.createdAt || null,
+        paidAt: o.paymentConfirmedAt || null,
+        needs: shopNeeds(o),
+        done: doneMarks["shop:" + o.id] || null,
+        messages: (o.messages || []).slice(-50).map(m => ({
+          at: m.at, from: m.from === "client" ? "customer" : "admin", text: String(m.text || "").slice(0, 2000),
+          file: m.file ? { name: m.file.name || "file", size: m.file.size || 0 } : null
+        }))
+      }));
+    return {
+      view, orders: list, counts: { action: action.length },
+      enabled: Boolean(d.shop?.enabled?.()), serviceKnown: Boolean(d.shop?.serviceUrl?.()), now: now()
+    };
+  }
+  async function shopCall(orderId, pathname, init) {
+    const base = d.shop?.serviceUrl?.();
+    if (!d.shop?.enabled?.() || !base) {
+      const e = new Error("The shop service address is not known yet. It is learned the next time the shop saves an order (after the shop update is deployed), or set SHOP_SERVICE_URL on this service.");
+      e.status = 503; throw e;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45000);
+    try {
+      const res = await (d.fetchImpl || fetch)(base + "/api/admin/orders/" + encodeURIComponent(orderId) + pathname, {
+        ...init, signal: controller.signal,
+        headers: { Authorization: "Bearer " + d.shop.key(), ...(init.headers || {}) }
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 404 && !body.error) {
+        const e = new Error("The shop service does not accept panel messages yet — deploy the shop update."); e.status = 502; throw e;
+      }
+      if (!res.ok) { const e = new Error(body.error || "Shop service error (" + res.status + ")"); e.status = res.status >= 500 ? 502 : res.status; throw e; }
+      return body;
+    } catch (error) {
+      if (error.name === "AbortError") { const e = new Error("The shop service did not answer in time. Try again."); e.status = 504; throw e; }
+      throw error;
+    } finally { clearTimeout(timer); }
   }
 
   function overview(query = {}) {
@@ -198,6 +286,7 @@ function createAdminPanel(d) {
         paidAt: job.paidAt || null,
         deliveredAt: job.deliveredAt || null,
         needs: reasonsOf.get(job),
+        done: doneMarks["job:" + job.jobId] || null,
         userId: job.userId,
         createdAt: job.createdAt || null,
         status: job.status || null,
@@ -346,6 +435,47 @@ function createAdminPanel(d) {
     });
 
     app.get("/admin/api/overview", guard, handle(async (req, res) => res.json(overview(req.query || {}))));
+
+    // JK_ADMIN_OTHER_SERVICES_V1: Mark done, and the website shop orders.
+    app.post("/admin/api/jobs/:jobId/done", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      const job = (d.getPaidJobs() || {})[String(req.params.jobId)];
+      if (!job) return res.status(404).json({ error: "Order not found." });
+      setDone("job:" + job.jobId, req.body?.done !== false);
+      res.json({ ok: true });
+    }));
+    const shopId = req => {
+      const id = String(req.params.id || "");
+      if (!SHOP_ID_RE.test(id)) { const e = new Error("Invalid order ID."); e.status = 400; throw e; }
+      return id;
+    };
+    app.get("/admin/api/shop", guard, handle(async (req, res) => res.json(shopOverview(req.query || {}))));
+    app.post("/admin/api/shop/:id/done", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      const id = shopId(req);
+      if (!(d.shop?.readOrders?.() || {})[id]) return res.status(404).json({ error: "Order not found." });
+      setDone("shop:" + id, req.body?.done !== false);
+      res.json({ ok: true });
+    }));
+    app.post("/admin/api/shop/:id/reply", guard, express.json({ limit: "16kb" }), handle(async (req, res) => {
+      const id = shopId(req);
+      const text = String(req.body?.text || "").trim().slice(0, 2000);
+      if (!text) return res.status(400).json({ error: "Write a message first." });
+      await shopCall(id, "/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      res.json({ ok: true });
+    }));
+    app.put("/admin/api/shop/:id/file", guard,
+      express.raw({ type: () => true, limit: MAX_UPLOAD_BYTES + 1024 }),
+      handle(async (req, res) => {
+        const id = shopId(req);
+        const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        if (!buffer.length) return res.status(400).json({ error: "The file is empty." });
+        if (!req.get("X-File-Name")) return res.status(400).json({ error: "File name missing." });
+        await shopCall(id, "/file", { method: "PUT", body: buffer, headers: {
+          "Content-Type": "application/octet-stream",
+          "X-File-Name": String(req.get("X-File-Name")).slice(0, 600),
+          "X-Caption": String(req.get("X-Caption") || "").slice(0, 3000)
+        } });
+        res.json({ ok: true });
+      }));
 
     // JK_ADMIN_ORDER_DESK_V1: the Telegram order buttons, on the web.
     const UID_RE = /^[1-9]\d{0,16}$/;

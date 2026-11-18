@@ -12,7 +12,7 @@ const { installShopStore } = require("./jk-shop-store.cjs");
   const key = "k".repeat(32);
   const app = express();
   app.use(express.json({ limit: "15mb" }));
-  installShopStore({ app, dataDir, key });
+  const store = installShopStore({ app, dataDir, key });
   const off = express(); off.use(express.json()); installShopStore({ app: off, dataDir, key: "" });
   const server = app.listen(0), offServer = off.listen(0);
   const url = s => `http://127.0.0.1:${s.address().port}/api/shop-store`;
@@ -27,9 +27,17 @@ const { installShopStore } = require("./jk-shop-store.cjs");
   assert.deepEqual((await (await fetch(url(server), { headers: auth })).json()).orders, orders, "round trip");
   assert(fs.existsSync(path.join(dataDir, "shop-orders.store.json")), "saved on the persistent disk");
   assert.equal((await fetch(url(server), { method: "PUT", headers: auth, body: JSON.stringify({ orders: [] }) })).status, 400);
+  // JK_ADMIN_OTHER_SERVICES_V1: the shop's address is learned from its saves (https only).
+  assert.equal(store.serviceUrl(), null);
+  await fetch(url(server), { method: "PUT", headers: auth, body: JSON.stringify({ orders, serviceUrl: "javascript:alert(1)" }) });
+  assert.equal(store.serviceUrl(), null, "only https addresses");
+  await fetch(url(server), { method: "PUT", headers: auth, body: JSON.stringify({ orders, serviceUrl: "https://jk-shop.onrender.com/" }) });
+  assert.equal(store.serviceUrl(), "https://jk-shop.onrender.com");
+  assert.deepEqual(store.readOrders(), orders);
+  assert.equal(store.enabled(), true);
   assert.equal((await fetch(url(offServer), { headers: auth })).status, 404, "off without SHOP_STORE_KEY");
   const bot = fs.readFileSync(path.join(__dirname, "bot.js"), "utf8");
-  assert(bot.includes('require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR })'), "installed in bot.js");
+  assert(bot.includes('require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR })') && bot.includes("shop: shopStore,"), "installed in bot.js");
 
   server.close(); offServer.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
