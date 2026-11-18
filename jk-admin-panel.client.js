@@ -6,6 +6,7 @@
   const H = { "X-Admin-Panel": "1" };
   let data = null;
   let timer = null;
+  const selected = new Set(); // JK_DELETE_FILES_NOW_V1: chosen report IDs
 
   function toast(text, ms = 3500) {
     const m = $("msg"); m.textContent = text; m.style.display = "block";
@@ -45,24 +46,44 @@
   }
   function renderOrders() {
     const box = $("tab-orders");
-    if (!data.jobs.length) { box.innerHTML = '<div class="card muted">No orders yet.</div>'; return; }
-    box.innerHTML = data.jobs.map(j => (
-      '<div class="card"><div class="row"><strong>' + (j.adminFreeScan ? "Free scan" : "Order") + '</strong>' +
+    if (!data.jobs.length) { box.innerHTML = '<div class="card muted">No orders yet.</div>'; updateDeleteBar(); return; }
+    const can = f => f.id && !f.deleted;
+    const live = new Set(data.jobs.flatMap(j => j.files.filter(can).map(f => f.id)));
+    for (const id of [...selected]) if (!live.has(id)) selected.delete(id);
+    box.innerHTML = '<div id="delBar" class="card row hidden"><strong id="delCount"></strong>' +
+      '<button class="btn danger" id="delBtn">🗑 Delete selected</button><button class="btn" id="delClear">Clear</button></div>' +
+      data.jobs.map(j => {
+      const ids = j.files.filter(can).map(f => f.id);
+      const all = ids.length && ids.every(id => selected.has(id));
+      return (
+      '<div class="card"><div class="row">' +
+      (ids.length ? '<input type="checkbox" class="pick" title="Select all files in this order" data-all="' + esc(ids.join(",")) + '"' + (all ? ' checked' : '') + '>' : '') +
+      '<strong>' + (j.adminFreeScan ? "Free scan" : "Order") + '</strong>' +
       '<span class="chip">' + esc(j.status || "") + '</span>' +
       '<span class="muted">User ' + esc(j.userId) + ' · ' + esc(when(j.createdAt)) + '</span></div>' +
       j.files.map(f => (
-        '<div class="file"><div class="row"><strong>' + esc(f.name) + '</strong>' + fileStatus(f, data.now) +
+        '<div class="file"><div class="row">' +
+        (can(f) ? '<input type="checkbox" class="pick" data-pick="' + esc(f.id) + '"' + (selected.has(f.id) ? ' checked' : '') + '>' : '') +
+        '<strong>' + esc(f.name) + '</strong>' + fileStatus(f, data.now) +
+        (f.deleted ? '<span class="chip">Files deleted</span>' : '') +
+        (f.id ? '<span class="muted">ID ' + esc(f.id) + '</span>' : '') +
         (f.similarity != null ? '<span class="muted">Similarity ' + Math.round(f.similarity) + '%</span>' : '') +
         (f.ai != null ? '<span class="muted">AI ' + Math.round(f.ai) + '%</span>' : '') + '</div>' +
         (f.error ? '<div class="err bad">' + esc(f.error) + '</div>' : '') +
         '<div class="row" style="margin-top:6px">' +
         f.reports.map(r => '<a class="dl" href="/admin/api/files/' + esc(f.id) + '/reports/' + encodeURIComponent(r) + '" data-dl="1">⬇ ' + esc(r) + '</a>').join(" ") +
-        (f.status === "FAILED" && f.id ? (
+        (f.status === "FAILED" && f.id && !f.deleted ? (
           (f.retryAt && !f.retryStopped ? '<button class="btn danger" data-stop="' + esc(f.id) + '">Stop retries</button>' : '') +
           '<button class="btn" data-retry="' + esc(f.id) + '">Retry now</button>') : '') +
         '</div></div>'
-      )).join("") + '</div>'
-    )).join("");
+      )).join("") + '</div>');
+    }).join("");
+    updateDeleteBar();
+  }
+  function updateDeleteBar() {
+    const bar = $("delBar"); if (!bar) return;
+    bar.classList.toggle("hidden", !selected.size);
+    $("delCount").textContent = selected.size + " selected";
   }
   function renderPayments() {
     const box = $("tab-payments");
@@ -91,9 +112,32 @@
   }
 
   // --- actions --------------------------------------------------------------
+  document.addEventListener("change", ev => {
+    const t = ev.target;
+    if (!t.classList || !t.classList.contains("pick")) return;
+    const ids = t.dataset.all ? t.dataset.all.split(",") : [t.dataset.pick];
+    ids.forEach(id => t.checked ? selected.add(id) : selected.delete(id));
+    renderOrders();
+  });
+
   document.addEventListener("click", async ev => {
     const t = ev.target.closest("button,a");
     if (!t) return;
+    if (t.id === "delClear") { selected.clear(); renderOrders(); return; }
+    if (t.id === "delBtn") {
+      const ids = [...selected];
+      if (!ids.length) return;
+      if (!confirm("Delete the stored files and reports for " + ids.length + " file(s)?\n\nThis cannot be undone. Files sent in Telegram also stay on Telegram's own servers.")) return;
+      t.disabled = true;
+      try {
+        const r = await api("/admin/api/files/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+        r.deleted.forEach(id => selected.delete(id));
+        toast("Deleted " + r.deleted.length + " file(s)." + (r.skipped.length ? " Skipped: " + r.skipped.map(s => s.id + " (" + s.reason + ")").join("; ") : ""), 8000);
+        await refresh();
+      } catch (e) { toast(e.message); }
+      finally { t.disabled = false; }
+      return;
+    }
     if (t.dataset.tab) {
       document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b === t));
       ["orders", "payments", "scan", "send"].forEach(n => $("tab-" + n).classList.toggle("hidden", n !== t.dataset.tab));
