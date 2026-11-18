@@ -151,13 +151,53 @@ function createAdminPanel(d) {
     return null;
   }
 
-  function overview() {
-    const jobs = Object.values(d.getPaidJobs() || {})
+  // JK_ADMIN_ORDER_DESK_V1: why an order needs the admin (empty = nothing to do).
+  const CLOSED = new Set(["DELIVERED", "CLOSED", "CANCELLED", "ADMIN_CANCELLED"]);
+  const ACTION_DAYS = 7;
+  function actionReasons(job) {
+    const status = String(job.status || "").toUpperCase();
+    const reasons = [];
+    const waitingSince = d.messages?.waiting(job.userId);
+    if (waitingSince) reasons.push("Customer waiting for a reply");
+    if (now() - Number(job.createdAt || job.paidAt || 0) > ACTION_DAYS * 86400000) return reasons;
+    if (CLOSED.has(status)) return reasons;
+    const live = (job.files || []).filter(f => !f.providerFilesDeletedAt);
+    const waitingRetry = live.some(f => f.providerStatus === "FAILED" && f.providerRetryAt && !f.providerRetryStopped);
+    if (status === "CANCEL_REQUESTED") reasons.push("Customer asked to cancel");
+    if (/MANUAL/.test(status) || live.some(f => f.providerStatus === "MANUAL_REQUIRED")) reasons.push("Manual report needed");
+    else if (job.route === "MANUAL" && !job.adminFreeScan) reasons.push("Manual order");
+    if (!waitingRetry && (/FAILED|PARTIAL$/.test(status) || live.some(f => f.providerStatus === "FAILED"))) reasons.push("Check failed");
+    const maxMin = Number(d.processingMaxMinutes?.() || 20);
+    if (!job.adminFreeScan && !reasons.length && job.paidAt && now() - Number(job.paidAt) > maxMin * 60000) {
+      reasons.push("Not delivered after " + maxMin + " min");
+    }
+    return reasons;
+  }
+
+  function overview(query = {}) {
+    const view = ["action", "all", "free"].includes(query.view) ? query.view : "action";
+    const q = String(query.q || "").trim().toLowerCase().slice(0, 80);
+    const matches = job => !q || [job.userId, job.name, job.username, job.jobId,
+      ...(job.files || []).flatMap(f => [f.file_name, idOf(f)])]
+      .some(v => String(v ?? "").toLowerCase().includes(q));
+    const all = Object.values(d.getPaidJobs() || {})
       .filter(j => j && Array.isArray(j.files))
-      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
-      .slice(0, 40)
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+    const counts = { action: 0 };
+    const reasonsOf = new Map(all.map(j => [j, actionReasons(j)]));
+    for (const r of reasonsOf.values()) if (r.length) counts.action++;
+    const jobs = all
+      .filter(j => view === "all" || (view === "free" ? j.adminFreeScan : reasonsOf.get(j).length))
+      .filter(matches)
+      .slice(0, 60)
       .map(job => ({
         jobId: job.jobId,
+        name: job.name && job.name !== "N/A" ? job.name : null,
+        username: job.username && job.username !== "N/A" ? job.username : null,
+        web: d.isWebUserId?.(job.userId) === true,
+        paidAt: job.paidAt || null,
+        deliveredAt: job.deliveredAt || null,
+        needs: reasonsOf.get(job),
         userId: job.userId,
         createdAt: job.createdAt || null,
         status: job.status || null,
@@ -175,7 +215,8 @@ function createAdminPanel(d) {
           retryExhausted: f.providerRetryExhausted === true,
           similarity: f.providerSimilarityPercent ?? null,
           ai: f.providerAiPercent ?? null,
-          reports: reportsFor(f)
+          deleted: f.providerFilesDeletedAt || null,
+          reports: f.providerFilesDeletedAt ? [] : reportsFor(f)
         }))
       }));
     const payments = Object.entries(d.getPaymentRefs() || {})
@@ -202,7 +243,13 @@ function createAdminPanel(d) {
           autoConfirmAt: r.pendingProof.autoConfirmAt || null
         } : null
       }));
-    return { jobs, payments, freeScanEnabled: d.freeScanEnabled(), now: now() };
+    // Customers who wrote but have no order in this list.
+    const listed = new Set(jobs.map(j => String(j.userId)));
+    const waiting = view === "action" ? (d.messages?.waitingUsers() || [])
+      .filter(w => !listed.has(String(w.userId)) && (!q || String(w.userId).includes(q)))
+      .map(w => ({ ...w, last: (d.messages.thread(w.userId).at(-1) || {}).text || "" })) : [];
+    counts.action += (d.messages?.waitingUsers() || []).filter(w => !all.some(j => String(j.userId) === String(w.userId) && reasonsOf.get(j).length)).length;
+    return { view, jobs, waiting, counts, notes: d.notes || {}, payments, freeScanEnabled: d.freeScanEnabled(), now: now() };
   }
 
   // --- uploads ----------------------------------------------------------
@@ -230,6 +277,13 @@ function createAdminPanel(d) {
     const id = String(fileId).slice(FILE_PREFIX.length);
     if (!ID_RE.test(id)) throw new Error("Invalid admin upload id.");
     return fs.readFileSync(path.join(uploadRoot, id, "file"));
+  }
+
+  function removeUpload(fileId) {
+    const id = String(fileId).slice(FILE_PREFIX.length);
+    if (!ID_RE.test(id)) return false;
+    fs.rmSync(path.join(uploadRoot, id), { recursive: true, force: true });
+    return true;
   }
 
   function cleanupUploads() {
@@ -291,7 +345,69 @@ function createAdminPanel(d) {
       res.json({ ok: true });
     });
 
-    app.get("/admin/api/overview", guard, handle(async (req, res) => res.json(overview())));
+    app.get("/admin/api/overview", guard, handle(async (req, res) => res.json(overview(req.query || {}))));
+
+    // JK_ADMIN_ORDER_DESK_V1: the Telegram order buttons, on the web.
+    const UID_RE = /^[1-9]\d{0,16}$/;
+    const uidOf = req => {
+      const uid = String(req.params.uid || "");
+      if (!UID_RE.test(uid)) { const e = new Error("Invalid customer ID."); e.status = 400; throw e; }
+      return uid;
+    };
+    const header = (req, name, max) => {
+      try { return decodeURIComponent(String(req.get(name) || "")).slice(0, max); }
+      catch { return ""; }
+    };
+
+    app.get("/admin/api/files/:id/original", guard, handle(async (req, res) => {
+      const found = findFile(String(req.params.id));
+      if (!found) return res.status(404).json({ error: "File not found." });
+      if (found.file.providerFilesDeletedAt) return res.status(410).json({ error: "This file was deleted." });
+      const { buffer, name } = await d.customerOriginal(found.file);
+      res.set("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent(name));
+      res.type("application/octet-stream").send(buffer);
+    }));
+
+    app.get("/admin/api/users/:uid/thread", guard, handle(async (req, res) => {
+      const uid = uidOf(req);
+      res.json({ userId: uid, messages: d.messages?.thread(uid) || [], waiting: d.messages?.waiting(uid) || null });
+    }));
+
+    app.post("/admin/api/users/:uid/reply", guard, express.json({ limit: "16kb" }), handle(async (req, res) => {
+      const uid = uidOf(req);
+      const text = String(req.body?.text || "").trim().slice(0, 3500);
+      if (!text) return res.status(400).json({ error: "Write a message first." });
+      await d.replyToUser(uid, text);
+      res.json({ ok: true });
+    }));
+
+    app.post("/admin/api/users/:uid/note", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      const uid = uidOf(req);
+      const kind = String(req.body?.kind || "");
+      if (!Object.prototype.hasOwnProperty.call(d.notes || {}, kind)) return res.status(400).json({ error: "Unknown note." });
+      res.json({ ok: true, label: await d.sendNote(uid, kind) });
+    }));
+
+    // Send files one per request (like uploading in a /filebatch), then "done".
+    app.put("/admin/api/users/:uid/deliver", guard,
+      express.raw({ type: () => true, limit: MAX_UPLOAD_BYTES + 1024 }),
+      handle(async (req, res) => {
+        const uid = uidOf(req);
+        const name = path.basename(header(req, "X-File-Name", 160)).replace(/[\r\n"\\/]/g, "_");
+        const caption = header(req, "X-Caption", 1000);
+        const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        if (!name) return res.status(400).json({ error: "File name missing." });
+        if (!buffer.length) return res.status(400).json({ error: "The file is empty." });
+        await d.sendFileToUser(uid, { buffer, name }, caption);
+        res.json({ ok: true });
+      }));
+
+    app.post("/admin/api/users/:uid/deliver/done", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      const uid = uidOf(req);
+      const count = Math.max(0, Math.min(50, Number(req.body?.count) || 0));
+      const job = await d.finishDelivery(uid, count);
+      res.json({ ok: true, delivered: job ? job.jobId : null });
+    }));
 
     app.post("/admin/api/files/:id/retry", guard, handle(async (req, res) => {
       const r = await d.autoRetry().retryNow(String(req.params.id));
@@ -301,6 +417,16 @@ function createAdminPanel(d) {
       const r = await d.autoRetry().stop(String(req.params.id));
       res.status(r.stopped ? 200 : 404).json(r);
     }));
+    // JK_DELETE_FILES_NOW_V1: delete the stored copies of selected files.
+    app.post("/admin/api/files/delete", guard, express.json({ limit: "16kb" }), handle(async (req, res) => {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+      if (!ids.length || ids.length > 200 || ids.some(id => !/^[1-9]\d{9}$/.test(id))) {
+        return res.status(400).json({ error: "Choose 1 to 200 files." });
+      }
+      if (typeof d.deleteFiles !== "function") return res.status(501).json({ error: "Deleting is not available." });
+      res.json(await d.deleteFiles(ids, "admin-web-panel"));
+    }));
+
     app.get("/admin/api/files/:id/reports/:name", guard, handle(async (req, res) => {
       const found = findFile(String(req.params.id));
       const name = String(req.params.name);
@@ -352,12 +478,12 @@ function createAdminPanel(d) {
         const to = String(req.get("X-To-User") || "").trim();
         const name = decodeURIComponent(String(req.get("X-File-Name") || "")).replace(/[\r\n"]/g, "").slice(0, 160);
         const caption = decodeURIComponent(String(req.get("X-Caption") || "")).slice(0, 1000);
-        if (!/^[1-9]\d{4,14}$/.test(to)) return res.status(400).json({ error: "Enter the customer's Telegram user ID (numbers only)." });
-        if (d.isWebUserId?.(to)) return res.status(400).json({ error: "Website customers can't be sent files from here yet." });
+        if (!/^[1-9]\d{4,16}$/.test(to)) return res.status(400).json({ error: "Enter the customer's user ID (numbers only)." });
         if (!name) return res.status(400).json({ error: "File name missing." });
         const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
         if (!buf.length) return res.status(400).json({ error: "The file is empty." });
-        await d.bot.telegram.sendDocument(to, { source: buf, filename: name }, caption ? { caption } : {});
+        if (d.sendFileToUser) await d.sendFileToUser(to, { buffer: buf, name }, caption);
+        else await d.bot.telegram.sendDocument(to, { source: buf, filename: name }, caption ? { caption } : {});
         res.json({ ok: true });
       }));
 
@@ -366,7 +492,7 @@ function createAdminPanel(d) {
     t.unref?.();
   }
 
-  return { install, login, sessionValid, overview, saveUpload, readUpload, uploadMeta, cleanupUploads, configured };
+  return { install, login, sessionValid, overview, saveUpload, readUpload, removeUpload, uploadMeta, cleanupUploads, configured };
 }
 
 module.exports = { createAdminPanel, isPanelFileId, totpAt, totpValid, base32Decode, FILE_PREFIX };

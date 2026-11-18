@@ -575,6 +575,10 @@ const DAILY_SALES_SUMMARY_CHECK_MS =
   60 * 1000;
 
 const DATA_DIR = String(process.env.DATA_DIR || __dirname).trim();
+// JK_ADMIN_ORDER_DESK_V1: customer <-> admin messages shown in the web panel.
+const adminMessages = require("./jk-admin-messages.cjs").createMessageLog(
+  require("path").join(DATA_DIR, "admin-messages.json")
+);
 
 try {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -3140,7 +3144,10 @@ function adminAllCommandsText() {
     "",
     "Payments",
     "/paiduser <userId> - Confirm latest user payment",
-    "/paidref <apiRef> - Confirm payment reference"
+    "/paidref <apiRef> - Confirm payment reference",
+    "",
+    "Files",
+    "/deletefiles <report ID> [more] - Delete stored files and reports"
   ].join("\n");
 }
 
@@ -4555,13 +4562,8 @@ bot.action(/^ADMIN_PRELIM_REMOVED_(\d+)$/, async (ctx) => {
 
   await ctx.answerCbQuery("Notice sent.");
 
-  await bot.telegram.sendMessage(
-    userId,
-    PRELIM_PAGES_REMOVED_NOTE,
-    {
-      parse_mode: "Markdown"
-    }
-  );
+  await adminSendNoteToUser(userId, "PRELIM_REMOVED").catch(error =>
+    sendAdminMessage("❌ Prelim note failed for " + userId + ": " + (error?.message || error)));
 });
 
 // =====================
@@ -6025,6 +6027,58 @@ async function sendOneTimeSavedAiCorrection() {
   }
 }
 
+// JK_DELETE_FILES_NOW_V1: Telegram side of the admin delete.
+const pendingFileDeletes = new Map(); // token -> { ids, at }
+
+bot.command("deletefiles", async (ctx) => {
+  if (Number(ctx.from?.id) !== Number(ADMIN_ID)) return;
+  const ids = [...new Set((String(ctx.message?.text || "").match(/\b[1-9]\d{9}\b/g) || []))].slice(0, 50);
+  if (!ids.length) {
+    return ctx.reply(
+      "Usage: /deletefiles <report ID> [more IDs]\n" +
+      "Example: /deletefiles 1234567890 2345678901\n\n" +
+      "Deletes the bot's stored copies and reports for those files. " +
+      "Files sent in Telegram also stay on Telegram's own servers."
+    );
+  }
+  const token = require("crypto").randomBytes(6).toString("hex");
+  pendingFileDeletes.set(token, { ids, at: Date.now() });
+  for (const [key, value] of pendingFileDeletes) {
+    if (Date.now() - value.at > 10 * 60 * 1000) pendingFileDeletes.delete(key);
+  }
+  return ctx.reply(
+    "Delete the stored files for " + ids.length + " report ID(s)?\n" + ids.join(", ") + "\n\nThis cannot be undone.",
+    { reply_markup: { inline_keyboard: [[
+      { text: "🗑 DELETE", callback_data: "DELF:" + token },
+      { text: "Keep", callback_data: "DELFX:" + token }
+    ]] } }
+  );
+});
+
+bot.action(/^DELF:([a-f0-9]{12})$/, async (ctx) => {
+  if (Number(ctx.from?.id) !== Number(ADMIN_ID)) return ctx.answerCbQuery("Admin only.");
+  const pending = pendingFileDeletes.get(ctx.match[1]);
+  pendingFileDeletes.delete(ctx.match[1]);
+  if (!pending || Date.now() - pending.at > 10 * 60 * 1000) {
+    return ctx.answerCbQuery("This request expired. Send /deletefiles again.", { show_alert: true });
+  }
+  await ctx.answerCbQuery("Deleting…");
+  let text;
+  try {
+    text = describeDeleteResult(deleteStoredFilesNow(pending.ids, "admin-telegram"));
+  } catch (error) {
+    text = "Delete failed: " + error.message;
+  }
+  await ctx.editMessageText(text).catch(() => ctx.reply(text));
+});
+
+bot.action(/^DELFX:([a-f0-9]{12})$/, async (ctx) => {
+  if (Number(ctx.from?.id) !== Number(ADMIN_ID)) return ctx.answerCbQuery("Admin only.");
+  pendingFileDeletes.delete(ctx.match[1]);
+  await ctx.answerCbQuery("Kept.");
+  await ctx.editMessageText("Kept. Nothing was deleted.").catch(() => {});
+});
+
 bot.command("adminhelp", async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
   await showAdminDashboard(ctx);
@@ -6086,17 +6140,7 @@ bot.command("reply", async (ctx) => {
   const replyText = parts.slice(2).join(" ");
 
   try {
-    await bot.telegram.sendMessage(
-      userId,
-      `━━━━━━━━━━━━━━━
-💬 *JK Turnitin Support*
-━━━━━━━━━━━━━━━
-
-${replyText}
-
-━━━━━━━━━━━━━━━`,
-      { parse_mode: "Markdown" }
-    );
+    await adminReplyToUser(userId, replyText);
 
     await ctx.reply(`✅ Sent to ${userId}`);
   } catch (err) {
@@ -6172,18 +6216,8 @@ bot.command("donebatch", async (ctx) => {
 
   delete pendingFileTargets[ADMIN_ID];
 
-  if (sentCount > 0) {
-    markLatestPaidJobDelivered(userId);
-
-    try {
-      // JK_WEB_ORDERS_V1: website customers are already on the site, so they
-      // get the API delivery message (no website link).
-      await bot.telegram.sendMessage(userId,
-        require("./jk-web-orders.cjs").isWebUserId(userId)
-          ? API_REPORTS_DELIVERED_MESSAGE
-          : REPORTS_DELIVERED_MESSAGE);
-    } catch {}
-  }
+  // JK_WEB_ORDERS_V1: website customers get the API delivery message (no link).
+  await adminFinishDelivery(userId, sentCount);
 
   await ctx.reply(`✅ Batch closed. Sent ${sentCount} item(s) to ${userId}.`);
 });
@@ -8066,7 +8100,7 @@ bot.action(/^ADMIN_AI_NOTE_(\d+)$/, async (ctx) => {
   const userId = ctx.match[1];
 
   try {
-    await bot.telegram.sendMessage(userId, AI_UNAVAILABLE_NOTE, { parse_mode: "Markdown" });
+    await adminSendNoteToUser(userId, "AI_UNAVAILABLE");
     await ctx.answerCbQuery("AI note sent");
     await ctx.reply(`✅ AI unavailable note sent to ${userId}`);
   } catch (err) {
@@ -8083,11 +8117,7 @@ bot.action(/^ADMIN_CLEAN_COPY_NOTE_(\d+)$/, async (ctx) => {
   const userId = ctx.match[1];
 
   try {
-    await bot.telegram.sendMessage(
-      userId,
-      CLEAN_COPY_NEXT_SUBMISSION_NOTE,
-      { parse_mode: "Markdown" }
-    );
+    await adminSendNoteToUser(userId, "CLEAN_COPY");
 
     await ctx.answerCbQuery("Clean-copy note sent");
     await ctx.reply("✅ Remove logo/name reminder sent to " + userId);
@@ -8110,7 +8140,7 @@ bot.action(/^ADMIN_AI_STAR_NOTE_(\d+)$/, async (ctx) => {
 
   try {
 
-    await bot.telegram.sendMessage(userId, AI_STAR_NOTE, { parse_mode: "Markdown" });
+    await adminSendNoteToUser(userId, "AI_STAR");
 
     await ctx.answerCbQuery("AI star note sent");
 
@@ -8140,7 +8170,7 @@ bot.action(/^ADMIN_TILL_NOTICE_(\d+)$/, async (ctx) => {
 
   try {
 
-    await bot.telegram.sendMessage(userId, mpesaTillNoticeMessage(), { parse_mode: "Markdown" });
+    await adminSendNoteToUser(userId, "TILL");
 
     await ctx.answerCbQuery("Till notice sent");
 
@@ -8797,6 +8827,8 @@ bot.on("document", async (ctx) => {
 
       target.sentCount += 1;
       markBatchItemSent(target, deliveryKey);
+      adminMessages.log(target.userId, "admin", (doc.file_name || "File") +
+        (target.sentCount === 1 && target.caption ? " — " + target.caption : ""), "file");
       await ctx.reply(`✅ File sent to ${target.userId}`);
     } catch (err) {
       clearBatchItemProgress(target, deliveryKey);
@@ -8960,6 +8992,8 @@ bot.on("photo", async (ctx) => {
 
       target.sentCount += 1;
       markBatchItemSent(target, deliveryKey);
+      adminMessages.log(target.userId, "admin", "Photo" +
+        (target.sentCount === 1 && target.caption ? " — " + target.caption : ""), "file");
       await ctx.reply(`✅ Photo sent to ${target.userId}`);
     } catch (err) {
       clearBatchItemProgress(target, deliveryKey);
@@ -9518,17 +9552,7 @@ bot.on("text", async (ctx) => {
     if (!replyTarget) return;
 
     try {
-      await bot.telegram.sendMessage(
-        replyTarget.userId,
-        `━━━━━━━━━━━━━━━
-💬 *JK Turnitin Support*
-━━━━━━━━━━━━━━━
-
-${text}
-
-━━━━━━━━━━━━━━━`,
-        { parse_mode: "Markdown" }
-      );
+      await adminReplyToUser(replyTarget.userId, text);
 
       await ctx.reply(`✅ Reply sent to ${replyTarget.userId}`);
       delete pendingAdminReplies[ADMIN_ID];
@@ -9543,6 +9567,7 @@ ${text}
     supportRequests[user.id] = false;
 
     try {
+      adminMessages.log(user.id, "customer", text);
       await sendAdminMessage(
         `💬 Support message from user\nUser ID: ${user.id}\nName: ${getUserFullName(user)}\nUsername: @${safeText(
           user.username || "N/A"
@@ -14165,8 +14190,136 @@ app.use(
 require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR });
 
 // JK_ADMIN_WEB_PANEL_V1: /admin, the Telegram admin tools on the web.
+// JK_ADMIN_ORDER_DESK_V1: what the Telegram order buttons do, as functions the
+// web panel and Telegram share. Web customers are reached the same way
+// (bot.telegram is routed to the website order by jk-web-orders.cjs).
+const ADMIN_NOTES = {
+  AI_UNAVAILABLE: { label: "ℹ️ AI unavailable note", text: () => AI_UNAVAILABLE_NOTE },
+  AI_STAR: { label: "⭐ AI star note", text: () => AI_STAR_NOTE },
+  TILL: { label: "🧾 Till payment notice", text: () => mpesaTillNoticeMessage() },
+  CLEAN_COPY: { label: "🚫 Remove logo/name reminder", text: () => CLEAN_COPY_NEXT_SUBMISSION_NOTE },
+  PRELIM_REMOVED: { label: "🧹 Preliminary pages removed note", text: () => PRELIM_PAGES_REMOVED_NOTE }
+};
+
+function supportReplyText(text) {
+  return `━━━━━━━━━━━━━━━
+💬 *JK Turnitin Support*
+━━━━━━━━━━━━━━━
+
+${text}
+
+━━━━━━━━━━━━━━━`;
+}
+
+function adminLogCustomerMessage(userId, from, text) {
+  adminMessages.log(userId, from, text);
+}
+
+async function adminReplyToUser(userId, text) {
+  await bot.telegram.sendMessage(userId, supportReplyText(text), { parse_mode: "Markdown" });
+  adminMessages.log(userId, "admin", text);
+}
+
+async function adminSendNoteToUser(userId, kind) {
+  const note = ADMIN_NOTES[kind];
+  if (!note) throw new Error("Unknown note.");
+  await bot.telegram.sendMessage(userId, note.text(), { parse_mode: "Markdown" });
+  adminMessages.log(userId, "admin", note.label, "note");
+  return note.label;
+}
+
+async function adminSendFileToUser(userId, { buffer, name }, caption) {
+  await bot.telegram.sendDocument(
+    userId,
+    { source: buffer, filename: name },
+    { filename: name, ...(caption ? { caption } : {}) }
+  );
+  adminMessages.log(userId, "admin", name + (caption ? " — " + caption : ""), "file");
+}
+
+// Same as /donebatch: mark the latest order delivered and tell the customer.
+async function adminFinishDelivery(userId, sentCount) {
+  if (!(sentCount > 0)) return null;
+  const job = markLatestPaidJobDelivered(userId);
+  try {
+    await bot.telegram.sendMessage(userId,
+      require("./jk-web-orders.cjs").isWebUserId(userId)
+        ? API_REPORTS_DELIVERED_MESSAGE
+        : REPORTS_DELIVERED_MESSAGE);
+  } catch {}
+  return job;
+}
+
+async function adminCustomerOriginal(file) {
+  const name = file?.file_name || file?.fileName || "document";
+  const fileId = file?.file_id || file?.fileId;
+  try {
+    if (fileId) return { buffer: await downloadTelegramFileBuffer(fileId), name };
+  } catch (error) {
+    console.error("Original download failed, trying the stored copy:", error.message);
+  }
+  if (file?.providerBundleFile) {
+    const dir = require("path").dirname(file.providerBundleFile);
+    const original = fs.existsSync(dir) && fs.readdirSync(dir).find(n => /^original\./i.test(n));
+    if (original) return { buffer: fs.readFileSync(require("path").join(dir, original)), name };
+  }
+  const error = new Error("The customer's file is no longer available.");
+  error.status = 404;
+  throw error;
+}
+
+// JK_DELETE_FILES_NOW_V1: one delete used by the web panel and Telegram.
+// Removes the bot's stored copies (original, bundle, reports) and the
+// website/panel upload; a small record stays and resubmission is blocked.
+// Files a customer sent in Telegram also remain on Telegram's own servers.
+function deleteStoredFilesNow(ids, by) {
+  const result = require("./jk-file-retention.js").deleteFilesNow({
+    dataDir: DATA_DIR,
+    paidJobs,
+    submissionIds: ids,
+    by,
+    persist: () => {
+      const temporaryPath = PAID_JOBS_FILE + ".delete.tmp";
+      fs.writeFileSync(temporaryPath, JSON.stringify(paidJobs, null, 2), "utf8");
+      fs.renameSync(temporaryPath, PAID_JOBS_FILE);
+    }
+  });
+  const deleted = new Set(result.deleted);
+  for (const job of Object.values(paidJobs)) {
+    for (const file of job?.files || []) {
+      const id = /^trn:oid:::1:(\d{10})$/.exec(String(file?.jkSubmissionId || ""))?.[1];
+      if (!id || !deleted.has(id)) continue;
+      const fileId = String(file.file_id || file.fileId || "");
+      try {
+        if (fileId.startsWith("web:")) webOrders?.removeWebFile?.(fileId);
+        else if (adminPanel && require("./jk-admin-panel.cjs").isPanelFileId(fileId)) adminPanel.removeUpload(fileId);
+      } catch (error) {
+        console.error("Stored upload delete failed:", fileId, error.message);
+      }
+    }
+  }
+  return result;
+}
+
+function describeDeleteResult(result) {
+  const lines = [];
+  if (result.deleted.length) lines.push("🗑 Deleted " + result.deleted.length + " file(s): " + result.deleted.join(", "));
+  for (const s of result.skipped) lines.push("⏭ " + s.id + ": " + s.reason);
+  return lines.join("\n") || "Nothing to delete.";
+}
+
 adminPanel = require("./jk-admin-panel.cjs").createAdminPanel({
   DATA_DIR, MAX_BATCH_FILES, bot,
+  deleteFiles: (ids, by) => deleteStoredFilesNow(ids, by),
+  // JK_ADMIN_ORDER_DESK_V1
+  messages: adminMessages,
+  notes: Object.fromEntries(Object.entries(ADMIN_NOTES).map(([k, v]) => [k, v.label])),
+  replyToUser: (userId, text) => adminReplyToUser(userId, text),
+  sendNote: (userId, kind) => adminSendNoteToUser(userId, kind),
+  sendFileToUser: (userId, file, caption) => adminSendFileToUser(userId, file, caption),
+  finishDelivery: (userId, count) => adminFinishDelivery(userId, count),
+  customerOriginal: file => adminCustomerOriginal(file),
+  processingMaxMinutes: () => REPORT_PROCESSING_MAX_MINUTES,
   getPaidJobs: () => paidJobs,
   getPaymentRefs: () => paymentRefs,
   isPaymentRefClosed: ref => isPaymentRefClosedForAdmin(ref),
@@ -14205,6 +14358,7 @@ webOrders = require("./jk-web-orders.cjs").installWebOrders({
   createEmptySubmission, createStoredFileFromDocument, ensureFileReportIdentity, effectiveSimilarityFilter,
   calculateSubmissionAmount, formatBatchSummary, makeBatchId, normalizePhoneTo254, attemptStkPush,
   buildAdminDocumentCaption, adminActionKeyboard, supportedScanUpload, sendAdminMessage,
+  logMessage: adminLogCustomerMessage, // JK_ADMIN_ORDER_DESK_V1
   handleMpesaProofText, TILL_NUMBER,
   processingMaxMinutes: () => REPORT_PROCESSING_MAX_MINUTES,
   highlightOffers: job => paidAiHighlights ? paidAiHighlights.webOffers(job) : [],

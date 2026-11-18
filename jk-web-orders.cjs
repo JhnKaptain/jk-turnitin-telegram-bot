@@ -189,6 +189,10 @@ function createWebOrders(d) {
     if (!upload) throw new Error("Website upload not found: " + fileId);
     return path.join(orderDir(id), "uploads", upload.stored);
   }
+  // JK_DELETE_FILES_NOW_V1: the admin's "delete" also removes the website copy.
+  function removeWebFile(fileId) {
+    try { fs.rmSync(webFilePath(fileId), { force: true }); return true; } catch { return false; }
+  }
   function readWebFile(fileId) {
     try {
       return fs.readFileSync(webFilePath(fileId));
@@ -570,6 +574,7 @@ function createWebOrders(d) {
     if (clean.length < 2) { const e = new Error("Write a message first."); e.status = 400; throw e; }
     limited("msg:" + order.id, 10);
     pushMessage(order, clean, "client");
+    try { d.logMessage?.(order.uid, "customer", clean); } catch {}
     await d.sendAdminMessage(
       "💬 Website message\nOrder: " + order.id + "\nUser ID: " + order.uid +
       "\nStage: " + statusFor(order).stage + "\n\n" + clean,
@@ -652,7 +657,7 @@ function createWebOrders(d) {
   }
 
   return { newOrder, authorize, addUpload, removeUpload, checkout, resend, cancel, deleteData, clientMessage, paymentProof, statusFor, reportFile,
-    readWebFile, installTelegramRouting, buyHighlights, markDelivered, prune, orderById: id => store.orders[id] || null,
+    readWebFile, removeWebFile, installTelegramRouting, buyHighlights, markDelivered, prune, orderById: id => store.orders[id] || null,
     orderByUid, uidForOrder: id => store.orders[String(id || "").trim()]?.uid || null };
 }
 

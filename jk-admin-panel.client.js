@@ -1,11 +1,17 @@
 "use strict";
 // JK_ADMIN_WEB_PANEL_V1: browser side of /admin. Every request carries the
 // X-Admin-Panel header; the session lives in an HttpOnly cookie.
+// JK_ADMIN_ORDER_DESK_V1: orders work like the Telegram admin message —
+// customer file, reports, reply, notes, send files — plus a "Needs action" inbox.
 (function () {
   const $ = id => document.getElementById(id);
   const H = { "X-Admin-Panel": "1" };
   let data = null;
   let timer = null;
+  let view = "action";
+  let search = "";
+  let drawerUser = null;
+  const selected = new Set(); // JK_DELETE_FILES_NOW_V1: chosen report IDs
 
   function toast(text, ms = 3500) {
     const m = $("msg"); m.textContent = text; m.style.display = "block";
@@ -21,6 +27,10 @@
   const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const when = ms => ms ? new Date(ms).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
   const mins = (at, now) => Math.max(1, Math.ceil((at - now) / 60000));
+  const ago = (ms, now) => {
+    const m = Math.max(0, Math.round((now - ms) / 60000));
+    return m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago";
+  };
 
   function showLogin() {
     clearInterval(timer);
@@ -39,30 +49,82 @@
       if (f.retryExhausted) return '<span class="chip bad">Failed · retries used up</span>';
       return '<span class="chip bad">Failed</span>';
     }
-    if (f.status === "COMPLETE") return '<span class="chip ok">Complete</span>';
+    if (f.status === "COMPLETE" || f.status === "COMPLETED") return '<span class="chip ok">Complete</span>';
     if (f.status === "MANUAL_REQUIRED") return '<span class="chip warn">Manual review</span>';
     return '<span class="chip">' + esc(f.status || "Waiting") + '</span>';
   }
+  function who(j) {
+    return (j.name ? esc(j.name) : "Customer") + (j.username ? ' <span class="muted">@' + esc(j.username) + '</span>' : '');
+  }
+  function jobStatus(j) {
+    if (j.deliveredAt || j.status === "DELIVERED") return '<span class="chip ok">Delivered</span>';
+    return '<span class="chip">' + esc((j.status || "").replace(/_/g, " ").toLowerCase()) + '</span>';
+  }
   function renderOrders() {
-    const box = $("tab-orders");
-    if (!data.jobs.length) { box.innerHTML = '<div class="card muted">No orders yet.</div>'; return; }
-    box.innerHTML = data.jobs.map(j => (
-      '<div class="card"><div class="row"><strong>' + (j.adminFreeScan ? "Free scan" : "Order") + '</strong>' +
-      '<span class="chip">' + esc(j.status || "") + '</span>' +
-      '<span class="muted">User ' + esc(j.userId) + ' · ' + esc(when(j.createdAt)) + '</span></div>' +
-      j.files.map(f => (
-        '<div class="file"><div class="row"><strong>' + esc(f.name) + '</strong>' + fileStatus(f, data.now) +
-        (f.similarity != null ? '<span class="muted">Similarity ' + Math.round(f.similarity) + '%</span>' : '') +
-        (f.ai != null ? '<span class="muted">AI ' + Math.round(f.ai) + '%</span>' : '') + '</div>' +
-        (f.error ? '<div class="err bad">' + esc(f.error) + '</div>' : '') +
-        '<div class="row" style="margin-top:6px">' +
-        f.reports.map(r => '<a class="dl" href="/admin/api/files/' + esc(f.id) + '/reports/' + encodeURIComponent(r) + '" data-dl="1">⬇ ' + esc(r) + '</a>').join(" ") +
-        (f.status === "FAILED" && f.id ? (
-          (f.retryAt && !f.retryStopped ? '<button class="btn danger" data-stop="' + esc(f.id) + '">Stop retries</button>' : '') +
-          '<button class="btn" data-retry="' + esc(f.id) + '">Retry now</button>') : '') +
-        '</div></div>'
-      )).join("") + '</div>'
+    const box = $("ordersList");
+    $("cntAction").textContent = data.counts?.action ? " (" + data.counts.action + ")" : "";
+    document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === view));
+    const can = f => f.id && !f.deleted;
+    const live = new Set(data.jobs.flatMap(j => j.files.filter(can).map(f => f.id)));
+    for (const id of [...selected]) if (!live.has(id)) selected.delete(id);
+    const pendingPay = new Set(data.payments.map(p => String(p.userId)));
+
+    const waiting = (data.waiting || []).map(w => (
+      '<div class="card need"><div class="row"><strong>💬 Customer ' + esc(w.userId) + '</strong>' +
+      '<span class="chip warn">Waiting for a reply · ' + esc(ago(w.since, data.now)) + '</span></div>' +
+      '<p class="quote">' + esc(w.last) + '</p>' +
+      '<div class="row"><button class="btn primary" data-open="' + esc(w.userId) + '">💬 Open conversation</button></div></div>'
     )).join("");
+
+    const empty = view === "action" ? "Nothing needs you right now. 🎉" : view === "free" ? "No free scans yet." : "No orders found.";
+    const jobs = data.jobs.map(j => {
+      const ids = j.files.filter(can).map(f => f.id);
+      const all = ids.length && ids.every(id => selected.has(id));
+      return '<div class="card' + (j.needs.length ? ' need' : '') + '">' +
+        '<div class="row">' +
+        (ids.length ? '<input type="checkbox" class="pick" title="Select all files in this order" data-all="' + esc(ids.join(",")) + '"' + (all ? ' checked' : '') + '>' : '') +
+        '<strong>' + (j.adminFreeScan ? "🧪 Free scan" : who(j)) + '</strong>' + jobStatus(j) +
+        (j.web ? '<span class="chip">Website</span>' : '') +
+        (j.amount != null && !j.adminFreeScan ? '<span class="muted">KES ' + esc(j.amount) + '</span>' : '') +
+        '<span class="muted">ID ' + esc(j.userId) + ' · ' + esc(when(j.paidAt || j.createdAt)) + '</span></div>' +
+        (j.needs.length ? '<div class="row" style="margin-top:6px">' + j.needs.map(n => '<span class="chip bad">⚠ ' + esc(n) + '</span>').join("") + '</div>' : '') +
+        j.files.map(f => (
+          '<div class="file"><div class="row">' +
+          (can(f) ? '<input type="checkbox" class="pick" data-pick="' + esc(f.id) + '"' + (selected.has(f.id) ? ' checked' : '') + '>' : '') +
+          '<strong>' + esc(f.name) + '</strong>' + fileStatus(f, data.now) +
+          (f.deleted ? '<span class="chip">Files deleted</span>' : '') +
+          (f.type ? '<span class="muted">' + esc(f.type) + '</span>' : '') +
+          (f.similarity != null ? '<span class="muted">Similarity ' + Math.round(f.similarity) + '%</span>' : '') +
+          (f.ai != null ? '<span class="muted">AI ' + Math.round(f.ai) + '%</span>' : '') +
+          (f.id ? '<span class="muted">Report ID ' + esc(f.id) + '</span>' : '') + '</div>' +
+          (f.error ? '<div class="err bad">' + esc(f.error) + '</div>' : '') +
+          '<div class="row" style="margin-top:6px">' +
+          (f.id && !f.deleted ? '<a class="dl" href="/admin/api/files/' + esc(f.id) + '/original" data-dl="1">⬇ Customer file</a>' : '') +
+          f.reports.map(r => '<a class="dl" href="/admin/api/files/' + esc(f.id) + '/reports/' + encodeURIComponent(r) + '" data-dl="1">⬇ ' + esc(r) + '</a>').join(" ") +
+          (f.status === "FAILED" && f.id && !f.deleted ? (
+            (f.retryAt && !f.retryStopped ? '<button class="btn danger" data-stop="' + esc(f.id) + '">Stop retries</button>' : '') +
+            '<button class="btn" data-retry="' + esc(f.id) + '">Retry now</button>') : '') +
+          '</div></div>'
+        )).join("") +
+        (j.adminFreeScan ? '' : '<div class="row actions">' +
+          '<button class="btn primary" data-send="' + esc(j.userId) + '">📤 Send files</button>' +
+          '<button class="btn" data-open="' + esc(j.userId) + '">💬 Reply / notes</button>' +
+          (pendingPay.has(String(j.userId)) ?
+            '<button class="btn" data-confirm="' + esc(j.userId) + '">✅ Confirm pay</button>' +
+            '<button class="btn danger" data-cancel="' + esc(j.userId) + '">🛑 Cancel pay</button>' : '') +
+          '</div>') +
+        '</div>';
+    }).join("");
+
+    box.innerHTML = '<div id="delBar" class="card row hidden"><strong id="delCount"></strong>' +
+      '<button class="btn danger" id="delBtn">🗑 Delete selected</button><button class="btn" id="delClear">Clear</button></div>' +
+      waiting + (jobs || (waiting ? '' : '<div class="card muted">' + empty + '</div>'));
+    updateDeleteBar();
+  }
+  function updateDeleteBar() {
+    const bar = $("delBar"); if (!bar) return;
+    bar.classList.toggle("hidden", !selected.size);
+    $("delCount").textContent = selected.size + " selected";
   }
   function renderPayments() {
     const box = $("tab-payments");
@@ -78,39 +140,171 @@
           (pr.autoConfirmAt && pr.autoConfirmAt > data.now ? ' · <span class="warn">auto-confirm in ~' + mins(pr.autoConfirmAt, data.now) + ' min</span>' : '') +
           '</p>' : '<p class="muted">No proof received yet.</p>') +
         '<div class="row"><button class="btn primary" data-confirm="' + esc(p.userId) + '">Confirm</button>' +
-        '<button class="btn danger" data-cancel="' + esc(p.userId) + '">Cancel pay</button></div></div>';
+        '<button class="btn danger" data-cancel="' + esc(p.userId) + '">Cancel pay</button>' +
+        '<button class="btn" data-open="' + esc(p.userId) + '">💬 Reply / notes</button></div></div>';
     }).join("");
   }
   async function refresh() {
     try {
-      data = await api("/admin/api/overview");
+      data = await api("/admin/api/overview?view=" + view + "&q=" + encodeURIComponent(search));
       renderOrders(); renderPayments();
       $("scanState").textContent = data.freeScanEnabled ? "" : "Admin Free Scan is currently disabled in the bot settings.";
       $("updated").textContent = "Updated " + new Date(data.now).toLocaleTimeString([], { timeStyle: "short" });
+      if (drawerUser) loadThread();
     } catch (e) { if (e.message !== "Please log in.") toast(e.message); }
   }
 
+  // --- customer drawer: conversation, reply, notes, send files ---------------
+  function customerLabel(uid) {
+    const j = data && data.jobs.find(x => String(x.userId) === String(uid) && !x.adminFreeScan);
+    return (j && j.name ? j.name + (j.username ? " (@" + j.username + ")" : "") + " · " : "") + "ID " + uid +
+      (j && j.web ? " · Website" : "");
+  }
+  function openDrawer(uid, focusSend) {
+    drawerUser = String(uid);
+    $("dwTitle").textContent = customerLabel(uid);
+    $("dwNotes").innerHTML = Object.entries((data && data.notes) || {}).map(([k, label]) =>
+      '<button class="btn" data-note="' + esc(k) + '">' + esc(label) + '</button>').join("");
+    $("dwThread").innerHTML = '<p class="muted">Loading…</p>';
+    $("dwReply").value = ""; $("dwFiles").value = ""; $("dwCaption").value = ""; $("dwSendMsg").textContent = "";
+    $("drawer").classList.remove("hidden");
+    document.body.classList.add("noscroll");
+    loadThread();
+    (focusSend ? $("dwSendBox") : $("dwReply")).scrollIntoView({ block: "nearest" });
+    if (focusSend) $("dwFiles").focus();
+  }
+  function closeDrawer() {
+    drawerUser = null;
+    $("drawer").classList.add("hidden");
+    document.body.classList.remove("noscroll");
+  }
+  async function loadThread() {
+    const uid = drawerUser; if (!uid) return;
+    try {
+      const t = await api("/admin/api/users/" + uid + "/thread");
+      if (uid !== drawerUser) return;
+      const box = $("dwThread");
+      const atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+      box.innerHTML = t.messages.length ? t.messages.map(m => (
+        '<div class="msg ' + (m.from === "customer" ? "in" : "out") + (m.kind !== "text" ? " " + esc(m.kind) : "") + '">' +
+        (m.kind === "file" ? "📎 " : "") + esc(m.text) +
+        '<div class="meta">' + (m.from === "customer" ? "Customer" : "You") + ' · ' + esc(when(m.at)) + '</div></div>'
+      )).join("") : '<p class="muted">No messages yet. Replies, notes and files you send from here or from Telegram appear here.</p>';
+      if (atEnd || !box.dataset.loaded) box.scrollTop = box.scrollHeight;
+      box.dataset.loaded = "1";
+    } catch (e) { toast(e.message); }
+  }
+
+  $("dwClose").addEventListener("click", closeDrawer);
+  $("drawer").addEventListener("click", ev => { if (ev.target === $("drawer")) closeDrawer(); });
+  document.addEventListener("keydown", ev => { if (ev.key === "Escape" && drawerUser) closeDrawer(); });
+
+  $("dwReplyBtn").addEventListener("click", async () => {
+    const text = $("dwReply").value.trim();
+    if (!text) return toast("Write a message first.");
+    const btn = $("dwReplyBtn"); btn.disabled = true;
+    try {
+      await api("/admin/api/users/" + drawerUser + "/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      $("dwReply").value = ""; toast("Reply sent."); await loadThread(); refresh();
+    } catch (e) { toast(e.message); }
+    finally { btn.disabled = false; }
+  });
+
+  $("dwSendBtn").addEventListener("click", async () => {
+    const files = [...$("dwFiles").files];
+    const out = $("dwSendMsg");
+    if (!files.length) return toast("Choose at least one file.");
+    if (files.length > 20) return toast("At most 20 files at a time.");
+    const big = files.find(f => f.size > 20 * 1024 * 1024);
+    if (big) return toast(big.name + " is larger than 20 MB.");
+    const uid = drawerUser;
+    const btn = $("dwSendBtn"); btn.disabled = true;
+    let sent = 0;
+    try {
+      for (const [i, f] of files.entries()) {
+        out.textContent = "Sending " + (i + 1) + " of " + files.length + ": " + f.name;
+        await api("/admin/api/users/" + uid + "/deliver", { method: "PUT", body: f, headers: {
+          "X-File-Name": encodeURIComponent(f.name), "Content-Type": "application/octet-stream",
+          "X-Caption": i === 0 ? encodeURIComponent($("dwCaption").value) : "" } });
+        sent++;
+      }
+      let done = "";
+      if ($("dwMarkDone").checked) {
+        const r = await api("/admin/api/users/" + uid + "/deliver/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count: sent }) });
+        done = r.delivered ? " Order marked delivered and the customer was told." : " Customer told; no open order to mark.";
+      }
+      out.textContent = "✅ Sent " + sent + " file(s)." + done;
+      $("dwFiles").value = ""; $("dwCaption").value = "";
+      await loadThread(); refresh();
+    } catch (e) {
+      out.textContent = "❌ " + e.message + (sent ? " (" + sent + " file(s) were sent before this.)" : "");
+    } finally { btn.disabled = false; }
+  });
+
   // --- actions --------------------------------------------------------------
+  document.addEventListener("change", ev => {
+    const t = ev.target;
+    if (!t.classList || !t.classList.contains("pick")) return;
+    const ids = t.dataset.all ? t.dataset.all.split(",") : [t.dataset.pick];
+    ids.forEach(id => t.checked ? selected.add(id) : selected.delete(id));
+    renderOrders();
+  });
+
+  let searchTimer = null;
+  $("search").addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { search = $("search").value.trim(); refresh(); }, 300);
+  });
+
   document.addEventListener("click", async ev => {
     const t = ev.target.closest("button,a");
     if (!t) return;
+    if (t.dataset.view) { view = t.dataset.view; selected.clear(); refresh(); return; }
+    if (t.id === "delClear") { selected.clear(); renderOrders(); return; }
+    if (t.id === "delBtn") {
+      const ids = [...selected];
+      if (!ids.length) return;
+      if (!confirm("Delete the stored files and reports for " + ids.length + " file(s)?\n\nThis cannot be undone. Files sent in Telegram also stay on Telegram's own servers.")) return;
+      t.disabled = true;
+      try {
+        const r = await api("/admin/api/files/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+        r.deleted.forEach(id => selected.delete(id));
+        toast("Deleted " + r.deleted.length + " file(s)." + (r.skipped.length ? " Skipped: " + r.skipped.map(s => s.id + " (" + s.reason + ")").join("; ") : ""), 8000);
+        await refresh();
+      } catch (e) { toast(e.message); }
+      finally { t.disabled = false; }
+      return;
+    }
     if (t.dataset.tab) {
       document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b === t));
       ["orders", "payments", "scan", "send"].forEach(n => $("tab-" + n).classList.toggle("hidden", n !== t.dataset.tab));
       return;
     }
+    if (t.dataset.open) return openDrawer(t.dataset.open, false);
+    if (t.dataset.send) return openDrawer(t.dataset.send, true);
     if (t.dataset.dl) {
       ev.preventDefault();
       try {
         const res = await fetch(t.getAttribute("href"), { headers: H, credentials: "same-origin" });
-        if (!res.ok) throw new Error("Download failed (" + res.status + ")");
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || ("Download failed (" + res.status + ")"));
+        }
+        const cd = res.headers.get("content-disposition") || "";
+        const m = /filename\*=UTF-8''([^;]+)/i.exec(cd);
         const url = URL.createObjectURL(await res.blob());
-        const a = document.createElement("a"); a.href = url; a.download = decodeURIComponent(t.getAttribute("href").split("/").pop());
+        const a = document.createElement("a"); a.href = url;
+        a.download = m ? decodeURIComponent(m[1]) : decodeURIComponent(t.getAttribute("href").split("/").pop());
         document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
       } catch (e) { toast(e.message); }
       return;
     }
     const act = async (fn, ok) => { t.disabled = true; try { await fn(); toast(ok); await refresh(); } catch (e) { toast(e.message); } finally { t.disabled = false; } };
+    if (t.dataset.note) {
+      const label = t.textContent;
+      if (!confirm("Send \"" + label + "\" to " + customerLabel(drawerUser) + "?")) return;
+      return act(async () => { await api("/admin/api/users/" + drawerUser + "/note", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: t.dataset.note }) }); await loadThread(); }, "Note sent.");
+    }
     if (t.dataset.retry) return act(() => api("/admin/api/files/" + t.dataset.retry + "/retry", { method: "POST" }), "Retry started.");
     if (t.dataset.stop) return act(() => api("/admin/api/files/" + t.dataset.stop + "/stop", { method: "POST" }), "Automatic retries stopped.");
     if (t.dataset.confirm) {
@@ -141,7 +335,7 @@
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ uploads, service: $("service").value, excludeBibliography: $("exBib").checked, excludeQuotes: $("exQuotes").checked })
       });
-      out.textContent = "Started: " + r.files + " file(s). Follow it under Orders.";
+      out.textContent = "Started: " + r.files + " file(s). Follow it under Orders → Free scans.";
       $("scanFiles").value = "";
       await refresh();
     } catch (e) { out.textContent = e.message; }
@@ -164,7 +358,7 @@
     finally { btn.disabled = false; }
   });
 
-  $("logout").addEventListener("click", async () => { try { await api("/admin/api/logout", { method: "POST" }); } catch {} showLogin(); });
+  $("logout").addEventListener("click", async () => { try { await api("/admin/api/logout", { method: "POST" }); } catch {} closeDrawer(); showLogin(); });
 
   if (document.body.dataset.totp === "1") $("codeWrap").classList.remove("hidden");
   $("loginForm").addEventListener("submit", async ev => {
@@ -179,6 +373,6 @@
   });
 
   // Already logged in (cookie still valid)?
-  fetch("/admin/api/overview", { headers: H, credentials: "same-origin" })
+  fetch("/admin/api/overview?view=action", { headers: H, credentials: "same-origin" })
     .then(r => { if (r.ok) showApp(); }).catch(() => {});
 })();
