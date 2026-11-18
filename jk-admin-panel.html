@@ -36,7 +36,7 @@ input[type=text],input[type=password],input[type=number],select,textarea{width:1
 .hidden{display:none}
 .err{white-space:pre-wrap;font-size:13px}
 input.pick{width:20px;height:20px;margin:0;accent-color:var(--brand)}
-#delBar{position:sticky;top:96px;z-index:1;border-color:var(--bad)}
+#delBar{position:sticky;top:150px;z-index:1;border-color:var(--bad)}
 .card.need{border-left:4px solid var(--warn)}
 .actions{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
 .views{gap:6px}
@@ -55,6 +55,11 @@ input.pick{width:20px;height:20px;margin:0;accent-color:var(--brand)}
 .msg.note,.msg.file{font-style:italic}
 .msg .meta{font-size:11px;opacity:.75;margin-top:3px;font-style:normal}
 body.noscroll{overflow:hidden}
+.switch{max-width:1040px;margin:0 auto;padding:0 16px 8px;display:flex;gap:6px}
+.switch button{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:10px;padding:9px 10px;font:inherit;font-weight:700;cursor:pointer}
+.switch button.on{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+.thread{max-height:260px;overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.card.warn{border-color:var(--warn)}
 #delBar.hidden{display:none}
 </style>
 </head>
@@ -77,14 +82,27 @@ body.noscroll{overflow:hidden}
 <div id="app" class="hidden">
   <header>
     <div class="bar"><h1>Admin Panel</h1><span id="updated" class="muted"></span><button id="logout" class="btn">Log out</button></div>
-    <nav>
+    <div class="switch" role="tablist" aria-label="Section">
+      <button data-section="reports" class="on">📄 Reports<span id="cntReports"></span></button>
+      <button data-section="shop">🛍 Other services<span id="cntShop"></span></button>
+    </div>
+    <nav id="reportsNav">
       <button data-tab="orders" class="on">Orders</button>
       <button data-tab="payments">Payments</button>
       <button data-tab="scan">Free scan</button>
       <button data-tab="send">Send file</button>
     </nav>
   </header>
-  <main>
+  <main id="shopSection" class="hidden">
+    <div class="card row views">
+      <button class="btn on" data-sview="action">Needs action<span id="cntShopTab"></span></button>
+      <button class="btn" data-sview="paid">Paid</button>
+      <button class="btn" data-sview="all">All (incl. unpaid)</button>
+      <input id="shopSearch" type="text" placeholder="Search order ID, product, phone…" autocomplete="off">
+    </div>
+    <div id="shopList"></div>
+  </main>
+  <main id="reportsSection">
     <section id="tab-orders">
       <div class="card row views">
         <button class="btn on" data-view="action">Needs action<span id="cntAction"></span></button>

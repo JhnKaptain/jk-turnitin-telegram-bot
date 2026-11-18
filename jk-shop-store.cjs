@@ -17,6 +17,9 @@ function safeEqual(a, b) {
 function installShopStore({ app, dataDir, key = process.env.SHOP_STORE_KEY }) {
   const secret = String(key || "").trim();
   const file = path.join(dataDir, "shop-orders.store.json");
+  // JK admin web panel: the shop tells us its address on every save, so the
+  // panel can send replies/files through it with no extra setting.
+  const metaFile = path.join(dataDir, "shop-service.json");
   const authorized = req => secret.length >= 16 &&
     safeEqual(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""), secret);
 
@@ -41,12 +44,24 @@ function installShopStore({ app, dataDir, key = process.env.SHOP_STORE_KEY }) {
     const tmp = file + ".tmp";
     fs.writeFileSync(tmp, text, "utf8");
     fs.renameSync(tmp, file);
+    const serviceUrl = String(req.body?.serviceUrl || "").trim().replace(/\/+$/, "");
+    if (/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(serviceUrl)) {
+      try { fs.writeFileSync(metaFile, JSON.stringify({ serviceUrl, at: Date.now() })); } catch {}
+    }
     return res.json({ ok: true, count: Object.keys(orders).length });
   });
 
   if (!secret) console.log("Shop store: off (set SHOP_STORE_KEY on this service and the website service)");
   else if (secret.length < 16) console.log("Shop store: off — SHOP_STORE_KEY must be at least 16 characters");
-  return { file };
+  function readOrders() {
+    try { return JSON.parse(fs.readFileSync(file, "utf8")) || {}; } catch { return {}; }
+  }
+  function serviceUrl() {
+    const fromEnv = String(process.env.SHOP_SERVICE_URL || "").trim().replace(/\/+$/, "");
+    if (fromEnv) return fromEnv;
+    try { return JSON.parse(fs.readFileSync(metaFile, "utf8")).serviceUrl || null; } catch { return null; }
+  }
+  return { file, readOrders, serviceUrl, key: () => secret, enabled: () => secret.length >= 16 };
 }
 
 module.exports = { installShopStore };
