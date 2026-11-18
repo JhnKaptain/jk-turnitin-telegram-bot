@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Admin Panel</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#16181d;--muted:#5d6470;--line:#e3e6eb;--brand:#2457d6;--brand-ink:#fff;--ok:#127a46;--warn:#a35a00;--bad:#b42318;--chip:#eef1f5}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a20;--ink:#e8eaee;--muted:#9aa2ae;--line:#2a2f38;--brand:#5b8cff;--brand-ink:#0b0d11;--ok:#4ccf8b;--warn:#f0a33c;--bad:#ff6b5e;--chip:#222731}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:2;background:var(--card);border-bottom:1px solid var(--line)}
+.bar{max-width:1040px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:12px}
+.bar h1{font-size:16px;margin:0;flex:1}
+nav{max-width:1040px;margin:0 auto;padding:0 8px;display:flex;gap:4px;overflow-x:auto}
+nav button{border:0;background:none;color:var(--muted);padding:10px 12px;font:inherit;font-weight:600;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}
+nav button.on{color:var(--ink);border-color:var(--brand)}
+main{max-width:1040px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.muted{color:var(--muted);font-size:13px}
+.chip{display:inline-block;background:var(--chip);border-radius:999px;padding:2px 9px;font-size:12px;font-weight:600}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+button.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:7px 12px;font:inherit;font-weight:600;cursor:pointer;min-height:36px}
+button.primary{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+button.danger{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+a.dl{color:var(--brand);font-weight:600;text-decoration:none;font-size:13px}
+.file{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+label{display:block;font-weight:600;margin:10px 0 4px}
+input[type=text],input[type=password],input[type=number],select,textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.check{display:flex;gap:8px;align-items:center;font-weight:500;margin:8px 0}
+#login{max-width:360px;margin:12vh auto 0}
+#msg{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:10px;font-weight:600;display:none;max-width:92vw;z-index:5}
+.hidden{display:none}
+.err{white-space:pre-wrap;font-size:13px}
+</style>
+</head>
+<body data-totp="__TOTP__">
+<section id="login" class="card">
+  <h2 style="margin-top:0">Admin login</h2>
+  <form id="loginForm">
+    <label for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" required>
+    <div id="codeWrap" class="hidden">
+      <label for="code">Authenticator code</label>
+      <input id="code" type="text" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code">
+    </div>
+    <p></p>
+    <button class="btn primary" type="submit" style="width:100%">Log in</button>
+    <p id="loginErr" class="bad"></p>
+  </form>
+</section>
+
+<div id="app" class="hidden">
+  <header>
+    <div class="bar"><h1>Admin Panel</h1><span id="updated" class="muted"></span><button id="logout" class="btn">Log out</button></div>
+    <nav>
+      <button data-tab="orders" class="on">Orders</button>
+      <button data-tab="payments">Payments</button>
+      <button data-tab="scan">Free scan</button>
+      <button data-tab="send">Send file</button>
+    </nav>
+  </header>
+  <main>
+    <section id="tab-orders"></section>
+    <section id="tab-payments" class="hidden"></section>
+    <section id="tab-scan" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">Free scan</h3>
+        <p class="muted" id="scanState"></p>
+        <label for="scanFiles">Documents (PDF, DOCX, DOC, PPTX · up to 10 · 20 MB each)</label>
+        <input id="scanFiles" type="file" multiple accept=".pdf,.docx,.doc,.pptx">
+        <label for="service">Service</label>
+        <select id="service">
+          <option value="CHECK">Full report (similarity + AI)</option>
+          <option value="SIMILARITY">Similarity only</option>
+          <option value="AI_ONLY">AI report only</option>
+        </select>
+        <div class="check"><input id="exBib" type="checkbox" checked><label for="exBib" style="margin:0">Exclude bibliography</label></div>
+        <div class="check"><input id="exQuotes" type="checkbox"><label for="exQuotes" style="margin:0">Exclude quotes</label></div>
+        <p class="muted">Uses provider credits like a paid check. Reports appear under Orders and are also sent to the admin Telegram.</p>
+        <button id="startScan" class="btn primary">Upload and start</button>
+        <p id="scanMsg"></p>
+      </div>
+    </section>
+    <section id="tab-send" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">Send a file to a customer</h3>
+        <label for="toUser">Customer Telegram user ID</label>
+        <input id="toUser" type="text" inputmode="numeric" placeholder="e.g. 5189765792">
+        <label for="sendFile">File (up to 20 MB)</label>
+        <input id="sendFile" type="file">
+        <label for="caption">Message (optional)</label>
+        <textarea id="caption" rows="3"></textarea>
+        <p></p>
+        <button id="sendBtn" class="btn primary">Send</button>
+        <p id="sendMsg"></p>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="msg"></div>
+<script src="/admin/app.js"></script>
+</body>
+</html>
