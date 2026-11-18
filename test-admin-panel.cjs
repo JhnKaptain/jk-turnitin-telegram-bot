@@ -30,7 +30,7 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
   ] } };
   const refs = { r1: { userId: 222, amount: 100, status: "PENDING", paymentMethod: "MPESA", createdAt: 2, files: [{}],
     pendingProof: { type: "mpesa-text", amount: 100, code: "QJK4ABCD12", detectedTime: "18/11/26 1:05 PM", confidence: "High" } } };
-  const panel = createAdminPanel({
+  const panelDeps = {
     DATA_DIR: dir, MAX_BATCH_FILES: 10, env,
     bot: { telegram: { sendDocument: async (to, doc, extra) => calls.push(["send", to, doc.filename, doc.source.length, extra.caption]) } },
     getPaidJobs: () => jobs, getPaymentRefs: () => refs,
@@ -46,8 +46,18 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     freeScanEnabled: () => true,
     isWebUserId: id => String(id).startsWith("9"),
     sendAdmin: async t => calls.push(["admin", t]),
-    deleteFiles: async (ids, by) => { calls.push(["delete", ids, by]); return { deleted: ids, skipped: [] }; }
-  });
+    deleteFiles: async (ids, by) => { calls.push(["delete", ids, by]); return { deleted: ids, skipped: [] }; },
+    // JK_ADMIN_ORDER_DESK_V1
+    messages: require("./jk-admin-messages.cjs").createMessageLog(path.join(dir, "admin-messages.json")),
+    notes: { AI_UNAVAILABLE: "ℹ️ AI unavailable note", CLEAN_COPY: "🚫 Remove logo/name reminder" },
+    replyToUser: async (u, t) => calls.push(["reply", u, t]),
+    sendNote: async (u, k) => { calls.push(["note", u, k]); return "label"; },
+    sendFileToUser: async (u, f, c) => calls.push(["deliver", u, f.name, f.buffer.length, c]),
+    finishDelivery: async (u, n) => { calls.push(["done", u, n]); return { jobId: "job1" }; },
+    customerOriginal: async f => ({ buffer: Buffer.from("ORIGINAL"), name: f.file_name }),
+    processingMaxMinutes: () => 20
+  };
+  const panel = createAdminPanel(panelDeps);
   const app = express();
   panel.install(app, express);
   const server = await new Promise(r => { const s = app.listen(0, () => r(s)); });
@@ -85,7 +95,7 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     const S = { ...P, Cookie: cookie.split(";")[0] };
 
     // 6. Overview: orders with first-line errors, retry state, reports; pending payments with proof.
-    const ov = await (await req("/admin/api/overview", { headers: S })).json();
+    const ov = await (await req("/admin/api/overview?view=all", { headers: S })).json();
     const f = ov.jobs[0].files[0];
     assert.equal(f.id, "1234567890");
     assert.equal(f.error, "JK SimilarityCheck is temporarily unavailable (HTTP 502).", "first line only");
@@ -126,11 +136,10 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
 
     // 10. Send a file: numeric Telegram IDs only; website customers refused.
     assert.equal((await req("/admin/api/send", { method: "PUT", headers: { ...S, "X-To-User": "abc", "X-File-Name": "r.pdf" }, body: "x" })).status, 400);
-    assert.equal((await req("/admin/api/send", { method: "PUT", headers: { ...S, "X-To-User": "912345678", "X-File-Name": "r.pdf" }, body: "x" })).status, 400);
     const sent = await req("/admin/api/send", { method: "PUT",
       headers: { ...S, "X-To-User": "5189765792", "X-File-Name": "Report.pdf", "X-Caption": encodeURIComponent("Your report") }, body: "PDFDATA" });
     assert.equal(sent.status, 200);
-    assert.deepEqual(calls.at(-1), ["send", "5189765792", "Report.pdf", 7, "Your report"]);
+    assert.deepEqual(calls.at(-1), ["deliver", "5189765792", "Report.pdf", 7, "Your report"]);
 
     // 10b. Delete selected files: valid report IDs only, passed to the shared delete.
     const del = (body) => req("/admin/api/files/delete", { method: "POST", headers: { ...S, "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -140,9 +149,64 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     assert.deepEqual(dr.deleted, ["1234567890"]);
     assert.deepEqual(calls.at(-1), ["delete", ["1234567890"], "admin-web-panel"]);
     jobs.job1.files[0].providerFilesDeletedAt = 9;
-    const ov2 = await (await req("/admin/api/overview", { headers: S })).json();
+    const ov2 = await (await req("/admin/api/overview?view=all", { headers: S })).json();
     assert.equal(ov2.jobs[0].files[0].deleted, 9);
     assert.deepEqual(ov2.jobs[0].files[0].reports, [], "no report links once deleted");
+
+    // 10c. Order desk: Needs action, customer file, conversation, reply, notes, send files.
+    jobs.job2 = { jobId: "job2", userId: 333, name: "Mary W", username: "maryw", createdAt: Date.now() - 3600000,
+      paidAt: Date.now() - 3600000, status: "MANUAL_REQUIRED", route: "PENDING", amount: 150, files: [
+        { jkSubmissionId: "trn:oid:::1:2222222222", file_name: "Thesis.docx", providerStatus: "MANUAL_REQUIRED" }] };
+    jobs.job3 = { jobId: "job3", userId: 444, createdAt: Date.now() - 600000, paidAt: Date.now() - 600000,
+      status: "API_PROCESSING", files: [] }; // within 20 min: nothing to do
+    jobs.job4 = { jobId: "job4", userId: 555, createdAt: Date.now() - 7200000, status: "DELIVERED",
+      deliveredAt: Date.now(), files: [] };
+    let act = await (await req("/admin/api/overview?view=action", { headers: S })).json();
+    assert.deepEqual(act.jobs.map(j => j.jobId), ["job2"]);
+    assert.deepEqual(act.jobs[0].needs, ["Manual report needed"]);
+    assert.equal(act.jobs[0].name, "Mary W");
+    assert.equal(act.counts.action, 1);
+    assert.equal(act.notes.CLEAN_COPY, "🚫 Remove logo/name reminder");
+    // Search covers name, user ID, report ID and file name.
+    for (const q of ["mary", "333", "2222222222", "thesis"]) {
+      const r = await (await req("/admin/api/overview?view=all&q=" + q, { headers: S })).json();
+      assert.deepEqual(r.jobs.map(j => j.jobId), ["job2"], q);
+    }
+    // A customer message with no reply puts that customer in Needs action.
+    panelDeps.messages.log(555, "customer", "Hello, where is my report?");
+    panelDeps.messages.log(777, "customer", "Do you check Arabic?");
+    act = await (await req("/admin/api/overview?view=action", { headers: S })).json();
+    assert(act.jobs.find(j => j.jobId === "job4").needs.includes("Customer waiting for a reply"));
+    assert.deepEqual(act.waiting.map(w => w.userId), ["777"]);
+    assert.equal(act.waiting[0].last, "Do you check Arabic?");
+    assert.equal(act.counts.action, 3);
+
+    const orig = await req("/admin/api/files/2222222222/original", { headers: S });
+    assert.equal(orig.status, 200);
+    assert.equal(await orig.text(), "ORIGINAL");
+    assert.match(orig.headers.get("content-disposition"), /Thesis\.docx/);
+    assert.equal((await req("/admin/api/files/2222222222/original")).status, 403, "panel header required");
+    assert.equal((await req("/admin/api/files/1234567890/original", { headers: S })).status, 410, "deleted file");
+
+    const J = { ...S, "Content-Type": "application/json" };
+    assert.equal((await req("/admin/api/users/abc/reply", { method: "POST", headers: J, body: JSON.stringify({ text: "hi" }) })).status, 400);
+    assert.equal((await req("/admin/api/users/333/reply", { method: "POST", headers: J, body: JSON.stringify({ text: " " }) })).status, 400);
+    assert.equal((await req("/admin/api/users/333/reply", { method: "POST", headers: J, body: JSON.stringify({ text: "Your report is ready" }) })).status, 200);
+    assert.deepEqual(calls.at(-1), ["reply", "333", "Your report is ready"]);
+    assert.equal((await req("/admin/api/users/333/note", { method: "POST", headers: J, body: JSON.stringify({ kind: "toString" }) })).status, 400);
+    assert.equal((await req("/admin/api/users/333/note", { method: "POST", headers: J, body: JSON.stringify({ kind: "CLEAN_COPY" }) })).status, 200);
+    assert.deepEqual(calls.at(-1), ["note", "333", "CLEAN_COPY"]);
+    const dv = await req("/admin/api/users/9000000000000123/deliver", { method: "PUT",
+      headers: { ...S, "X-File-Name": encodeURIComponent("../Mary report.pdf"), "X-Caption": encodeURIComponent("Here you go") }, body: "PDF!" });
+    assert.equal(dv.status, 200, "website customers too");
+    assert.deepEqual(calls.at(-1), ["deliver", "9000000000000123", "Mary report.pdf", 4, "Here you go"]);
+    assert.equal((await req("/admin/api/users/333/deliver", { method: "PUT", headers: { ...S, "X-File-Name": "a.pdf" }, body: "" })).status, 400);
+    const done = await (await req("/admin/api/users/333/deliver/done", { method: "POST", headers: J, body: JSON.stringify({ count: 2 }) })).json();
+    assert.equal(done.delivered, "job1");
+    assert.deepEqual(calls.at(-1), ["done", "333", 2]);
+    const th = await (await req("/admin/api/users/555/thread", { headers: S })).json();
+    assert.equal(th.messages[0].text, "Hello, where is my report?");
+    assert(th.waiting);
 
     // 11. Logout ends the session.
     await req("/admin/api/logout", { method: "POST", headers: S });
@@ -166,5 +230,6 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
 
   console.log("PASS: /admin is off without a 12+ character password; secure headers, header + session on every call.");
   console.log("PASS: 5 wrong passwords lock an address; authenticator codes (RFC 6238); secure session cookie; logout.");
+  console.log("PASS: order desk: Needs action inbox, search, customer file, conversation, reply, notes, send files + done.");
   console.log("PASS: orders, report downloads (no path tricks), retry/stop, confirm/cancel, upload + free scan, send file.");
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -574,6 +574,7 @@ function createWebOrders(d) {
     if (clean.length < 2) { const e = new Error("Write a message first."); e.status = 400; throw e; }
     limited("msg:" + order.id, 10);
     pushMessage(order, clean, "client");
+    try { d.logMessage?.(order.uid, "customer", clean); } catch {}
     await d.sendAdminMessage(
       "💬 Website message\nOrder: " + order.id + "\nUser ID: " + order.uid +
       "\nStage: " + statusFor(order).stage + "\n\n" + clean,
