@@ -172,7 +172,9 @@ function startServer() {
     const viaSwitch = await plagiarism.checkPlagiarism({ text: TEXT, title: "Essay.docx", pollMs: 1 });
     assert.equal(viaSwitch.provider, "jksimilarity");
 
-    // 5. Errors are clear; fallback only when enabled.
+    // 5. Errors are clear. JK_SIMILARITY_FALLBACK_V1: no immediate switch to Quetext
+    // (even with the old PLAGIARISM_FALLBACK setting); the switch happens only on a
+    // file's 3rd automatic retry (test-similarity-fallback.cjs), or when asked for.
     process.env.JK_SIMILARITY_API_KEY = "wrong-key";
     await assert.rejects(plagiarism.checkPlagiarism({ text: TEXT, title: "x" }), /HTTP 401: Missing or invalid API key/u);
     process.env.PLAGIARISM_FALLBACK = "quetext";
@@ -180,7 +182,9 @@ function startServer() {
     const original = quetext.checkPlagiarism;
     quetext.checkPlagiarism = async () => ({ provider: "quetext", matches: [] });
     try {
-      assert.equal((await plagiarism.checkPlagiarism({ text: TEXT, title: "x" })).provider, "quetext");
+      await assert.rejects(plagiarism.checkPlagiarism({ text: TEXT, title: "x" }), /HTTP 401/u, "no immediate switch");
+      assert.equal((await plagiarism.checkPlagiarism({ text: TEXT, title: "x", provider: "quetext" })).provider, "quetext",
+        "one-file fallback when asked for");
     } finally {
       quetext.checkPlagiarism = original;
     }

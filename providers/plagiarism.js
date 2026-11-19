@@ -12,8 +12,10 @@
        ("quetext" or "jksimilarity").
     3. Quetext.
 
-  Optional: PLAGIARISM_FALLBACK=quetext makes a failed JK SimilarityCheck scan
-  retry once on Quetext (uses Quetext credit), so customers still get a report.
+  JK_SIMILARITY_FALLBACK_V1: no immediate switching. When a file's similarity
+  check keeps failing, its 3rd automatic retry uses the other checker for that
+  file only (see jk-provider-auto-retry.cjs); the setting above never changes.
+  The old PLAGIARISM_FALLBACK setting is no longer used.
 
   Both providers return the same result shape, so nothing downstream changes.
 */
@@ -75,18 +77,17 @@ function setProvider(name, { by = null, env = process.env } = {}) {
   return currentProvider(env);
 }
 
-async function checkPlagiarism(args) {
-  const chosen = currentProvider();
-  try {
-    return await PROVIDERS[chosen.name].load().checkPlagiarism(args);
-  } catch (error) {
-    const fallback = normalizeName(process.env.PLAGIARISM_FALLBACK);
-    if (chosen.name === "jksimilarity" && fallback === "quetext") {
-      console.error("JK SimilarityCheck failed; retrying on Quetext:", error?.message || error);
-      return PROVIDERS.quetext.load().checkPlagiarism(args);
-    }
-    throw error;
-  }
+// The other checker (used for one file's fallback retry).
+function otherProvider(name) {
+  return normalizeName(name) === "jksimilarity" ? "quetext" : "jksimilarity";
 }
 
-module.exports = { PROVIDERS, currentProvider, setProvider, normalizeName, storeFile, checkPlagiarism };
+// args.provider (optional): run this one file on a given checker without
+// changing the saved setting (the fallback retry).
+async function checkPlagiarism(args = {}) {
+  const { provider, ...rest } = args;
+  const name = normalizeName(provider) || currentProvider().name;
+  return PROVIDERS[name].load().checkPlagiarism(rest);
+}
+
+module.exports = { PROVIDERS, currentProvider, setProvider, normalizeName, storeFile, checkPlagiarism, otherProvider };

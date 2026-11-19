@@ -16,15 +16,14 @@ function describe(current = plagiarism.currentProvider()) {
     render: "from the Render setting PLAGIARISM_PROVIDER",
     default: "default (no setting)"
   }[current.source];
-  const fallback = plagiarism.normalizeName(process.env.PLAGIARISM_FALLBACK) === "quetext"
-    ? "On: a failed JK SimilarityCheck scan retries on Quetext."
-    : "Off.";
+  const other = plagiarism.PROVIDERS[plagiarism.otherProvider(current.name)].label;
   return [
     "Plagiarism provider",
     "",
     "In use: " + current.label + " (" + why + ")",
     "Render setting: " + (plagiarism.PROVIDERS[plagiarism.normalizeName(process.env.PLAGIARISM_PROVIDER)]?.label || "not set"),
-    "Fallback to Quetext: " + fallback,
+    "Fallback: if a file's similarity check fails, it is retried twice on " + current.label +
+      "; the 3rd retry uses " + other + " for that file only. If that fails too, RETRY NOW (back on " + current.label + ").",
     "",
     "Applies to new scans from now on."
   ].join("\n");
