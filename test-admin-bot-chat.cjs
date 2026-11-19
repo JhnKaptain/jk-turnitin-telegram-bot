@@ -43,6 +43,8 @@ const { shopEvents } = require("./jk-shop-store.cjs");
     Telegram.prototype.callApi = async function (method, payload) {
       api.push([method, payload.chat_id, payload.callback_query_id || null]);
       if (method === "answerCallbackQuery") throw new Error("must not reach Telegram for web taps");
+      if (String(payload.text || "").includes("[DOWN]")) throw new Error("connect ETIMEDOUT api.telegram.org");
+      if (payload.parse_mode === "Markdown" && String(payload.text || "").includes("[MD]")) throw new Error("Bad Request: can't parse entities");
       return { message_id: ++nextId, chat: { id: payload.chat_id }, date: 0, text: payload.text,
         ...(method === "sendDocument" ? { document: { file_name: "report.pdf" } } : {}) };
     };
@@ -111,6 +113,31 @@ const { shopEvents } = require("./jk-shop-store.cjs");
     await assert.rejects(chat.press(bot, reply.id, "SOMETHING_ELSE"), /no longer available/);
     await assert.rejects(chat.press(bot, 99999, "PROV_JK"), /no longer available/);
 
+    // 6b. Telegram down: the panel still gets the message and the alert; buttons still work.
+    const before = notified.length;
+    await assert.rejects(bot.telegram.sendMessage(ADMIN, "💬 Support message from user [DOWN]\nUser ID: 9",
+      { reply_markup: { inline_keyboard: [[{ text: "Use JK SimilarityCheck", callback_data: "PROV_JK" }]] } }), /ETIMEDOUT/);
+    const down = chat.feed().entries.at(-1);
+    assert.match(down.telegramError, /ETIMEDOUT/);
+    assert.equal(down.messageId, null);
+    assert.equal(notified.length, before + 1);
+    assert.equal(notified.at(-1)[0], "message");
+    provider = "Quetext";
+    const r3 = await chat.press(bot, down.id, "PROV_JK");
+    assert.equal(provider, "JK SimilarityCheck", "the button's action runs even though the message never reached Telegram");
+    assert.equal(r3.toast, "Switched");
+
+    // 6c. Telegram rejects the formatting, the bot resends as plain text: one copy, one alert.
+    const n2 = notified.length;
+    await assert.rejects(bot.telegram.sendMessage(ADMIN, "🧾 *M-Pesa* message received [MD]\nUser: @a_b", { parse_mode: "Markdown" }), /parse/);
+    await bot.telegram.sendMessage(ADMIN, "🧾 *M-Pesa* message received [MD]\nUser: @a_b");
+    const md = chat.feed().entries.filter(e => e.text.includes("[MD]"));
+    assert.equal(md.length, 1, "retry merged into the first copy");
+    assert.equal(md[0].telegramError, undefined);
+    assert(md[0].messageId > 0);
+    assert.equal(md[0].text, "🧾 *M-Pesa* message received [MD]\nUser: @a_b", "plain-text version kept (underscores intact)");
+    assert.equal(notified.length, n2 + 1, "one alert");
+
     // 7. Saved to disk and reloaded.
     await new Promise(r => setTimeout(r, 900));
     const again = createBotChat({ file: path.join(dir, "chat.json"), adminId: ADMIN });
@@ -174,7 +201,8 @@ const { shopEvents } = require("./jk-shop-store.cjs");
     console.log("PASS: bot chat: admin messages copied with buttons and categories; edits tracked; other chats ignored.");
     console.log("PASS: commands and plain text typed in the panel run as the admin; panel taps answered locally.");
     console.log("PASS: 'retries used up' notifies once; notifications per device and category; gone devices removed.");
-    console.log("PASS: shop events (new paid order, new customer message); lock-screen text trimmed.");
+    console.log("PASS: Telegram down: message and alert still reach the panel, buttons work; formatting retry merged.");
+  console.log("PASS: shop events (new paid order, new customer message); lock-screen text trimmed.");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

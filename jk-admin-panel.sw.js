@@ -5,11 +5,18 @@ self.addEventListener("activate", event => event.waitUntil(self.clients.claim())
 self.addEventListener("push", event => {
   let d = {};
   try { d = event.data ? event.data.json() : {}; } catch { d = { title: "JK Admin", body: event.data && event.data.text() }; }
-  event.waitUntil(self.registration.showNotification(d.title || "JK Admin", {
-    body: d.body || "", tag: d.tag || undefined, renotify: Boolean(d.tag),
-    icon: "/admin/icon-192.png", badge: "/admin/icon-192.png",
-    data: { url: d.url || "/admin#bot" }
-  }));
+  event.waitUntil((async () => {
+    // Panel open on screen: it shows its own pop-up (banner + sound) instead.
+    const list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const visible = list.find(c => c.visibilityState === "visible" && c.focused && new URL(c.url).pathname.startsWith("/admin"));
+    if (visible) { visible.postMessage({ type: "jk-push", ...d }); return; }
+    await self.registration.showNotification(d.title || "JK Admin", {
+      body: d.body || "", tag: d.tag || undefined, renotify: Boolean(d.tag),
+      icon: "/admin/icon-192.png", badge: "/admin/icon-192.png",
+      vibrate: [200, 100, 200], requireInteraction: false,
+      data: { url: d.url || "/admin#bot" }
+    });
+  })());
 });
 self.addEventListener("notificationclick", event => {
   event.notification.close();

@@ -100,22 +100,39 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
   }
 
   // Called for every Telegram API call; only the admin chat is copied.
-  function observe(method, payload, result) {
+  function observe(method, payload, result, { telegramError = null } = {}) {
     if (!payload || String(payload.chat_id) !== String(adminId)) return;
     if (/^(sendMessage|sendDocument|sendPhoto|sendVideo|sendAudio|sendAnimation)$/.test(method)) {
+      // The bot resends without formatting when Telegram rejects Markdown: that
+      // retry updates the copy made from the failed attempt instead of adding one.
+      const norm = v => String(v || "").replace(/[*_`\\\s]/g, "");
+      const text = plain(payload.text ?? payload.caption ?? "", payload.parse_mode);
+      const failed = state.entries.slice(-5).reverse().find(e => e.telegramError && now() - e.at < 60000 && norm(e.text) === norm(text));
+      if (failed) {
+        if (!telegramError) {
+          failed.messageId = Number(result?.message_id) || null;
+          delete failed.telegramError;
+          failed.text = text;
+          failed.buttons = buttonsOf(payload.reply_markup);
+          save();
+        }
+        return;
+      }
       const doc = result?.document || result?.video || result?.audio || null;
       const fileName = doc?.file_name || (method === "sendPhoto" ? "Photo" : method === "sendDocument" ? "Document" : null);
       add({
         messageId: Number(result?.message_id) || null,
         text: plain(payload.text ?? payload.caption ?? "", payload.parse_mode),
         file: method === "sendMessage" ? null : fileName,
-        buttons: buttonsOf(payload.reply_markup)
+        buttons: buttonsOf(payload.reply_markup),
+        ...(telegramError ? { telegramError } : {})
       });
       return;
     }
     const id = Number(payload.message_id);
     const entry = id ? [...state.entries].reverse().find(e => e.messageId === id) : null;
     if (!entry) return;
+    if (telegramError && !/^editMessage(Text|Caption)$/.test(method)) return;
     if (method === "deleteMessage") { entry.deleted = true; entry.buttons = []; save(); return; }
     if (/^editMessage(Text|Caption)$/.test(method)) {
       const before = entry.text;
@@ -145,7 +162,15 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
         toasts.set(String(payload.callback_query_id), String(payload.text || ""));
         return true; // a button pressed in the web panel: answered there, not on Telegram
       }
-      const result = await original.call(this, method, payload, opts);
+      let result;
+      try {
+        result = await original.call(this, method, payload, opts);
+      } catch (error) {
+        // Telegram refused or could not be reached: the panel still gets the
+        // message (and the notification), marked as not delivered to Telegram.
+        try { observe(method, payload, null, { telegramError: String(error?.message || error).slice(0, 200) }); } catch {}
+        throw error;
+      }
       try { observe(method, payload, result); } catch (error) { console.error("Bot chat copy failed:", error.message); }
       return result;
     };
@@ -186,14 +211,14 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
   async function press(bot, entryId, data) {
     const entry = state.entries.find(e => e.id === Number(entryId));
     const button = entry && entry.buttons.flat().find(b => b.data === String(data));
-    if (!entry || !button || !entry.messageId) { const e = new Error("That button is no longer available."); e.status = 404; throw e; }
+    if (!entry || !button) { const e = new Error("That button is no longer available."); e.status = 404; throw e; }
     const id = WEB_CALLBACK_PREFIX + crypto.randomBytes(8).toString("hex");
     add({ from: "you", text: "Tapped “" + button.text + "”", category: "you" });
     const update = {
       update_id: nextUpdateId(),
       callback_query: {
         id, from: adminFrom(), chat_instance: "jk-admin-web", data: button.data,
-        message: { message_id: entry.messageId, from: { id: 0, is_bot: true, first_name: "Bot" }, chat: adminChat(),
+        message: { message_id: entry.messageId || nextUpdateId(), from: { id: 0, is_bot: true, first_name: "Bot" }, chat: adminChat(),
           date: Math.floor(entry.at / 1000), text: entry.text,
           ...(entry.buttons.length ? { reply_markup: { inline_keyboard: entry.buttons.map(r => r.map(b => b.data ? { text: b.text, callback_data: b.data } : { text: b.text, url: b.url })) } } : {}) }
       }
