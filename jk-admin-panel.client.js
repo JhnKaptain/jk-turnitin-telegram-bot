@@ -73,7 +73,6 @@
     const can = f => f.id && !f.deleted;
     const live = new Set(data.jobs.flatMap(j => j.files.filter(can).map(f => f.id)));
     for (const id of [...selected]) if (!live.has(id)) selected.delete(id);
-    const pendingPay = new Set(data.payments.map(p => String(p.userId)));
 
     const waiting = (data.waiting || []).map(w => (
       '<div class="card need"><div class="row"><strong>💬 Customer ' + esc(w.userId) + '</strong>' +
@@ -117,9 +116,6 @@
           '<button class="btn" data-open="' + esc(j.userId) + '">💬 Reply / notes</button>' +
           (j.done ? '<button class="btn" data-jobundo="' + esc(j.jobId) + '">↩ Undo done</button>'
             : '<button class="btn" data-jobdone="' + esc(j.jobId) + '">✔ Mark done</button>') +
-          (pendingPay.has(String(j.userId)) ?
-            '<button class="btn" data-confirm="' + esc(j.userId) + '">✅ Confirm pay</button>' +
-            '<button class="btn danger" data-cancel="' + esc(j.userId) + '">🛑 Cancel pay</button>' : '') +
           '</div>') +
         '</div>';
     }).join("");

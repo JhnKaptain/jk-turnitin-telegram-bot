@@ -169,7 +169,10 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     assert.deepEqual(dr.deleted, ["1234567890"]);
     assert.deepEqual(calls.at(-1), ["delete", ["1234567890"], "admin-web-panel"]);
     jobs.job1.files[0].providerFilesDeletedAt = 9;
-    const ov2 = await (await req("/admin/api/overview?view=all", { headers: S })).json();
+    // Orders whose files are all deleted leave the lists; search still finds them.
+    const hidden = await (await req("/admin/api/overview?view=all", { headers: S })).json();
+    assert(!hidden.jobs.some(j => j.jobId === "job1"), "fully deleted order hidden");
+    const ov2 = await (await req("/admin/api/overview?view=all&q=1234567890", { headers: S })).json();
     assert.equal(ov2.jobs[0].files[0].deleted, 9);
     assert.deepEqual(ov2.jobs[0].files[0].reports, [], "no report links once deleted");
 
@@ -288,6 +291,12 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
+  // 12b. Paid orders never show payment buttons (those live on the Payments tab).
+  const client = fs.readFileSync(path.join(__dirname, "jk-admin-panel.client.js"), "utf8");
+  const ordersPart = client.slice(client.indexOf("function renderOrders"), client.indexOf("function updateDeleteBar"));
+  assert(!ordersPart.includes("data-confirm") && !ordersPart.includes("data-cancel"), "no Confirm/Cancel pay on order cards");
+  assert(client.slice(client.indexOf("function renderPayments")).includes("data-confirm"), "still on the Payments tab");
+
   // 13. Bot wiring: panel installed, uploads readable by the pipeline, free scan builds the admin job.
   const bot = fs.readFileSync(path.join(__dirname, "bot.js"), "utf8");
   assert(bot.includes("adminPanel.install(app, express);"));
@@ -300,5 +309,6 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
   console.log("PASS: order desk: Needs action inbox, search, customer file, conversation, reply, notes, send files + done.");
   console.log("PASS: free scans out of Needs action; Mark done until the customer writes again.");
   console.log("PASS: other services: shop orders inbox, search, Mark done, reply + file via the shop service.");
+  console.log("PASS: fully deleted orders hidden (search finds them); no pay buttons on paid order cards.");
   console.log("PASS: orders, report downloads (no path tricks), retry/stop, confirm/cancel, upload + free scan, send file.");
 })().catch(error => { console.error(error); process.exitCode = 1; });
