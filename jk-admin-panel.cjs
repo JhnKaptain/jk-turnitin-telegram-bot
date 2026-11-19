@@ -402,7 +402,7 @@ function createAdminPanel(d) {
       res.set("X-Content-Type-Options", "nosniff");
       res.set("Referrer-Policy", "no-referrer");
       res.set("Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'");
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; form-action 'self'");
     };
     const guard = (req, res, next) => {
       secure(res);
@@ -423,6 +423,26 @@ function createAdminPanel(d) {
     });
     app.get("/admin/app.js", (req, res) => { secure(res); res.type("application/javascript").send(js); });
 
+    // JK_ADMIN_PUSH_V1: notification worker, app manifest and icon (no secrets).
+    const sw = fs.readFileSync(path.join(__dirname, "jk-admin-panel.sw.js"), "utf8");
+    const icons = Object.fromEntries([192, 512].map(n => [n, fs.readFileSync(path.join(__dirname, "jk-admin-icon-" + n + ".png"))]));
+    app.get("/admin/sw.js", (req, res) => {
+      secure(res);
+      res.set("Service-Worker-Allowed", "/admin");
+      res.type("application/javascript").send(sw);
+    });
+    app.get("/admin/manifest.webmanifest", (req, res) => {
+      secure(res);
+      res.type("application/manifest+json").send(JSON.stringify({
+        name: "JK Admin", short_name: "JK Admin", start_url: "/admin", scope: "/admin",
+        display: "standalone", background_color: "#0f1115", theme_color: "#2457d6",
+        icons: [192, 512].map(n => ({ src: "/admin/icon-" + n + ".png", sizes: n + "x" + n, type: "image/png", purpose: "any" }))
+      }));
+    });
+    for (const n of [192, 512]) {
+      app.get("/admin/icon-" + n + ".png", (req, res) => { res.set("Cache-Control", "public, max-age=86400"); res.type("png").send(icons[n]); });
+    }
+
     app.post("/admin/api/login", express.json({ limit: "4kb" }), handle(async (req, res) => {
       secure(res);
       if (req.get("X-Admin-Panel") !== "1") return res.status(403).json({ error: "Missing panel header." });
@@ -438,6 +458,48 @@ function createAdminPanel(d) {
     });
 
     app.get("/admin/api/overview", guard, handle(async (req, res) => res.json(overview(req.query || {}))));
+
+    // JK_ADMIN_BOT_CHAT_V1: the admin's bot chat, commands and buttons.
+    const CATS = require("./jk-admin-bot-chat.cjs").CATEGORIES;
+    app.get("/admin/api/bot/feed", guard, handle(async (req, res) => {
+      if (!d.botChat) return res.status(501).json({ error: "Bot chat is not available." });
+      res.json({ ...d.botChat.feed(), categories: CATS, now: now() });
+    }));
+    app.post("/admin/api/bot/send", guard, express.json({ limit: "16kb" }), handle(async (req, res) => {
+      if (!d.botChat) return res.status(501).json({ error: "Bot chat is not available." });
+      res.json(await d.botChat.sendText(d.bot, req.body?.text));
+    }));
+    app.post("/admin/api/bot/press", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      if (!d.botChat) return res.status(501).json({ error: "Bot chat is not available." });
+      res.json(await d.botChat.press(d.bot, req.body?.id, req.body?.data));
+    }));
+
+    // JK_ADMIN_PUSH_V1: notifications on this device.
+    const pushReady = res => { if (d.push) return true; res.status(501).json({ error: "Notifications are not available." }); return false; };
+    app.get("/admin/api/push/key", guard, handle(async (req, res) => {
+      if (!pushReady(res)) return;
+      res.json({ publicKey: d.push.publicKey(), categories: CATS });
+    }));
+    app.post("/admin/api/push/subscribe", guard, express.json({ limit: "8kb" }), handle(async (req, res) => {
+      if (!pushReady(res)) return;
+      const cats = (Array.isArray(req.body?.categories) ? req.body.categories : []).filter(c => Object.prototype.hasOwnProperty.call(CATS, c));
+      res.json({ ok: true, ...d.push.subscribe(req.body?.subscription, cats, req.body?.label) });
+    }));
+    app.post("/admin/api/push/device", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      if (!pushReady(res)) return;
+      res.json({ device: d.push.device(req.body?.endpoint) });
+    }));
+    app.post("/admin/api/push/unsubscribe", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      if (!pushReady(res)) return;
+      res.json({ ok: true, ...d.push.unsubscribe(req.body?.endpoint) });
+    }));
+    app.post("/admin/api/push/test", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      if (!pushReady(res)) return;
+      const r = await d.push.send({ title: "🔔 JK Admin notifications are on", body: "You'll get alerts like this for the categories you picked.", tag: "jk-test", url: "/admin#bot" },
+        { endpoint: String(req.body?.endpoint || "") });
+      if (!r.sent) return res.status(502).json({ error: "The test notification could not be delivered to this device." });
+      res.json({ ok: true });
+    }));
 
     // JK_ADMIN_OTHER_SERVICES_V1: Mark done, and the website shop orders.
     app.post("/admin/api/jobs/:jobId/done", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {

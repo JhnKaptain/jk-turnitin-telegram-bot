@@ -37,7 +37,7 @@ const { installShopStore } = require("./jk-shop-store.cjs");
   assert.equal(store.enabled(), true);
   assert.equal((await fetch(url(offServer), { headers: auth })).status, 404, "off without SHOP_STORE_KEY");
   const bot = fs.readFileSync(path.join(__dirname, "bot.js"), "utf8");
-  assert(bot.includes('require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR })') && bot.includes("shop: shopStore,"), "installed in bot.js");
+  assert(bot.includes('const shopStore = require("./jk-shop-store.cjs").installShopStore({') && bot.includes("shop: shopStore,"), "installed in bot.js");
 
   server.close(); offServer.close();
   fs.rmSync(dataDir, { recursive: true, force: true });

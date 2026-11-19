@@ -13,7 +13,12 @@
   let drawerUser = null;
   // JK_ADMIN_OTHER_SERVICES_V1: Reports <-> Other services (website shop).
   let section = "reports";
-  try { if (localStorage.getItem("jkSection") === "shop") section = "shop"; } catch {}
+  try { const saved = localStorage.getItem("jkSection"); if (saved === "shop" || saved === "bot") section = saved; } catch {}
+  if (location.hash === "#bot") section = "bot"; // opened from a notification
+  // JK_ADMIN_BOT_CHAT_V1
+  let botData = null;
+  let botFilter = "all";
+  let botTimer = null;
   let shopView = "action";
   let shopSearch = "";
   let shopData = null;
@@ -39,12 +44,13 @@
   };
 
   function showLogin() {
-    clearInterval(timer);
+    clearInterval(timer); clearInterval(botTimer);
     $("app").classList.add("hidden"); $("login").classList.remove("hidden");
   }
   function showApp() {
     $("login").classList.add("hidden"); $("app").classList.remove("hidden");
     refresh(); clearInterval(timer); timer = setInterval(refresh, 20000);
+    applySection();
   }
 
   // --- rendering ----------------------------------------------------------
@@ -198,7 +204,153 @@
     $("reportsSection").classList.toggle("hidden", section !== "reports");
     $("reportsNav").classList.toggle("hidden", section !== "reports");
     $("shopSection").classList.toggle("hidden", section !== "shop");
+    $("botSection").classList.toggle("hidden", section !== "bot");
+    document.body.classList.toggle("botmode", section === "bot");
+    clearInterval(botTimer);
+    if (section === "bot" && !$("app").classList.contains("hidden")) { refreshBot(); botTimer = setInterval(refreshBot, 6000); checkNotif(); }
   }
+
+  // --- Bot chat: everything the bot sends you, commands, buttons ------------
+  const CAT_SHORT = { payment: "💳 Payments", failed: "❌ Failed", message: "💬 Messages", shop: "🛍 Shop", attention: "⚠️ Attention",
+    provider: "🔌 Providers", broadcast: "📢 Broadcast", orders: "✅ Orders", retrying: "🔁 Retrying", other: "Other" };
+  function renderBotFilters() {
+    const cats = ["all", ...Object.keys(CAT_SHORT)];
+    $("botFilters").innerHTML = cats.map(c => '<button class="btn small' + (c === botFilter ? ' on' : '') + '" data-bfilter="' + c + '">' +
+      (c === "all" ? "All" : CAT_SHORT[c]) + '</button>').join("");
+  }
+  function renderBot() {
+    const box = $("botFeed");
+    const nearEnd = window.innerHeight + window.scrollY >= document.body.scrollHeight - 200;
+    const list = botData.entries.filter(e => botFilter === "all" || e.category === botFilter || (e.from === "you" && botFilter === "all"));
+    box.innerHTML = list.length ? list.map(e => (
+      '<div class="bmsg' + (e.from === "you" ? " you" : "") + (e.deleted ? " deleted" : "") + '">' +
+      (e.file ? '<div class="muted">📎 ' + esc(e.file) + '</div>' : '') +
+      '<div class="txt">' + esc(e.text || "") + '</div>' +
+      (e.buttons && e.buttons.length && !e.deleted ? '<div class="kb">' + e.buttons.map(row => '<div class="row">' + row.map(b => b.url
+        ? '<a class="btn" target="_blank" rel="noopener noreferrer" href="' + esc(b.url) + '">' + esc(b.text) + ' ↗</a>'
+        : '<button class="btn" data-bpress="' + esc(e.id) + '" data-bdata="' + esc(b.data) + '">' + esc(b.text) + '</button>').join("") + '</div>').join("") + '</div>' : '') +
+      '<div class="meta">' + (e.from === "you" ? "You (web)" : (CAT_SHORT[e.category] || "Bot")) + ' · ' + esc(when(e.at)) + (e.editedAt ? ' · edited' : '') + '</div></div>'
+    )).join("") : '<div class="card muted">No messages yet. Everything the bot sends you on Telegram appears here from now on.</div>';
+    if (nearEnd || !box.dataset.loaded) window.scrollTo(0, document.body.scrollHeight);
+    box.dataset.loaded = "1";
+  }
+  async function refreshBot() {
+    try {
+      const r = await api("/admin/api/bot/feed");
+      const changed = !botData || r.seq !== botData.seq || JSON.stringify(r.entries.slice(-30)) !== JSON.stringify(botData.entries.slice(-30));
+      botData = r;
+      if (!$("botFilters").innerHTML) renderBotFilters();
+      if (changed) renderBot();
+    } catch (e) { if (e.message !== "Please log in.") toast(e.message); }
+  }
+  async function botSend(text) {
+    text = String(text || "").trim();
+    if (!text) return;
+    $("botSend").disabled = true;
+    try {
+      const r = await api("/admin/api/bot/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      $("botInput").value = "";
+      if (!r.finished) toast("Still working… the answer will appear here.");
+      await refreshBot();
+      window.scrollTo(0, document.body.scrollHeight);
+    } catch (e) { toast(e.message); }
+    finally { $("botSend").disabled = false; }
+  }
+  $("botSend").addEventListener("click", () => botSend($("botInput").value));
+  $("botInput").addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); botSend($("botInput").value); } });
+
+  // --- Notifications on this device --------------------------------------
+  const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const standalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  let notifCats = null;
+  function b64ToBytes(b64) {
+    const pad = "=".repeat((4 - b64.length % 4) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(raw, c => c.charCodeAt(0));
+  }
+  async function swReg() { return navigator.serviceWorker.register("/admin/sw.js", { scope: "/admin" }); }
+  async function currentSub() {
+    if (!pushSupported()) return null;
+    const reg = await navigator.serviceWorker.getRegistration("/admin");
+    return reg ? reg.pushManager.getSubscription() : null;
+  }
+  function chosenCats() { return [...document.querySelectorAll("#notifCats input:checked")].map(i => i.value); }
+  async function checkNotif() {
+    try {
+      if (!notifCats) {
+        const k = await api("/admin/api/push/key");
+        notifCats = k.categories;
+        $("notifCats").innerHTML = Object.entries(notifCats).map(([key, c]) =>
+          '<div class="check"><input type="checkbox" id="nc-' + key + '" value="' + key + '"' + (c.on ? " checked" : "") + '>' +
+          '<label for="nc-' + key + '" style="margin:0">' + esc(c.label) + '</label></div>').join("");
+      }
+      if (!pushSupported()) {
+        $("notifState").textContent = "not supported here";
+        $("notifHelp").textContent = isIos() && !standalone()
+          ? "On iPhone: tap Share → Add to Home Screen, then open JK Admin from the home screen and turn notifications on there (iOS 16.4 or newer)."
+          : "This browser can't show notifications. On Android use Chrome.";
+        return;
+      }
+      const sub = await currentSub();
+      const on = sub && Notification.permission === "granted";
+      $("notifState").textContent = on ? "On" : Notification.permission === "denied" ? "Blocked in browser settings" : "Off";
+      ["notifSave", "notifTest", "notifOff"].forEach(id => $(id).classList.toggle("hidden", !on));
+      $("notifOn").classList.toggle("hidden", !!on);
+      if (on) {
+        const r = await api("/admin/api/push/device", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }) });
+        if (r.device) document.querySelectorAll("#notifCats input").forEach(i => { i.checked = r.device.categories.includes(i.value); });
+        else $("notifState").textContent = "Off (turn on again)";
+      }
+    } catch (e) { $("notifState").textContent = "unavailable"; }
+  }
+  function deviceLabel() {
+    const ua = navigator.userAgent;
+    return (/Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Windows/.test(ua) ? "Windows" : /Mac/.test(ua) ? "Mac" : "Device") +
+      (/Mobile/.test(ua) ? " phone" : "");
+  }
+  async function saveSub(sub) {
+    await api("/admin/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscription: sub.toJSON(), categories: chosenCats(), label: deviceLabel() }) });
+  }
+  $("notifOn").addEventListener("click", async () => {
+    const btn = $("notifOn"); btn.disabled = true;
+    try {
+      if (!pushSupported()) throw new Error($("notifHelp").textContent);
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") throw new Error("Notifications were not allowed. Allow them for this site in the browser settings.");
+      const reg = await swReg();
+      await navigator.serviceWorker.ready;
+      const { publicKey } = await api("/admin/api/push/key");
+      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
+      await saveSub(sub);
+      await api("/admin/api/push/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {});
+      toast("Notifications are on for this device. A test alert is on its way.");
+    } catch (e) { toast(e.message, 8000); }
+    finally { btn.disabled = false; checkNotif(); }
+  });
+  $("notifSave").addEventListener("click", async () => {
+    try { const sub = await currentSub(); if (!sub) throw new Error("Turn notifications on first."); await saveSub(sub); toast("Saved."); }
+    catch (e) { toast(e.message); }
+  });
+  $("notifTest").addEventListener("click", async () => {
+    try {
+      const sub = await currentSub(); if (!sub) throw new Error("Turn notifications on first.");
+      await api("/admin/api/push/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }) });
+      toast("Test sent.");
+    } catch (e) { toast(e.message); }
+  });
+  $("notifOff").addEventListener("click", async () => {
+    try {
+      const sub = await currentSub();
+      if (sub) {
+        await api("/admin/api/push/unsubscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }) });
+        await sub.unsubscribe();
+      }
+      toast("Notifications are off for this device.");
+    } catch (e) { toast(e.message); }
+    finally { checkNotif(); }
+  });
   async function refreshShop() {
     const r = await api("/admin/api/shop?view=" + shopView + "&q=" + encodeURIComponent(shopSearch));
     shopData = r;
@@ -332,6 +484,19 @@
     const t = ev.target.closest("button,a");
     if (!t) return;
     if (t.dataset.view) { view = t.dataset.view; selected.clear(); refresh(); return; }
+    if (t.dataset.bfilter) { botFilter = t.dataset.bfilter; renderBotFilters(); if (botData) renderBot(); return; }
+    if (t.dataset.cmd) { botSend(t.dataset.cmd); return; }
+    if (t.dataset.bpress) {
+      if (/send to all|delete|cancel|reject|disable|turn off/i.test(t.textContent) && !confirm("Tap “" + t.textContent + "”?")) return;
+      t.disabled = true;
+      try {
+        const r = await api("/admin/api/bot/press", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: Number(t.dataset.bpress), data: t.dataset.bdata }) });
+        if (r.toast) toast(r.toast);
+        await refreshBot();
+      } catch (e) { toast(e.message); } finally { t.disabled = false; }
+      return;
+    }
     if (t.dataset.section) {
       section = t.dataset.section;
       try { localStorage.setItem("jkSection", section); } catch {}
