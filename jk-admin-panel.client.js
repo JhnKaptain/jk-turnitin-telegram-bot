@@ -206,6 +206,7 @@
     $("shopSection").classList.toggle("hidden", section !== "shop");
     $("botSection").classList.toggle("hidden", section !== "bot");
     document.body.classList.toggle("botmode", section === "bot");
+    if (section === "bot") { unseen = 0; setBadge(); }
     clearInterval(botTimer);
     if (section === "bot" && !$("app").classList.contains("hidden")) { refreshBot(); botTimer = setInterval(refreshBot, 6000); checkNotif(); }
   }
@@ -229,7 +230,7 @@
       (e.buttons && e.buttons.length && !e.deleted ? '<div class="kb">' + e.buttons.map(row => '<div class="row">' + row.map(b => b.url
         ? '<a class="btn" target="_blank" rel="noopener noreferrer" href="' + esc(b.url) + '">' + esc(b.text) + ' ↗</a>'
         : '<button class="btn" data-bpress="' + esc(e.id) + '" data-bdata="' + esc(b.data) + '">' + esc(b.text) + '</button>').join("") + '</div>').join("") + '</div>' : '') +
-      '<div class="meta">' + (e.from === "you" ? "You (web)" : (CAT_SHORT[e.category] || "Bot")) + ' · ' + esc(when(e.at)) + (e.editedAt ? ' · edited' : '') + '</div></div>'
+      '<div class="meta">' + (e.from === "you" ? "You (web)" : (CAT_SHORT[e.category] || "Bot")) + ' · ' + esc(when(e.at)) + (e.editedAt ? ' · edited' : '') + (e.telegramError ? ' · <span class="warn">⚠ not delivered to Telegram</span>' : '') + '</div></div>'
     )).join("") : '<div class="card muted">No messages yet. Everything the bot sends you on Telegram appears here from now on.</div>';
     if (nearEnd || !box.dataset.loaded) window.scrollTo(0, document.body.scrollHeight);
     box.dataset.loaded = "1";
@@ -237,6 +238,7 @@
   async function refreshBot() {
     try {
       const r = await api("/admin/api/bot/feed");
+      popupsFromFeed(r);
       const changed = !botData || r.seq !== botData.seq || JSON.stringify(r.entries.slice(-30)) !== JSON.stringify(botData.entries.slice(-30));
       botData = r;
       if (!$("botFilters").innerHTML) renderBotFilters();
@@ -258,6 +260,97 @@
   }
   $("botSend").addEventListener("click", () => botSend($("botInput").value));
   $("botInput").addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); botSend($("botInput").value); } });
+
+  // --- In-app pop-ups (JK_ADMIN_POPUPS_V1) ---------------------------------
+  // While the panel is open, new alerts in the chosen categories pop up as a
+  // banner with a sound and vibration, in any section. The app icon shows a
+  // count until Bot chat is opened.
+  let lastSeenId = null;
+  let myCats = null;          // this device's choices (or the defaults)
+  let unseen = 0;
+  const bannered = new Set();
+  let audio = null;
+  const unlockAudio = () => {
+    try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === "suspended") audio.resume(); } catch {}
+  };
+  document.addEventListener("click", unlockAudio, { capture: true });
+  document.addEventListener("keydown", unlockAudio, { capture: true });
+  function chime() {
+    try {
+      if (!audio) return;
+      const t = audio.currentTime;
+      [880, 1175].forEach((f, i) => {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = f; o.type = "sine";
+        g.gain.setValueAtTime(0.0001, t + i * 0.18);
+        g.gain.exponentialRampToValueAtTime(0.25, t + i * 0.18 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.18 + 0.16);
+        o.connect(g); g.connect(audio.destination); o.start(t + i * 0.18); o.stop(t + i * 0.18 + 0.17);
+      });
+    } catch {}
+    try { navigator.vibrate && navigator.vibrate([150, 80, 150]); } catch {}
+  }
+  function setBadge() {
+    document.title = (unseen ? "(" + unseen + ") " : "") + "Admin Panel";
+    try { if (navigator.setAppBadge) unseen ? navigator.setAppBadge(unseen) : navigator.clearAppBadge(); } catch {}
+  }
+  function popup(key, title, body) {
+    if (bannered.has(key)) return;
+    bannered.add(key);
+    const box = $("popups");
+    const el = document.createElement("div");
+    el.className = "popup";
+    el.innerHTML = '<div style="flex:1"><strong>' + esc(title) + '</strong>' + (body ? '<div class="muted">' + esc(body) + '</div>' : '') +
+      '</div><button class="btn" aria-label="Close">✕</button>';
+    el.addEventListener("click", ev => {
+      el.remove();
+      if (ev.target.closest("button")) return;
+      section = "bot"; try { localStorage.setItem("jkSection", section); } catch {}
+      applySection();
+    });
+    box.prepend(el);
+    while (box.children.length > 3) box.lastChild.remove();
+    setTimeout(() => el.remove(), 15000);
+    if (section !== "bot" || document.hidden) { unseen++; setBadge(); }
+    chime();
+  }
+  const summary = text => {
+    const lines = String(text || "").split("\n").map(l => l.trim()).filter(Boolean);
+    return { title: (lines[0] || "JK Admin").slice(0, 70), body: lines.slice(1, 3).join(" · ").slice(0, 120) };
+  };
+  function popupsFromFeed(feed) {
+    if (!myCats && feed.categories) myCats = Object.keys(feed.categories).filter(k => feed.categories[k].on);
+    const maxId = feed.entries.reduce((m, e) => Math.max(m, e.id), 0);
+    if (lastSeenId === null) { lastSeenId = maxId; return; } // nothing old pops up
+    for (const e of feed.entries) {
+      if (e.id <= lastSeenId || e.from !== "bot") continue;
+      if (myCats && !myCats.includes(e.category)) continue;
+      const s = summary(e.text || e.file);
+      popup("jk-" + e.id, s.title, s.body);
+    }
+    lastSeenId = Math.max(lastSeenId, maxId);
+  }
+  async function pollAlerts() {
+    if ($("app").classList.contains("hidden")) return;
+    try {
+      const r = await api("/admin/api/bot/feed");
+      popupsFromFeed(r);
+      if (section === "bot") {
+        const changed = !botData || r.seq !== botData.seq || JSON.stringify(r.entries.slice(-30)) !== JSON.stringify(botData.entries.slice(-30));
+        botData = r;
+        if (!$("botFilters").innerHTML) renderBotFilters();
+        if (changed) renderBot();
+      }
+    } catch {}
+  }
+  setInterval(pollAlerts, 10000);
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", ev => {
+      const d = ev.data || {};
+      if (d.type === "jk-push") popup(d.tag || ("p" + Date.now()), d.title || "JK Admin", d.body || "");
+    });
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && section === "bot") { unseen = 0; setBadge(); } });
 
   // --- Notifications on this device --------------------------------------
   const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
@@ -299,7 +392,7 @@
       $("notifOn").classList.toggle("hidden", !!on);
       if (on) {
         const r = await api("/admin/api/push/device", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }) });
-        if (r.device) document.querySelectorAll("#notifCats input").forEach(i => { i.checked = r.device.categories.includes(i.value); });
+        if (r.device) { document.querySelectorAll("#notifCats input").forEach(i => { i.checked = r.device.categories.includes(i.value); }); myCats = r.device.categories.slice(); }
         else $("notifState").textContent = "Off (turn on again)";
       }
     } catch (e) { $("notifState").textContent = "unavailable"; }
@@ -310,6 +403,7 @@
       (/Mobile/.test(ua) ? " phone" : "");
   }
   async function saveSub(sub) {
+    myCats = chosenCats();
     await api("/admin/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subscription: sub.toJSON(), categories: chosenCats(), label: deviceLabel() }) });
   }
