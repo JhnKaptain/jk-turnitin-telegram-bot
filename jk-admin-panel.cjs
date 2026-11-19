@@ -268,8 +268,11 @@ function createAdminPanel(d) {
     const matches = job => !q || [job.userId, job.name, job.username, job.jobId,
       ...(job.files || []).flatMap(f => [f.file_name, idOf(f)])]
       .some(v => String(v ?? "").toLowerCase().includes(q));
+    // Orders whose files were all deleted leave the lists; search still finds them.
+    const allDeleted = j => j.files.length > 0 && j.files.every(f => f.providerFilesDeletedAt);
     const all = Object.values(d.getPaidJobs() || {})
       .filter(j => j && Array.isArray(j.files))
+      .filter(j => q || !allDeleted(j))
       .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
     const counts = { action: 0 };
     const reasonsOf = new Map(all.map(j => [j, actionReasons(j)]));
