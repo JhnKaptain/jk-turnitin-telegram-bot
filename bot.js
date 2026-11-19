@@ -596,6 +596,21 @@ const adminBotChat = require("./jk-admin-bot-chat.cjs").createBotChat({
   }
 });
 adminBotChat.install(Telegram);
+// JK_CUSTOMER_PUSH_V1: website customers' notifications (report ready, support replied).
+const customerPush = require("./jk-customer-push.cjs").createCustomerPush({
+  file: require("path").join(DATA_DIR, "customer-push.json")
+});
+// Paid orders only: files delivered and messages from JK Support.
+const WEB_PAID_STAGES = ["PAID", "PROCESSING", "PARTLY_DELIVERED", "DELIVERED"];
+function webOrderPaid(orderId) {
+  const order = webOrders?.orderById(orderId);
+  return Boolean(order && WEB_PAID_STAGES.includes(webOrders.statusFor(order).stage));
+}
+function notifyWebCustomer(event, orderId) {
+  if (!webOrderPaid(orderId)) return;
+  const send = event === "ready" ? customerPush.reportReady(orderId) : customerPush.reportReply(orderId);
+  send.catch(error => console.error("Customer push failed:", error.message));
+}
 
 try {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -14207,7 +14222,13 @@ app.use(
 const shopStore = require("./jk-shop-store.cjs").installShopStore({
   app, dataDir: DATA_DIR,
   // JK_ADMIN_BOT_CHAT_V1: new paid shop orders and shop messages notify the admin.
-  onEvents: events => events.forEach(ev => adminBotChat.add({ from: "bot", category: "shop", text: ev.text }))
+  onEvents: events => events.forEach(ev => {
+    if (ev.kind === "support") {
+      customerPush.shopReply(ev.orderId, ev.product, ev.file).catch(error => console.error("Customer push failed:", error.message));
+    } else {
+      adminBotChat.add({ from: "bot", category: "shop", text: ev.text });
+    }
+  })
 });
 
 // JK_ADMIN_WEB_PANEL_V1: /admin, the Telegram admin tools on the web.
@@ -14383,11 +14404,21 @@ webOrders = require("./jk-web-orders.cjs").installWebOrders({
   calculateSubmissionAmount, formatBatchSummary, makeBatchId, normalizePhoneTo254, attemptStkPush,
   buildAdminDocumentCaption, adminActionKeyboard, supportedScanUpload, sendAdminMessage,
   logMessage: adminLogCustomerMessage, // JK_ADMIN_ORDER_DESK_V1
+  customerAlert: notifyWebCustomer, // JK_CUSTOMER_PUSH_V1
   handleMpesaProofText, TILL_NUMBER,
   processingMaxMinutes: () => REPORT_PROCESSING_MAX_MINUTES,
   highlightOffers: job => paidAiHighlights ? paidAiHighlights.webOffers(job) : [],
   buyHighlights: (userId, id, phone) => paidAiHighlights.webBuy(userId, id, phone)
 });
+
+// JK_CUSTOMER_PUSH_V1: "🔔 Notify me" on the website (routes under /api/web,
+// so the website's CORS rules apply). Each order is checked with its own key.
+require("./jk-customer-push.cjs").installCustomerPushRoutes({
+  app, express, push: customerPush,
+  verifyReport: (orderId, token) => webOrders.authorize(orderId, token) && webOrderPaid(orderId),
+  shopOrders: () => shopStore.readOrders()
+});
+
 
 app.post("/webhook", (req, res) => {
   res.status(200).send("OK");

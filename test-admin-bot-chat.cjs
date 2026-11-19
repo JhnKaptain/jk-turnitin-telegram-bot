@@ -182,7 +182,7 @@ const { shopEvents } = require("./jk-shop-store.cjs");
     const next = { O1: { productName: "Chegg", amount: 500, paymentState: "COMPLETE", messages: [] },
       O2: { productName: "Grammarly", paymentState: "COMPLETE", messages: [{ at: 1, from: "client", text: "hi" }, { at: 2, from: "support", text: "login" }, { at: 3, from: "client", text: "thanks" }] } };
     const ev = shopEvents(prev, next);
-    assert.deepEqual(ev.map(e => [e.kind, e.orderId]), [["paid", "O1"], ["message", "O2"]]);
+    assert.deepEqual(ev.map(e => [e.kind, e.orderId]), [["paid", "O1"], ["message", "O2"], ["support", "O2"]]);
     assert.match(ev[0].text, /New paid shop order\nChegg · KES 500/);
     assert.match(ev[1].text, /thanks/);
     assert.equal(classify(ev[0].text), "other", "shop entries are added with category shop explicitly");
@@ -194,7 +194,7 @@ const { shopEvents } = require("./jk-shop-store.cjs");
     // Installed on the shared prototype at load time, before the bot starts receiving or sending.
     const firstStart = Math.min(...["bot.launch(", "webhookCallback(", "setWebhook("].map(k => src.indexOf(k)).filter(i => i >= 0));
     assert(src.indexOf("adminBotChat.install(Telegram);") < firstStart, "copy installed before the bot starts");
-    assert(src.includes('onEvents: events => events.forEach(ev => adminBotChat.add({ from: "bot", category: "shop", text: ev.text }))'));
+    assert(src.includes('onEvents: events => events.forEach(ev => {') && src.includes('adminBotChat.add({ from: "bot", category: "shop", text: ev.text });'));
     assert(src.includes("botChat: adminBotChat,") && src.includes("push: adminPush,"));
     assert(JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).dependencies["web-push"]);
 

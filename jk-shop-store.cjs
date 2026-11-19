@@ -26,9 +26,16 @@ function shopEvents(prev, next) {
       events.push({ kind: "paid", orderId: id, text: "🛍 New paid shop order\n" + product + (order.amount != null ? " · KES " + order.amount : "") + "\nOrder ID: " + id });
     }
     const seen = new Set((before.messages || []).map(m => String(m?.at) + "|" + String(m?.text || "").slice(0, 40)));
+    let supportReply = false, supportFile = false;
     for (const m of order.messages || []) {
-      if (m?.from !== "client" || seen.has(String(m.at) + "|" + String(m.text || "").slice(0, 40))) continue;
-      events.push({ kind: "message", orderId: id, text: "🛍 Shop customer message\n" + product + " · " + id + "\n" + String(m.text || "").slice(0, 300) });
+      if (seen.has(String(m?.at) + "|" + String(m?.text || "").slice(0, 40))) continue;
+      if (m?.from === "client") {
+        events.push({ kind: "message", orderId: id, text: "🛍 Shop customer message\n" + product + " · " + id + "\n" + String(m.text || "").slice(0, 300) });
+      } else if (m?.from === "support") { if (m.file) supportFile = true; else supportReply = true; }
+    }
+    // JK_CUSTOMER_PUSH_V1: JK Support sent a file or a message — paid orders only.
+    if ((supportReply || supportFile) && order.paymentState === "COMPLETE") {
+      events.push({ kind: "support", orderId: id, product, file: supportFile });
     }
   }
   return events;
