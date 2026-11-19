@@ -68,6 +68,19 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     finishDelivery: async (u, n) => { calls.push(["done", u, n]); return { jobId: "job1" }; },
     customerOriginal: async f => ({ buffer: Buffer.from("ORIGINAL"), name: f.file_name }),
     processingMaxMinutes: () => 20,
+    // JK_ADMIN_BOT_CHAT_V1 / JK_ADMIN_PUSH_V1
+    botChat: {
+      feed: () => ({ seq: 2, entries: [{ id: 1, from: "bot", text: "🧾 M-Pesa message received", category: "payment", buttons: [[{ text: "✅ Confirm", data: "ADMIN_PAID_5" }]] }] }),
+      sendText: async (bot, text) => { calls.push(["botText", text]); return { ok: true, finished: true }; },
+      press: async (bot, id, data) => { calls.push(["botPress", id, data]); return { ok: true, toast: "Done" }; }
+    },
+    push: {
+      publicKey: () => "PUBKEY",
+      subscribe: (sub, cats, label) => { calls.push(["pushSub", sub.endpoint, cats, label]); return { devices: 1 }; },
+      device: ep => ep === "https://push.example/1" ? { categories: ["payment"], label: "Android phone" } : null,
+      unsubscribe: ep => { calls.push(["pushUnsub", ep]); return { removed: 1 }; },
+      send: async (payload, o) => { calls.push(["pushTest", o.endpoint]); return { sent: o.endpoint === "https://push.example/1" ? 1 : 0 }; }
+    },
     // JK_ADMIN_OTHER_SERVICES_V1: website shop orders
     shop: { enabled: () => true, key: () => "K".repeat(20), serviceUrl: () => shopUrl, readOrders: () => shopOrders },
     fetchImpl: async (url, init) => {
@@ -278,6 +291,35 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     assert.equal(unknown.status, 503);
     shopUrl = "https://shop.example.com";
 
+    // 10f. Bot chat: feed, commands, buttons; notifications; app files.
+    const feed = await (await req("/admin/api/bot/feed", { headers: S })).json();
+    assert.equal(feed.entries[0].category, "payment");
+    assert.equal(feed.categories.payment.on, true, "default categories sent to the page");
+    assert.equal(feed.categories.orders.on, false);
+    await req("/admin/api/bot/send", { method: "POST", headers: J, body: JSON.stringify({ text: "/plagiarism" }) });
+    assert.deepEqual(calls.at(-1), ["botText", "/plagiarism"]);
+    const pr = await (await req("/admin/api/bot/press", { method: "POST", headers: J, body: JSON.stringify({ id: 1, data: "ADMIN_PAID_5" }) })).json();
+    assert.equal(pr.toast, "Done");
+    assert.deepEqual(calls.at(-1), ["botPress", 1, "ADMIN_PAID_5"]);
+    assert.equal((await req("/admin/api/bot/send", { method: "POST", headers: { ...P, "Content-Type": "application/json" }, body: "{}" })).status, 401, "login required");
+    assert.equal((await (await req("/admin/api/push/key", { headers: S })).json()).publicKey, "PUBKEY");
+    await req("/admin/api/push/subscribe", { method: "POST", headers: J, body: JSON.stringify({
+      subscription: { endpoint: "https://push.example/1" }, categories: ["payment", "bogus", "shop"], label: "Android phone" }) });
+    assert.deepEqual(calls.at(-1), ["pushSub", "https://push.example/1", ["payment", "shop"], "Android phone"], "unknown categories dropped");
+    assert.deepEqual((await (await req("/admin/api/push/device", { method: "POST", headers: J, body: JSON.stringify({ endpoint: "https://push.example/1" }) })).json()).device.categories, ["payment"]);
+    assert.equal((await req("/admin/api/push/test", { method: "POST", headers: J, body: JSON.stringify({ endpoint: "https://push.example/1" }) })).status, 200);
+    assert.equal((await req("/admin/api/push/test", { method: "POST", headers: J, body: JSON.stringify({ endpoint: "https://push.example/2" }) })).status, 502);
+    await req("/admin/api/push/unsubscribe", { method: "POST", headers: J, body: JSON.stringify({ endpoint: "https://push.example/1" }) });
+    assert.deepEqual(calls.at(-1), ["pushUnsub", "https://push.example/1"]);
+    const swRes = await req("/admin/sw.js");
+    assert.equal(swRes.status, 200);
+    assert.equal(swRes.headers.get("service-worker-allowed"), "/admin");
+    assert.match(await swRes.text(), /showNotification/);
+    const man = await (await req("/admin/manifest.webmanifest")).json();
+    assert.equal(man.start_url, "/admin");
+    assert.equal((await req("/admin/icon-192.png")).headers.get("content-type"), "image/png");
+    assert.match((await req("/admin")).headers.get("content-security-policy"), /worker-src 'self'/);
+
     // 11. Logout ends the session.
     await req("/admin/api/logout", { method: "POST", headers: S });
     assert.equal((await req("/admin/api/overview", { headers: S })).status, 401);
@@ -310,5 +352,6 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
   console.log("PASS: free scans out of Needs action; Mark done until the customer writes again.");
   console.log("PASS: other services: shop orders inbox, search, Mark done, reply + file via the shop service.");
   console.log("PASS: fully deleted orders hidden (search finds them); no pay buttons on paid order cards.");
+  console.log("PASS: bot chat feed, commands and buttons; notification on/off/test per device; app worker, manifest and icons.");
   console.log("PASS: orders, report downloads (no path tricks), retry/stop, confirm/cancel, upload + free scan, send file.");
 })().catch(error => { console.error(error); process.exitCode = 1; });

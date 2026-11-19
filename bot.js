@@ -3,7 +3,7 @@ require("dotenv").config();
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { Telegraf, Markup } = require("telegraf");
+const { Telegraf, Markup, Telegram } = require("telegraf");
 const express = require("express");
 const moment = require("moment");
 const qs = require("querystring");
@@ -579,6 +579,23 @@ const DATA_DIR = String(process.env.DATA_DIR || __dirname).trim();
 const adminMessages = require("./jk-admin-messages.cjs").createMessageLog(
   require("path").join(DATA_DIR, "admin-messages.json")
 );
+// JK_ADMIN_BOT_CHAT_V1 + JK_ADMIN_PUSH_V1: the admin's bot chat copied into the
+// web panel (commands and buttons work from there too), and phone
+// notifications for the categories the admin picks on each device.
+const adminPush = require("./jk-admin-push.cjs").createAdminPush({
+  file: require("path").join(DATA_DIR, "admin-push.json")
+});
+const adminBotChat = require("./jk-admin-bot-chat.cjs").createBotChat({
+  file: require("path").join(DATA_DIR, "admin-bot-chat.json"),
+  adminId: ADMIN_ID,
+  onEntry: entry => {
+    if (entry.from !== "bot" || entry.category === "you") return;
+    const { title, body } = require("./jk-admin-push.cjs").summarize(entry.text || entry.file || "");
+    adminPush.send({ title, body, tag: "jk-" + entry.id, url: "/admin#bot" }, { category: entry.category })
+      .catch(error => console.error("Admin push failed:", error.message));
+  }
+});
+adminBotChat.install(Telegram);
 
 try {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -14187,7 +14204,11 @@ app.use(
 );
 
 // JK_SHOP_STORE_V1: the website shop's order list lives on this disk.
-const shopStore = require("./jk-shop-store.cjs").installShopStore({ app, dataDir: DATA_DIR });
+const shopStore = require("./jk-shop-store.cjs").installShopStore({
+  app, dataDir: DATA_DIR,
+  // JK_ADMIN_BOT_CHAT_V1: new paid shop orders and shop messages notify the admin.
+  onEvents: events => events.forEach(ev => adminBotChat.add({ from: "bot", category: "shop", text: ev.text }))
+});
 
 // JK_ADMIN_WEB_PANEL_V1: /admin, the Telegram admin tools on the web.
 // JK_ADMIN_ORDER_DESK_V1: what the Telegram order buttons do, as functions the
@@ -14319,6 +14340,8 @@ adminPanel = require("./jk-admin-panel.cjs").createAdminPanel({
   sendFileToUser: (userId, file, caption) => adminSendFileToUser(userId, file, caption),
   finishDelivery: (userId, count) => adminFinishDelivery(userId, count),
   customerOriginal: file => adminCustomerOriginal(file),
+  botChat: adminBotChat, // JK_ADMIN_BOT_CHAT_V1
+  push: adminPush,
   shop: shopStore, // JK_ADMIN_OTHER_SERVICES_V1: website shop orders (Grammarly, Chegg...)
   processingMaxMinutes: () => REPORT_PROCESSING_MAX_MINUTES,
   getPaidJobs: () => paidJobs,

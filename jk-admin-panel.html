@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Admin Panel</title>
+<link rel="manifest" href="/admin/manifest.webmanifest">
+<link rel="icon" href="/admin/icon-192.png">
+<link rel="apple-touch-icon" href="/admin/icon-192.png">
+<meta name="theme-color" content="#2457d6">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#16181d;--muted:#5d6470;--line:#e3e6eb;--brand:#2457d6;--brand-ink:#fff;--ok:#127a46;--warn:#a35a00;--bad:#b42318;--chip:#eef1f5}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a20;--ink:#e8eaee;--muted:#9aa2ae;--line:#2a2f38;--brand:#5b8cff;--brand-ink:#0b0d11;--ok:#4ccf8b;--warn:#f0a33c;--bad:#ff6b5e;--chip:#222731}}
@@ -60,6 +64,25 @@ body.noscroll{overflow:hidden}
 .switch button.on{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
 .thread{max-height:260px;overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px;display:flex;flex-direction:column;gap:8px}
 .card.warn{border-color:var(--warn)}
+#notifCard summary{cursor:pointer}
+#notifCats .check{margin:6px 0}
+#botFeed{display:flex;flex-direction:column;gap:10px;padding-bottom:130px}
+.bmsg{max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.bmsg.you{align-self:flex-end;background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+.bmsg .txt{white-space:pre-wrap;word-break:break-word;font-size:14px}
+.bmsg .meta{font-size:11px;opacity:.75;margin-top:4px}
+.bmsg .kb{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.bmsg .kb .row{flex-wrap:nowrap}
+.bmsg .kb .btn{flex:1;font-size:13px;min-height:34px;padding:6px 8px}
+.bmsg.deleted{opacity:.5}
+.composer{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:8px 12px calc(8px + env(safe-area-inset-bottom));z-index:3}
+.composer .row{max-width:1016px;margin:0 auto}
+.composer .quick{overflow-x:auto;flex-wrap:nowrap;margin-bottom:6px}
+.composer .quick .btn{white-space:nowrap;font-size:12px;min-height:30px;padding:4px 9px}
+.composer input{flex:1}
+.views .btn.small{font-size:12px;min-height:30px;padding:4px 9px}
+body.botmode #msg{bottom:130px}
+.switch button{font-size:14px;padding:9px 6px;white-space:nowrap}
 #delBar.hidden{display:none}
 </style>
 </head>
@@ -85,6 +108,7 @@ body.noscroll{overflow:hidden}
     <div class="switch" role="tablist" aria-label="Section">
       <button data-section="reports" class="on">📄 Reports<span id="cntReports"></span></button>
       <button data-section="shop">🛍 Other services<span id="cntShop"></span></button>
+      <button data-section="bot">🤖 Bot chat</button>
     </div>
     <nav id="reportsNav">
       <button data-tab="orders" class="on">Orders</button>
@@ -101,6 +125,36 @@ body.noscroll{overflow:hidden}
       <input id="shopSearch" type="text" placeholder="Search order ID, product, phone…" autocomplete="off">
     </div>
     <div id="shopList"></div>
+  </main>
+  <main id="botSection" class="hidden">
+    <details class="card" id="notifCard">
+      <summary><strong>🔔 Notifications on this device:</strong> <span id="notifState">checking…</span></summary>
+      <p class="muted" id="notifHelp">Get an alert on this phone or computer, even with the browser closed. Pick what you want to hear about:</p>
+      <div id="notifCats"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="notifOn">Turn on</button>
+        <button class="btn" id="notifSave">Save choices</button>
+        <button class="btn" id="notifTest">Send test</button>
+        <button class="btn danger" id="notifOff">Turn off</button>
+      </div>
+    </details>
+    <div class="card row views" id="botFilters"></div>
+    <div id="botFeed"></div>
+    <div class="composer">
+      <div class="row quick">
+        <button class="btn" data-cmd="/adminhelp">/adminhelp</button>
+        <button class="btn" data-cmd="/mode">/mode</button>
+        <button class="btn" data-cmd="/reportmode">/reportmode</button>
+        <button class="btn" data-cmd="/plagiarism">/plagiarism</button>
+        <button class="btn" data-cmd="/filtermode">/filtermode</button>
+        <button class="btn" data-cmd="/broadcaststats">/broadcaststats</button>
+        <button class="btn" data-cmd="/discountbroadcast">/discountbroadcast</button>
+      </div>
+      <div class="row">
+        <input id="botInput" type="text" placeholder="Type a command (e.g. /plagiarism) or a message…" autocomplete="off" enterkeyhint="send">
+        <button class="btn primary" id="botSend">Send</button>
+      </div>
+    </div>
   </main>
   <main id="reportsSection">
     <section id="tab-orders">

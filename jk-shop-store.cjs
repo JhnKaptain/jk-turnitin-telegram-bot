@@ -14,7 +14,27 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-function installShopStore({ app, dataDir, key = process.env.SHOP_STORE_KEY }) {
+// JK_ADMIN_BOT_CHAT_V1: what changed between two saves of the shop store
+// (new paid orders, new customer messages), for the admin's notifications.
+function shopEvents(prev, next) {
+  const events = [];
+  for (const [id, order] of Object.entries(next || {})) {
+    if (!order || typeof order !== "object") continue;
+    const before = (prev || {})[id] || {};
+    const product = String(order.productName || "Product").slice(0, 80);
+    if (order.paymentState === "COMPLETE" && before.paymentState !== "COMPLETE") {
+      events.push({ kind: "paid", orderId: id, text: "🛍 New paid shop order\n" + product + (order.amount != null ? " · KES " + order.amount : "") + "\nOrder ID: " + id });
+    }
+    const seen = new Set((before.messages || []).map(m => String(m?.at) + "|" + String(m?.text || "").slice(0, 40)));
+    for (const m of order.messages || []) {
+      if (m?.from !== "client" || seen.has(String(m.at) + "|" + String(m.text || "").slice(0, 40))) continue;
+      events.push({ kind: "message", orderId: id, text: "🛍 Shop customer message\n" + product + " · " + id + "\n" + String(m.text || "").slice(0, 300) });
+    }
+  }
+  return events;
+}
+
+function installShopStore({ app, dataDir, key = process.env.SHOP_STORE_KEY, onEvents = null }) {
   const secret = String(key || "").trim();
   const file = path.join(dataDir, "shop-orders.store.json");
   // JK admin web panel: the shop tells us its address on every save, so the
@@ -41,9 +61,14 @@ function installShopStore({ app, dataDir, key = process.env.SHOP_STORE_KEY }) {
     const text = JSON.stringify(orders);
     if (Buffer.byteLength(text) > MAX_BYTES) return res.status(413).json({ error: "Store too large" });
     fs.mkdirSync(dataDir, { recursive: true });
+    const previous = onEvents ? readOrders() : null;
     const tmp = file + ".tmp";
     fs.writeFileSync(tmp, text, "utf8");
     fs.renameSync(tmp, file);
+    // The first save after a restart of the shop is not "new"; only changes are.
+    if (onEvents && previous && Object.keys(previous).length) {
+      try { const ev = shopEvents(previous, orders); if (ev.length) onEvents(ev); } catch (error) { console.error("Shop events failed:", error.message); }
+    }
     const serviceUrl = String(req.body?.serviceUrl || "").trim().replace(/\/+$/, "");
     if (/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(serviceUrl)) {
       try { fs.writeFileSync(metaFile, JSON.stringify({ serviceUrl, at: Date.now() })); } catch {}
@@ -64,4 +89,4 @@ function installShopStore({ app, dataDir, key = process.env.SHOP_STORE_KEY }) {
   return { file, readOrders, serviceUrl, key: () => secret, enabled: () => secret.length >= 16 };
 }
 
-module.exports = { installShopStore };
+module.exports = { installShopStore, shopEvents };
