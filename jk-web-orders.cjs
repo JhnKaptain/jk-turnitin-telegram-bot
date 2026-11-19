@@ -267,6 +267,8 @@ function createWebOrders(d) {
     order.messages.push({ at: Date.now(), text: clean, kind });
     if (order.messages.length > 60) order.messages = order.messages.slice(-60);
     save();
+    // JK_CUSTOMER_PUSH_V1: "JK Support replied" on the customer's phone.
+    if (kind === "support") { try { d.customerAlert?.("reply", order.id); } catch {} }
   }
 
   async function checkout(order, { files = [], code = "", phone = "" } = {}) {
@@ -439,6 +441,8 @@ function createWebOrders(d) {
     order.reports.push({ name: fileName, stored, size: buffer.length, at: Date.now() });
     if (caption) pushMessage(order, caption);
     save();
+    // JK_CUSTOMER_PUSH_V1: "Your report is ready" (several reports = one alert).
+    try { d.customerAlert?.("ready", order.id); } catch {}
   }
   async function streamToBuffer(stream) {
     const chunks = [];
