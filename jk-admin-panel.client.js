@@ -126,10 +126,18 @@
         '</div>';
     }).join("");
 
-    box.innerHTML = '<div id="delBar" class="card row hidden"><strong id="delCount"></strong>' +
+    // Select every file shown (current view and search).
+    const allLive = [...live];
+    const allOn = allLive.length && allLive.every(id => selected.has(id));
+    const selAll = allLive.length ? '<label class="card row selall"><input type="checkbox" class="pick" id="selAll" data-all="' +
+      esc(allLive.join(",")) + '"' + (allOn ? ' checked' : '') + '> <strong>Select all shown</strong>' +
+      '<span class="muted">' + allLive.length + ' file(s) in ' + data.jobs.filter(j => j.files.some(can)).length + ' order(s)</span></label>' : '';
+    box.innerHTML = selAll + '<div id="delBar" class="card row hidden"><strong id="delCount"></strong>' +
       '<button class="btn danger" id="delBtn">🗑 Delete selected</button><button class="btn" id="delClear">Clear</button></div>' +
       waiting + (jobs || (waiting ? '' : '<div class="card muted">' + empty + '</div>'));
     updateDeleteBar();
+    const sa = $("selAll");
+    if (sa) sa.indeterminate = !sa.checked && allLive.some(id => selected.has(id));
   }
   function updateDeleteBar() {
     const bar = $("delBar"); if (!bar) return;
