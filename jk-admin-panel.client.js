@@ -310,6 +310,7 @@
       $("botInput").value = "";
       if (!r.finished) toast("Still working… the answer will appear here.");
       await refreshBot();
+      if (/^\/admintelegram\b/i.test(text)) loadTg(); // the on/off card follows the command
       window.scrollTo(0, document.body.scrollHeight);
     } catch (e) { toast(e.message); }
     finally { $("botSend").disabled = false; }
