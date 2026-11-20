@@ -356,6 +356,13 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
+  // 12a. "Select all shown": one box for every listed file (current view and search),
+  // partly ticked when only some are; deleted files are never included.
+  const clientSrc = fs.readFileSync(path.join(__dirname, "jk-admin-panel.client.js"), "utf8");
+  assert(clientSrc.includes('id="selAll" data-all="') && clientSrc.includes("Select all shown"));
+  assert(clientSrc.includes("sa.indeterminate = !sa.checked && allLive.some(id => selected.has(id));"));
+  assert(clientSrc.includes("const allLive = [...live];") && clientSrc.includes("const can = f => f.id && !f.deleted;"));
+
   // 12b. Paid orders never show payment buttons (those live on the Payments tab).
   const client = fs.readFileSync(path.join(__dirname, "jk-admin-panel.client.js"), "utf8");
   const ordersPart = client.slice(client.indexOf("function renderOrders"), client.indexOf("function updateDeleteBar"));
