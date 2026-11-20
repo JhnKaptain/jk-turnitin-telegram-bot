@@ -22,6 +22,7 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
   fs.writeFileSync(path.join(run, "reports", "Essay_similarity.pdf"), "%PDF-1.4 fake");
 
   const calls = [];
+  const tg = { on: true, forced: false };
   const shopCalls = [];
   let shopUrl = "https://shop.example.com";
   const shopOrders = {
@@ -72,8 +73,13 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     botChat: {
       feed: () => ({ seq: 2, entries: [{ id: 1, from: "bot", text: "🧾 M-Pesa message received", category: "payment", buttons: [[{ text: "✅ Confirm", data: "ADMIN_PAID_5" }]] }] }),
       sendText: async (bot, text) => { calls.push(["botText", text]); return { ok: true, finished: true }; },
-      press: async (bot, id, data) => { calls.push(["botPress", id, data]); return { ok: true, toast: "Done" }; }
+      press: async (bot, id, data) => { calls.push(["botPress", id, data]); return { ok: true, toast: "Done" }; },
+      attachment: async (id, n) => {
+        if (String(id) !== "1" || String(n) !== "0") { const e = new Error("File not found."); e.status = 404; throw e; }
+        return { buffer: Buffer.from("JPEGDATA"), name: "proof photo.jpg", mime: "image/jpeg" };
+      }
     },
+    adminTelegram: { on: () => tg.on, forced: () => tg.forced, set: v => (tg.on = v) },
     push: {
       publicKey: () => "PUBKEY",
       subscribe: (sub, cats, label) => { calls.push(["pushSub", sub.endpoint, cats, label]); return { devices: 1 }; },
@@ -320,6 +326,23 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     assert.equal((await req("/admin/icon-192.png")).headers.get("content-type"), "image/png");
     assert.match((await req("/admin")).headers.get("content-security-policy"), /worker-src 'self'/);
 
+    // 10g. Panel-only admin: files on bot messages; Telegram on/off (and the Render override).
+    const img = await req("/admin/api/bot/files/1/0", { headers: S });
+    assert.equal(img.status, 200);
+    assert.equal(img.headers.get("content-type"), "image/jpeg");
+    assert.match(img.headers.get("content-disposition"), /proof%20photo\.jpg/);
+    assert.equal(await img.text(), "JPEGDATA");
+    assert.equal((await req("/admin/api/bot/files/1/0")).status, 403, "panel header required");
+    assert.equal((await req("/admin/api/bot/files/9/0", { headers: S })).status, 404);
+    assert.deepEqual(await (await req("/admin/api/bot/settings", { headers: S })).json(), { telegram: true, forced: false });
+    assert.equal((await req("/admin/api/bot/settings", { method: "POST", headers: J, body: JSON.stringify({ telegram: "no" }) })).status, 400);
+    assert.deepEqual(await (await req("/admin/api/bot/settings", { method: "POST", headers: J, body: JSON.stringify({ telegram: false }) })).json(), { telegram: false, forced: false });
+    assert.equal(tg.on, false);
+    tg.forced = true;
+    assert.equal((await req("/admin/api/bot/settings", { method: "POST", headers: J, body: JSON.stringify({ telegram: false }) })).status, 409, "forced on by Render");
+    tg.forced = false; tg.on = true;
+    assert.match((await req("/admin")).headers.get("content-security-policy"), /img-src 'self' data: blob:/);
+
     // 11. Logout ends the session.
     await req("/admin/api/logout", { method: "POST", headers: S });
     assert.equal((await req("/admin/api/overview", { headers: S })).status, 401);
@@ -353,5 +376,6 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
   console.log("PASS: other services: shop orders inbox, search, Mark done, reply + file via the shop service.");
   console.log("PASS: fully deleted orders hidden (search finds them); no pay buttons on paid order cards.");
   console.log("PASS: bot chat feed, commands and buttons; notification on/off/test per device; app worker, manifest and icons.");
+  console.log("PASS: bot message files downloadable; admin Telegram on/off with Render override.");
   console.log("PASS: orders, report downloads (no path tricks), retry/stop, confirm/cancel, upload + free scan, send file.");
 })().catch(error => { console.error(error); process.exitCode = 1; });

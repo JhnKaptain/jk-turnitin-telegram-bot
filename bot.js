@@ -585,9 +585,36 @@ const adminMessages = require("./jk-admin-messages.cjs").createMessageLog(
 const adminPush = require("./jk-admin-push.cjs").createAdminPush({
   file: require("path").join(DATA_DIR, "admin-push.json")
 });
+// JK_ADMIN_PANEL_ONLY_V1: "Admin messages on Telegram" On/Off (panel → Bot chat).
+// Off: the bot stops messaging the admin on Telegram; everything goes to the
+// panel (and phone notifications). ADMIN_TELEGRAM=on on Render forces it on.
+const ADMIN_TELEGRAM_FILE = require("path").join(DATA_DIR, "admin-telegram.json");
+let adminTelegramSetting = null;
+function adminTelegramForced() {
+  return /^(on|true|1|yes)$/i.test(String(process.env.ADMIN_TELEGRAM || "").trim());
+}
+function adminTelegramOn() {
+  if (adminTelegramForced()) return true;
+  if (adminTelegramSetting === null) {
+    try { adminTelegramSetting = JSON.parse(fs.readFileSync(ADMIN_TELEGRAM_FILE, "utf8")).telegram !== false; }
+    catch { adminTelegramSetting = true; }
+  }
+  return adminTelegramSetting;
+}
+function setAdminTelegram(on) {
+  const tmp = ADMIN_TELEGRAM_FILE + ".tmp";
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(tmp, JSON.stringify({ telegram: Boolean(on), at: Date.now() }));
+  fs.renameSync(tmp, ADMIN_TELEGRAM_FILE);
+  adminTelegramSetting = Boolean(on);
+  return adminTelegramOn();
+}
 const adminBotChat = require("./jk-admin-bot-chat.cjs").createBotChat({
   file: require("path").join(DATA_DIR, "admin-bot-chat.json"),
   adminId: ADMIN_ID,
+  filesDir: require("path").join(DATA_DIR, "admin-bot-files"),
+  telegramOff: () => !adminTelegramOn(),
+  downloadTelegramFile: fileId => downloadTelegramFileBuffer(fileId),
   onEntry: entry => {
     if (entry.from !== "bot" || entry.category === "you") return;
     const { title, body } = require("./jk-admin-push.cjs").summarize(entry.text || entry.file || "");
@@ -596,6 +623,8 @@ const adminBotChat = require("./jk-admin-bot-chat.cjs").createBotChat({
   }
 });
 adminBotChat.install(Telegram);
+// Remember customers' recent messages so forwarded proofs show in the panel.
+adminBotChat.trackIncoming(bot);
 // JK_CUSTOMER_PUSH_V1: website customers' notifications (report ready, support replied).
 const customerPush = require("./jk-customer-push.cjs").createCustomerPush({
   file: require("path").join(DATA_DIR, "customer-push.json")
@@ -14377,6 +14406,7 @@ adminPanel = require("./jk-admin-panel.cjs").createAdminPanel({
   finishDelivery: (userId, count) => adminFinishDelivery(userId, count),
   customerOriginal: file => adminCustomerOriginal(file),
   botChat: adminBotChat, // JK_ADMIN_BOT_CHAT_V1
+  adminTelegram: { on: adminTelegramOn, forced: adminTelegramForced, set: setAdminTelegram }, // JK_ADMIN_PANEL_ONLY_V1
   push: adminPush,
   shop: shopStore, // JK_ADMIN_OTHER_SERVICES_V1: website shop orders (Grammarly, Chegg...)
   processingMaxMinutes: () => REPORT_PROCESSING_MAX_MINUTES,
