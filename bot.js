@@ -392,6 +392,13 @@ const REPORTS_DELIVERED_MESSAGE =
 const API_REPORTS_DELIVERED_MESSAGE =
   "✅ Your Turnitin reports are ready. Thank you for choosing JK Turnitin.";
 
+// JK_WEBSITE_MOVE_NOTICE_V1: "moving to the website / get the app" note on the
+// delivered message (automatic: once per customer per 24 h; done batch: always).
+const websiteNotice = require("./jk-website-notice.cjs").createWebsiteNotice({
+  file: require("path").join(String(process.env.DATA_DIR || __dirname).trim(), "website-notice.json"),
+  isWebUser: userId => require("./jk-web-orders.cjs").isWebUserId(userId)
+});
+
 const AI_UNAVAILABLE_NOTE =
   `ℹ️ AI Writing Report Unavailable
 
@@ -13453,7 +13460,9 @@ async function renderAndDeliverApiReports(
           const message = String(API_REPORTS_DELIVERED_MESSAGE)
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;") + offer.text;
+            .replace(/>/g, "&gt;") + offer.text +
+            websiteNotice.forUser(job.userId)
+              .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
           await bot.telegram.sendMessage(
             job.userId,
@@ -14328,10 +14337,11 @@ async function adminFinishDelivery(userId, sentCount) {
   if (!(sentCount > 0)) return null;
   const job = markLatestPaidJobDelivered(userId);
   try {
+    // JK_WEBSITE_MOVE_NOTICE_V1: the admin's done batch always carries the note.
     await bot.telegram.sendMessage(userId,
       require("./jk-web-orders.cjs").isWebUserId(userId)
         ? API_REPORTS_DELIVERED_MESSAGE
-        : REPORTS_DELIVERED_MESSAGE);
+        : API_REPORTS_DELIVERED_MESSAGE + websiteNotice.forUser(userId, { force: true }));
   } catch {}
   return job;
 }
