@@ -237,7 +237,9 @@ async function buildProviderJobBundle({
 
       outputPath,
       referenceBoundaryOverrides,
-      aiVerdicts
+      aiVerdicts,
+      // JK_SIMILARITY_FALLBACK_V1: set only for a file's fallback retry.
+      similarityProvider: file?.providerSimilarityFallback || null
     });
 
   /*

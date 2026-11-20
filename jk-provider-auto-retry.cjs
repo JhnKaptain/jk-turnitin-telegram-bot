@@ -16,6 +16,13 @@
   - Non-temporary failures (alignment, review, bad input) are never retried.
   - When automatic retries are used up, the admin gets a RETRY NOW button.
   - Customers are not messaged about failures; their report arrives later.
+
+  JK_SIMILARITY_FALLBACK_V1: when the failure is in the similarity check itself
+  (either checker, including Quetext credit/login problems), retries 1 and 2 use
+  the chosen checker and retry 3 uses the other one, for that file only. If the
+  chosen checker never comes back healthy, the wait ends in that fallback retry.
+  If the fallback fails too: RETRY NOW, which goes back to the chosen checker.
+  Documents that cannot be read are never retried or switched.
 */
 
 const fs = require("fs");
@@ -25,6 +32,10 @@ const HEALTH_WAIT_MINUTES = 1;
 const GIVE_UP_MINUTES = 10;
 const TRANSIENT = /HTTP 50[0234]\b|temporarily unavailable|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|network error|scan timed out|The operation was aborted/i;
 const NEVER = /cannot be aligned|ambiguous interpretations|manual review|reference boundary|Unsupported|exceeds/i;
+const SIMILARITY = /Similarity provider did not return a usable result/i;
+// The document itself is the problem: the other checker would fail too.
+const BAD_INPUT = /too short|too few words|not enough text|no (readable |extractable )?text|empty document|could not (be )?(read|extract)|unreadable|password[- ]protected|corrupt/i;
+const LABELS = { quetext: "Quetext", jksimilarity: "JK SimilarityCheck" };
 
 const idOf = file => /^trn:oid:::1:([1-9]\d{9})$/.exec(String(file?.jkSubmissionId || ""))?.[1] || null;
 const minutes = n => n * 60 * 1000;
@@ -34,6 +45,12 @@ function isTransient(error) {
   return TRANSIENT.test(text) && !NEVER.test(text);
 }
 
+// A failure of the similarity check that the other checker could solve.
+function isSimilarityFailure(error) {
+  const text = String(error?.message || error || "");
+  return SIMILARITY.test(text) && !NEVER.test(text) && !BAD_INPUT.test(text);
+}
+
 function createAutoRetry({
   getJobs,
   save,
@@ -41,6 +58,10 @@ function createAutoRetry({
   sendAdmin = async () => {},
   refreshStatus = async () => {},   // re-renders the admin status message for (job, file)
   healthUrl = null,
+  // JK_SIMILARITY_FALLBACK_V1: file -> the other checker's name (null = no fallback),
+  // and file -> whether its next attempt runs on JK SimilarityCheck (health gate).
+  fallbackFor = null,
+  usesSimcheck = null,
   fetchImpl = globalThis.fetch,
   now = () => Date.now(),
   setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }
@@ -57,7 +78,8 @@ function createAutoRetry({
 
   // Called from the job runner when a file fails. Returns what was decided.
   function onFailure(job, file, error) {
-    if (!job || !file || !isTransient(error) || file.providerAutoResubmitBlocked) {
+    const similarity = isSimilarityFailure(error);
+    if (!job || !file || (!isTransient(error) && !similarity) || file.providerAutoResubmitBlocked) {
       return { scheduled: false };
     }
     // JK_RETRY_STOP_BUTTON_V1: the admin stopped automatic retries for this file.
@@ -71,14 +93,23 @@ function createAutoRetry({
     if (count >= DELAYS_MINUTES.length) {
       file.providerRetryAt = null;
       file.providerRetryExhausted = true;
+      file.providerSimilarityFallback = null; // RETRY NOW goes back to the chosen checker
+      save();
       return { scheduled: false, exhausted: true };
     }
     file.providerRetryCount = count + 1;
+    file.providerRetryReason = similarity ? "similarity" : "transient";
     file.providerRetryAt = now() + minutes(DELAYS_MINUTES[count]);
     file.providerRetryExhausted = false;
+    // The last automatic retry of a similarity failure uses the other checker.
+    let fallback = null;
+    if (similarity && file.providerRetryCount === DELAYS_MINUTES.length && typeof fallbackFor === "function") {
+      fallback = fallbackFor(file) || null;
+      file.providerSimilarityFallback = fallback;
+    }
     save();
     schedule(job.jobId, file.providerRetryAt);
-    return { scheduled: true, attempt: file.providerRetryCount, at: file.providerRetryAt };
+    return { scheduled: true, attempt: file.providerRetryCount, at: file.providerRetryAt, fallback };
   }
 
   async function healthy() {
@@ -112,7 +143,9 @@ function createAutoRetry({
       (force || (!file.providerRetryStopped && file.providerRetryAt && file.providerRetryAt <= now())));
     if (!due.length) return { ran: false, reason: "nothing-due" };
 
-    if (!force && !(await healthy())) {
+    // Only wait for JK SimilarityCheck's health when this attempt will use it.
+    const needsHealth = typeof usesSimcheck === "function" ? due.some(f => usesSimcheck(f)) : true;
+    if (!force && needsHealth && !(await healthy())) {
       const first = Math.min(...due.map(f => f.providerRetryFirstFailedAt || now()));
       if (now() - first < minutes(GIVE_UP_MINUTES)) {
         const later = now() + minutes(HEALTH_WAIT_MINUTES);
@@ -121,8 +154,29 @@ function createAutoRetry({
         schedule(jobId, later);
         return { ran: false, reason: "unhealthy-waiting" };
       }
-      for (const file of due) { file.providerRetryAt = null; file.providerRetryExhausted = true; }
+      // JK_SIMILARITY_FALLBACK_V1: still down after the wait: similarity failures
+      // that have not tried the other checker go to it now (this file only).
+      const toFallback = [];
+      for (const file of due) {
+        const other = file.providerRetryReason === "similarity" && !file.providerSimilarityFallback &&
+          typeof fallbackFor === "function" ? fallbackFor(file) : null;
+        if (other) {
+          file.providerSimilarityFallback = other;
+          file.providerRetryCount = DELAYS_MINUTES.length;
+          file.providerRetryAt = now();
+          toFallback.push(file);
+        } else {
+          file.providerRetryAt = null;
+          file.providerRetryExhausted = true;
+          file.providerSimilarityFallback = null;
+        }
+      }
       save();
+      if (toFallback.length) {
+        await sendAdmin(`🔁 Similarity service still unavailable.\nJob: ${jobId}\nTrying ${LABELS[toFallback[0].providerSimilarityFallback] || toFallback[0].providerSimilarityFallback} for ${toFallback.length} file(s) now (these files only; your setting is unchanged).`);
+        schedule(jobId, now());
+        return { ran: false, reason: "unhealthy-fallback" };
+      }
       await sendAdmin(`⚠️ Automatic retry stopped: similarity service still unavailable.\nJob: ${jobId}\nUse RETRY NOW once it is healthy.`);
       return { ran: false, reason: "unhealthy-gave-up" };
     }
@@ -187,6 +241,7 @@ function createAutoRetry({
     const found = findBySubmission(id);
     if (!found) return { ok: false, reason: "not-found" };
     found.file.providerRetryCount = 0;
+    found.file.providerSimilarityFallback = null; // manual retry: the chosen checker
     found.file.providerRetryFirstFailedAt = now();
     found.file.providerRetryExhausted = false;
     found.file.providerRetryStopped = false;
@@ -237,10 +292,11 @@ function statusLine(file, nowMs = Date.now()) {
   if (file?.providerRetryStopped) return "Automatic retries stopped by admin. Tap RETRY NOW to resend.";
   if (file?.providerRetryAt && file.providerRetryAt > nowMs) {
     const mins = Math.max(1, Math.ceil((file.providerRetryAt - nowMs) / 60000));
-    return `Automatic retry ${file.providerRetryCount}/${DELAYS_MINUTES.length} in about ${mins} min.`;
+    const via = file.providerSimilarityFallback ? " using " + (LABELS[file.providerSimilarityFallback] || file.providerSimilarityFallback) + " (this file only)" : "";
+    return `Automatic retry ${file.providerRetryCount}/${DELAYS_MINUTES.length} in about ${mins} min${via}.`;
   }
   if (file?.providerRetryExhausted) return "Automatic retries used up. Tap RETRY NOW when the service is healthy.";
   return null;
 }
 
-module.exports = { createAutoRetry, isTransient, statusLine, replyMarkup, DELAYS_MINUTES };
+module.exports = { createAutoRetry, isTransient, isSimilarityFailure, statusLine, replyMarkup, DELAYS_MINUTES };

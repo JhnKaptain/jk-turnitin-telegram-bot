@@ -9528,12 +9528,17 @@ providerAutoRetry = require("./jk-provider-auto-retry.cjs").createAutoRetry({
   refreshStatus: (job, file) => updateProviderAdminStatus(
     job, file, "failed", null, 0, String(file.providerError || "").split("\n")[0] || null
   ),
-  // Wait for simcheck to be healthy only while it is the active similarity provider.
+  // Wait for simcheck to be healthy only when the attempt will use it.
   healthUrl: () => {
     const base = String(process.env.JK_SIMILARITY_URL || "").trim().replace(/\/+$/u, "");
-    return require("./providers/plagiarism.js").currentProvider().name === "jksimilarity" && base
-      ? base + "/v1/health" : null;
-  }
+    return base ? base + "/v1/health" : null;
+  },
+  // JK_SIMILARITY_FALLBACK_V1: the 3rd retry of a similarity failure uses the
+  // other checker for that file only; the saved setting never changes.
+  fallbackFor: () => require("./providers/plagiarism.js").otherProvider(
+    require("./providers/plagiarism.js").currentProvider().name),
+  usesSimcheck: file => (file.providerSimilarityFallback ||
+    require("./providers/plagiarism.js").currentProvider().name) === "jksimilarity"
 });
 providerAutoRetry.register(bot, ADMIN_ID);
 providerAutoRetry.resume();
@@ -10523,6 +10528,16 @@ async function submitPaidJobToProviders(
       // JK_PROVIDER_AUTO_RETRY_V1
       file.providerRetryAt = null;
       file.providerRetryExhausted = false;
+
+      // JK_SIMILARITY_FALLBACK_V1: the fallback checker was for this one
+      // attempt; anything later for this file uses the chosen checker again.
+      if (file.providerSimilarityFallback) {
+        const usedLabel = require("./providers/plagiarism.js").PROVIDERS[file.providerSimilarityFallback]?.label || file.providerSimilarityFallback;
+        file.providerSimilarityFallbackUsed = file.providerSimilarityFallback;
+        file.providerSimilarityFallback = null;
+        sendAdminMessage("ℹ️ Fallback used: " + usedLabel + "\nFile: " + safeText(file.file_name || "N/A") + "\nUser: " + job.userId +
+          "\nThis report's similarity check was done by " + usedLabel + " after 2 failed retries. Your checker setting is unchanged.").catch(() => {});
+      }
 
       // JK_AI_VERDICT_FREEZE_V1: only a completed check becomes the AI baseline.
       if (result?.aiVerdictBaseline) {

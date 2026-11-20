@@ -707,7 +707,9 @@ async function runProviderPipeline({
   // JK_AI_VERDICT_FREEZE_V1: { dir, owner } keeps unchanged sentences' AI verdicts
   // from the owner's last successful check. Null = no freeze (unchanged behaviour).
   aiVerdicts = null,
-  similarityOptions = null
+  similarityOptions = null,
+  // JK_SIMILARITY_FALLBACK_V1: this file's fallback checker (null = the saved setting).
+  similarityProvider = null
 }) {
   sourcePath =
     path.resolve(
@@ -1053,6 +1055,8 @@ async function runProviderPipeline({
           ),
 
         onSubmitted: onQuetextSubmitted,
+
+        provider: similarityProvider,
 
         onProgress:
           typeof onQuetextProgress ===
