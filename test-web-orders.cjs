@@ -298,7 +298,9 @@ const W = require("./jk-web-orders.cjs");
     assert(moduleSource.includes(origin), "website origin allowed by default: " + origin);
   }
   assert(botSource.includes("services here: https://jkacademictoolshub.com/"), "delivery message links the new domain");
-  assert(/isWebUserId\(userId\)\s*\?\s*API_REPORTS_DELIVERED_MESSAGE\s*:\s*REPORTS_DELIVERED_MESSAGE/.test(botSource),
+  // JK_WEBSITE_MOVE_NOTICE_V1: website customers get the plain message; Telegram
+  // customers get it plus the "moving to our website / get the app" note.
+  assert(/isWebUserId\(userId\)\s*\?\s*API_REPORTS_DELIVERED_MESSAGE\s*:\s*API_REPORTS_DELIVERED_MESSAGE \+ websiteNotice\.forUser\(userId, \{ force: true \}\)/.test(botSource),
     "web orders get the API delivery message (no website link) after /donebatch");
   assert(/isWebUserId\(target\.userId\) && doc\.file_name\s*\?\s*\{ filename: doc\.file_name \}/.test(botSource),
     "manual delivery passes the original file name for web orders");
