@@ -15,6 +15,7 @@
 */
 const crypto = require("crypto");
 const fs = require("fs");
+const path = require("path");
 
 const MAX_ENTRIES = 400;
 const WEB_CALLBACK_PREFIX = "web-";
@@ -68,7 +69,32 @@ function buttonsOf(markup) {
   )).filter(Boolean)).filter(r => r.length);
 }
 
-function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => {} }) {
+// Files on a message (Telegram message object or a customer message we saw).
+function attachmentsOf(m) {
+  if (!m) return [];
+  const out = [];
+  if (Array.isArray(m.photo) && m.photo.length) {
+    const big = m.photo[m.photo.length - 1];
+    out.push({ kind: "photo", name: "photo.jpg", fileId: big.file_id, mime: "image/jpeg", size: big.file_size || null });
+  }
+  for (const key of ["document", "video", "audio", "voice", "animation"]) {
+    const f = m[key];
+    if (f?.file_id) out.push({ kind: key, name: f.file_name || key, fileId: f.file_id, mime: f.mime_type || "", size: f.file_size || null });
+  }
+  return out;
+}
+
+const SEND_METHODS = /^(sendMessage|sendDocument|sendPhoto|sendVideo|sendAudio|sendAnimation|sendVoice)$/;
+// Calls addressed to the admin chat that panel-only mode answers itself.
+const LOCAL_METHODS = /^(sendMessage|sendDocument|sendPhoto|sendVideo|sendAudio|sendAnimation|sendVoice|sendMediaGroup|copyMessage|forwardMessage|editMessageText|editMessageCaption|editMessageReplyMarkup|deleteMessage|sendChatAction|pinChatMessage|unpinChatMessage)$/;
+const FILE_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
+function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => {},
+  // JK_ADMIN_PANEL_ONLY_V1
+  filesDir = null,                // where panel-only files are kept (30 days)
+  telegramOff = () => false,      // true: the admin chat lives in the panel only
+  downloadTelegramFile = null     // fileId -> Buffer (files that are on Telegram)
+} = {}) {
   let state = { seq: 0, entries: [] };
   try {
     const saved = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -76,6 +102,82 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
   } catch {}
   const toasts = new Map();
   let timer = null;
+  let localSeq = 0;
+  const nextLocalId = () => -(now() % 1e9) * 10 - (localSeq++ % 10) - 1; // never clashes with Telegram ids
+
+  // Recent customer messages, so a forward/copy to the admin can be shown with
+  // its photo/file even when nothing goes through Telegram (panel-only mode).
+  const incomingFile = String(file).replace(/\.json$/, "") + "-incoming.json";
+  let incoming = {};
+  try { incoming = JSON.parse(fs.readFileSync(incomingFile, "utf8")) || {}; } catch {}
+  let incomingTimer = null;
+  function remember(message) {
+    if (!message?.chat?.id || !message.message_id) return;
+    const key = message.chat.id + ":" + message.message_id;
+    incoming[key] = {
+      at: now(), text: String(message.text || message.caption || "").slice(0, 2000),
+      from: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || null,
+      attachments: attachmentsOf(message)
+    };
+    const keys = Object.keys(incoming);
+    if (keys.length > 1500) for (const k of keys.slice(0, keys.length - 1200)) delete incoming[k];
+    clearTimeout(incomingTimer);
+    incomingTimer = setTimeout(() => {
+      try { fs.writeFileSync(incomingFile + ".tmp", JSON.stringify(incoming)); fs.renameSync(incomingFile + ".tmp", incomingFile); } catch {}
+    }, 1500);
+    incomingTimer.unref?.();
+  }
+  function trackIncoming(bot) {
+    bot.use((ctx, next) => {
+      try {
+        const m = ctx.message;
+        if (m && String(ctx.chat?.id) !== String(adminId) && ctx.chat?.type === "private") remember(m);
+      } catch {}
+      return next();
+    });
+  }
+
+  // Panel-only files (sent by the bot to the admin while Telegram is off).
+  async function keepFile(input, name) {
+    if (!filesDir) return null;
+    let src = input?.source ?? input;
+    const fileName = String(input?.filename || name || (typeof src === "string" ? path.basename(src) : "file")).replace(/[\/\\\r\n"]/g, "_").slice(0, 160) || "file";
+    let buffer = null;
+    if (Buffer.isBuffer(src)) buffer = src;
+    else if (typeof src === "string" && !/^https?:\/\//.test(src) && src.includes(path.sep) && fs.existsSync(src)) buffer = fs.readFileSync(src);
+    else if (src && typeof src.pipe === "function") { const chunks = []; for await (const c of src) chunks.push(Buffer.from(c)); buffer = Buffer.concat(chunks); }
+    if (!buffer) return null;
+    fs.mkdirSync(filesDir, { recursive: true });
+    const stored = now() + "-" + crypto.randomBytes(6).toString("hex") + "-" + fileName;
+    fs.writeFileSync(path.join(filesDir, stored), buffer, { mode: 0o600 });
+    return { local: stored, name: fileName, size: buffer.length };
+  }
+  function cleanupFiles() {
+    if (!filesDir) return;
+    try {
+      for (const n of fs.readdirSync(filesDir)) {
+        const at = Number(n.split("-")[0]);
+        if (at && now() - at > FILE_KEEP_MS) fs.rmSync(path.join(filesDir, n), { force: true });
+      }
+    } catch {}
+  }
+  const ct = setInterval(cleanupFiles, 24 * 3600 * 1000); ct.unref?.();
+
+  // A file attached to a send call (file id, path, Buffer or stream).
+  async function attachmentFromPayload(method, payload, { readStreams }) {
+    const key = { sendDocument: "document", sendPhoto: "photo", sendVideo: "video", sendAudio: "audio", sendAnimation: "animation", sendVoice: "voice" }[method];
+    if (!key) return [];
+    const input = payload[key];
+    const kind = key;
+    const mime = kind === "photo" ? "image/jpeg" : "";
+    if (typeof input === "string" && !/^https?:\/\//.test(input) && !input.includes(path.sep)) {
+      return [{ kind, name: kind === "photo" ? "photo.jpg" : "Document", fileId: input, mime }];
+    }
+    const src = input?.source ?? input;
+    if (!readStreams && src && typeof src.pipe === "function") return [];
+    const kept = await keepFile(input, kind === "photo" ? "photo.jpg" : null).catch(() => null);
+    return kept ? [{ kind, mime, ...kept }] : [];
+  }
 
   function save() {
     clearTimeout(timer);
@@ -100,7 +202,7 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
   }
 
   // Called for every Telegram API call; only the admin chat is copied.
-  function observe(method, payload, result, { telegramError = null } = {}) {
+  function observe(method, payload, result, { telegramError = null, ...extra } = {}) {
     if (!payload || String(payload.chat_id) !== String(adminId)) return;
     if (/^(sendMessage|sendDocument|sendPhoto|sendVideo|sendAudio|sendAnimation)$/.test(method)) {
       // The bot resends without formatting when Telegram rejects Markdown: that
@@ -118,14 +220,37 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
         }
         return;
       }
+      const attachments = extra.attachments || attachmentsOf(result);
       const doc = result?.document || result?.video || result?.audio || null;
-      const fileName = doc?.file_name || (method === "sendPhoto" ? "Photo" : method === "sendDocument" ? "Document" : null);
+      const fileName = attachments[0]?.name || doc?.file_name || (method === "sendPhoto" ? "Photo" : method === "sendDocument" ? "Document" : null);
       add({
-        messageId: Number(result?.message_id) || null,
+        messageId: extra.localId || Number(result?.message_id) || null,
         text: plain(payload.text ?? payload.caption ?? "", payload.parse_mode),
         file: method === "sendMessage" ? null : fileName,
+        attachments,
         buttons: buttonsOf(payload.reply_markup),
-        ...(telegramError ? { telegramError } : {})
+        ...(telegramError ? { telegramError } : {}),
+        ...(extra.localId ? { panelOnly: true } : {})
+      });
+      return;
+    }
+    // A customer's message forwarded or copied to the admin (payment proofs,
+    // screenshots, uploaded documents): shown with its text and files.
+    if (method === "forwardMessage" || method === "copyMessage") {
+      const seen = incoming[payload.from_chat_id + ":" + payload.message_id] || null;
+      const fromResult = attachmentsOf(result);
+      const original = String(result?.text || result?.caption || seen?.text || "");
+      const text = method === "copyMessage" && payload.caption !== undefined
+        ? plain(payload.caption, payload.parse_mode)
+        : "↪ Forwarded from customer" + (seen?.from ? " (" + seen.from + ")" : "") + (original ? "\n\n" + original : "");
+      add({
+        messageId: extra.localId || Number(result?.message_id) || null,
+        text, attachments: fromResult.length ? fromResult : (seen?.attachments || []),
+        file: (fromResult[0] || seen?.attachments?.[0])?.name || null,
+        buttons: buttonsOf(payload.reply_markup),
+        category: method === "forwardMessage" ? "payment" : undefined,
+        ...(telegramError ? { telegramError } : {}),
+        ...(extra.localId ? { panelOnly: true } : {})
       });
       return;
     }
@@ -162,19 +287,75 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
         toasts.set(String(payload.callback_query_id), String(payload.text || ""));
         return true; // a button pressed in the web panel: answered there, not on Telegram
       }
+      const toAdmin = payload && String(payload.chat_id) === String(adminId);
+      // JK_ADMIN_PANEL_ONLY_V1: Telegram off for the admin — the panel is the chat.
+      if (toAdmin && LOCAL_METHODS.test(method) && telegramOff()) return localCall(method, payload);
       let result;
       try {
         result = await original.call(this, method, payload, opts);
       } catch (error) {
         // Telegram refused or could not be reached: the panel still gets the
         // message (and the notification), marked as not delivered to Telegram.
-        try { observe(method, payload, null, { telegramError: String(error?.message || error).slice(0, 200) }); } catch {}
+        try {
+          const attachments = toAdmin ? await attachmentFromPayload(method, payload, { readStreams: false }) : [];
+          observe(method, payload, null, { telegramError: String(error?.message || error).slice(0, 200), attachments: attachments.length ? attachments : undefined });
+        } catch {}
         throw error;
       }
       try { observe(method, payload, result); } catch (error) { console.error("Bot chat copy failed:", error.message); }
       return result;
     };
     proto.__jkBotChat = true;
+  }
+
+  // Answers an admin-chat call without Telegram (panel-only mode), returning
+  // what Telegram would, so the bot's code carries on unchanged.
+  async function localCall(method, payload) {
+    const chat = { id: Number(adminId), type: "private" };
+    const date = Math.floor(now() / 1000);
+    if (SEND_METHODS.test(method)) {
+      const localId = nextLocalId();
+      const attachments = await attachmentFromPayload(method, payload, { readStreams: true });
+      observe(method, payload, null, { localId, attachments });
+      const a = attachments[0];
+      return { message_id: localId, chat, date, text: payload.text, caption: payload.caption,
+        ...(a ? { document: { file_id: a.fileId || "panel-only", file_name: a.name } } : {}) };
+    }
+    if (method === "sendMediaGroup") {
+      const out = [];
+      for (const media of payload.media || []) {
+        const m = { photo: "sendPhoto", document: "sendDocument", video: "sendVideo", audio: "sendAudio" }[media.type] || "sendDocument";
+        out.push(await localCall(m, { chat_id: payload.chat_id, [media.type || "document"]: media.media, caption: media.caption, parse_mode: media.parse_mode }));
+      }
+      return out;
+    }
+    if (method === "copyMessage" || method === "forwardMessage") {
+      const localId = nextLocalId();
+      observe(method, payload, null, { localId });
+      return method === "copyMessage" ? { message_id: localId } : { message_id: localId, chat, date };
+    }
+    if (/^editMessage/.test(method)) {
+      observe(method, payload, null);
+      return { message_id: Number(payload.message_id), chat, date, text: payload.text };
+    }
+    if (method === "deleteMessage") { observe(method, payload, null); return true; }
+    return true; // chat actions, pins
+  }
+
+  // A file shown in the panel: kept here, or fetched from Telegram.
+  async function attachment(entryId, index) {
+    const entry = state.entries.find(e => e.id === Number(entryId));
+    const a = entry?.attachments?.[Number(index)];
+    if (!a) { const e = new Error("File not found."); e.status = 404; throw e; }
+    if (a.local) {
+      const full = path.join(filesDir || "", path.basename(a.local));
+      if (!filesDir || !fs.existsSync(full)) { const e = new Error("This file is no longer kept (30 days)."); e.status = 410; throw e; }
+      return { buffer: fs.readFileSync(full), name: a.name, mime: a.mime || "" };
+    }
+    if (a.fileId && typeof downloadTelegramFile === "function") {
+      return { buffer: await downloadTelegramFile(a.fileId), name: a.name, mime: a.mime || "" };
+    }
+    const e = new Error("This file is not available in the panel."); e.status = 404; throw e;
   }
 
   let updateSeq = 0;
@@ -235,7 +416,7 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
     return { seq: state.seq, entries: state.entries.slice(-150) };
   }
 
-  return { install, observe, add, sendText, press, feed, entries: () => state.entries, classify };
+  return { install, observe, add, sendText, press, feed, entries: () => state.entries, classify, trackIncoming, attachment, localCall };
 }
 
-module.exports = { createBotChat, classify, buttonsOf, plain, CATEGORIES, WEB_CALLBACK_PREFIX };
+module.exports = { createBotChat, classify, buttonsOf, plain, attachmentsOf, CATEGORIES, WEB_CALLBACK_PREFIX };

@@ -402,7 +402,7 @@ function createAdminPanel(d) {
       res.set("X-Content-Type-Options", "nosniff");
       res.set("Referrer-Policy", "no-referrer");
       res.set("Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; form-action 'self'");
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; form-action 'self'");
     };
     const guard = (req, res, next) => {
       secure(res);
@@ -472,6 +472,26 @@ function createAdminPanel(d) {
     app.post("/admin/api/bot/press", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
       if (!d.botChat) return res.status(501).json({ error: "Bot chat is not available." });
       res.json(await d.botChat.press(d.bot, req.body?.id, req.body?.data));
+    }));
+
+    // JK_ADMIN_PANEL_ONLY_V1: files on bot messages, and Telegram on/off for the admin.
+    app.get("/admin/api/bot/files/:id/:n", guard, handle(async (req, res) => {
+      if (!d.botChat?.attachment) return res.status(501).json({ error: "Not available." });
+      const f = await d.botChat.attachment(req.params.id, req.params.n);
+      const name = String(f.name || "file");
+      res.set("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent(name));
+      res.type(/^image\//.test(f.mime) ? f.mime : "application/octet-stream").send(f.buffer);
+    }));
+    app.get("/admin/api/bot/settings", guard, handle(async (req, res) => {
+      res.json({ telegram: d.adminTelegram ? d.adminTelegram.on() : true, forced: d.adminTelegram ? d.adminTelegram.forced() : false });
+    }));
+    app.post("/admin/api/bot/settings", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      if (!d.adminTelegram) return res.status(501).json({ error: "Not available." });
+      if (typeof req.body?.telegram !== "boolean") return res.status(400).json({ error: "telegram must be true or false." });
+      if (d.adminTelegram.forced() && req.body.telegram === false) {
+        return res.status(409).json({ error: "Telegram is forced on by the ADMIN_TELEGRAM setting on Render. Remove it to turn Telegram off." });
+      }
+      res.json({ telegram: d.adminTelegram.set(req.body.telegram), forced: d.adminTelegram.forced() });
     }));
 
     // JK_ADMIN_PUSH_V1: notifications on this device.

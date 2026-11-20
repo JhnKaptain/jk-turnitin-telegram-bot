@@ -208,7 +208,7 @@
     document.body.classList.toggle("botmode", section === "bot");
     if (section === "bot") { unseen = 0; setBadge(); }
     clearInterval(botTimer);
-    if (section === "bot" && !$("app").classList.contains("hidden")) { refreshBot(); botTimer = setInterval(refreshBot, 6000); checkNotif(); }
+    if (section === "bot" && !$("app").classList.contains("hidden")) { refreshBot(); botTimer = setInterval(refreshBot, 6000); checkNotif(); loadTg(); }
   }
 
   // --- Bot chat: everything the bot sends you, commands, buttons ------------
@@ -225,7 +225,13 @@
     const list = botData.entries.filter(e => botFilter === "all" || e.category === botFilter || (e.from === "you" && botFilter === "all"));
     box.innerHTML = list.length ? list.map(e => (
       '<div class="bmsg' + (e.from === "you" ? " you" : "") + (e.deleted ? " deleted" : "") + '">' +
-      (e.file ? '<div class="muted">📎 ' + esc(e.file) + '</div>' : '') +
+      (e.attachments && e.attachments.length ? '<div class="att">' + e.attachments.map((a, n) => {
+        const href = "/admin/api/bot/files/" + esc(e.id) + "/" + n;
+        return (a.kind === "photo" || /^image\//.test(a.mime || "")
+          ? '<img class="thumb" alt="' + esc(a.name) + '" data-img="' + href + '">' : '') +
+          '<a class="dl" href="' + href + '" data-dl="1">⬇ ' + esc(a.name) + '</a>';
+      }).join("") + '</div>'
+        : (e.file ? '<div class="muted">📎 ' + esc(e.file) + '</div>' : '')) +
       '<div class="txt">' + esc(e.text || "") + '</div>' +
       (e.buttons && e.buttons.length && !e.deleted ? '<div class="kb">' + e.buttons.map(row => '<div class="row">' + row.map(b => b.url
         ? '<a class="btn" target="_blank" rel="noopener noreferrer" href="' + esc(b.url) + '">' + esc(b.text) + ' ↗</a>'
@@ -234,7 +240,49 @@
     )).join("") : '<div class="card muted">No messages yet. Everything the bot sends you on Telegram appears here from now on.</div>';
     if (nearEnd || !box.dataset.loaded) window.scrollTo(0, document.body.scrollHeight);
     box.dataset.loaded = "1";
+    loadThumbs();
   }
+  // Images need the panel header, so they are fetched and shown from memory.
+  const thumbs = new Map();
+  function loadThumbs() {
+    document.querySelectorAll("img[data-img]").forEach(img => {
+      const key = img.dataset.img;
+      if (thumbs.has(key)) { if (thumbs.get(key)) img.src = thumbs.get(key); return; }
+      thumbs.set(key, null);
+      fetch(key, { headers: H, credentials: "same-origin" })
+        .then(r => (r.ok ? r.blob() : Promise.reject(new Error("unavailable"))))
+        .then(b => { const u = URL.createObjectURL(b); thumbs.set(key, u); document.querySelectorAll('img[data-img="' + key + '"]').forEach(i => { i.src = u; }); })
+        .catch(() => { img.replaceWith(Object.assign(document.createElement("span"), { className: "muted", textContent: "Image not available" })); });
+    });
+  }
+  document.addEventListener("click", ev => {
+    const img = ev.target.closest && ev.target.closest("img.thumb");
+    if (img && img.src) window.open(img.src, "_blank", "noopener");
+  });
+
+  // Admin messages on Telegram: On / Off.
+  async function loadTg() {
+    try {
+      const r = await api("/admin/api/bot/settings");
+      $("tgState").textContent = r.telegram ? "On" : "Off (panel only)";
+      $("tgToggle").textContent = r.telegram ? "Turn off" : "Turn on";
+      $("tgToggle").dataset.on = r.telegram ? "1" : "";
+      $("tgHelp").textContent = r.forced
+        ? "Forced on by the ADMIN_TELEGRAM setting on Render."
+        : r.telegram
+          ? "The bot also messages you on Telegram. Turn off to run the admin side from this panel only (customers are not affected)."
+          : "The bot no longer messages you on Telegram: alerts, buttons, files and command replies are here, with phone notifications. Customers still use Telegram as before.";
+    } catch {}
+  }
+  $("tgToggle").addEventListener("click", async () => {
+    const turningOff = $("tgToggle").dataset.on === "1";
+    if (turningOff && !confirm("Stop the bot messaging you on Telegram?\n\nEverything will arrive here in the panel only. Make sure notifications are on for your phone first.")) return;
+    try {
+      await api("/admin/api/bot/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ telegram: !turningOff }) });
+      toast(turningOff ? "Telegram is off for admin messages. The panel is now your admin chat." : "Telegram is on again.");
+    } catch (e) { toast(e.message, 7000); }
+    loadTg();
+  });
   async function refreshBot() {
     try {
       const r = await api("/admin/api/bot/feed");
