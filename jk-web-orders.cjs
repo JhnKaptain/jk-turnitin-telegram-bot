@@ -109,7 +109,9 @@ function publicConfig(d) {
     },
     similarityFilterChoice: d.getFilterMode() === d.FILTER_MODE_CLIENT,
     clientUnfilteredAvailable: !Boolean(f.HIDE_CLIENT_UNFILTERED),
-    tillNumber: d.TILL_NUMBER || null
+    tillNumber: d.TILL_NUMBER || null,
+    // JK_WEB_BINANCE_V1: shown as a second pay button (Turnitin checks, no codes).
+    binance: d.binance ? d.binance.config() : { enabled: false }
   };
 }
 
@@ -272,6 +274,84 @@ function createWebOrders(d) {
   }
 
   async function checkout(order, { files = [], code = "", phone = "" } = {}) {
+    const phone254 = d.normalizePhoneTo254(phone);
+    const sub = prepareChoices(order, { files, code, phoneCheck: () => {
+      if (!phone254) { const e = new Error("Invalid phone. Use 07XXXXXXXX or 01XXXXXXXX."); e.status = 400; throw e; }
+    } });
+
+    sub.amount = d.calculateSubmissionAmount(sub);
+    sub.currency = "KES";
+    sub.batchId = sub.batchId || d.makeBatchId(order.uid);
+    sub.paymentMethod = "MPESA";
+    sub.phone = phone254;
+    sub.stage = d.STAGES.WAIT_PHONE;
+    sub.currentFileIndex = null;
+    order.stage = "PAYMENT";
+    order.paymentMethod = "MPESA";
+    order.batchId = sub.batchId;
+    order.amount = sub.amount;
+    order.phone = phone254;
+    order.files = sub.files;
+    order.summary = d.formatBatchSummary(sub);
+    save();
+
+    // Each document goes to the admin chat exactly like a Telegram upload.
+    for (let i = 0; i < sub.files.length; i++) await sendFileToAdmin(order, sub, sub.files[i], i + 1);
+
+    await d.attemptStkPush(contextFor(order), sub, { mode: "initial" });
+    order.apiRef = sub.api_ref || null;
+    save();
+    return statusFor(order);
+  }
+
+  // JK_WEB_BINANCE_V1: Turnitin order paid with Binance Pay (USDT); the admin
+  // confirms after checking the Binance account, as on Telegram.
+  async function binanceCheckout(order, { files = [], code = "" } = {}) {
+    if (!d.binance || !d.binance.config().enabled) { const e = new Error("Binance payment is not available right now. Please pay with M-Pesa."); e.status = 409; throw e; }
+    if (String(code || "").trim() || (Array.isArray(files) && files.some(f => String(f?.type || "").toUpperCase() === "RESALE"))) {
+      const e = new Error("Binance isn't available with a discount or reseller code. Please pay with M-Pesa."); e.status = 400; throw e;
+    }
+    const sub = prepareChoices(order, { files, code: "" });
+    if (!d.binance.available(sub)) { const e = new Error("Binance is available for Turnitin checks only. Please pay with M-Pesa."); e.status = 400; throw e; }
+    sub.batchId = sub.batchId || d.makeBatchId(order.uid);
+    sub.currentFileIndex = null;
+    order.stage = "PAYMENT";
+    order.paymentMethod = "BINANCE_USDT";
+    order.batchId = sub.batchId;
+    order.amount = d.calculateSubmissionAmount(sub); // KES total (the USDT quote is in order.binance)
+    order.files = sub.files;
+    order.summary = d.formatBatchSummary(sub);
+    save();
+    for (let i = 0; i < sub.files.length; i++) await sendFileToAdmin(order, sub, sub.files[i], i + 1);
+    const info = await d.binance.start(order, sub);
+    order.apiRef = info.apiRef;
+    order.binance = { amount: info.amount, currency: info.currency, note: info.note, id: info.id, name: info.name };
+    save();
+    return statusFor(order);
+  }
+
+  async function binanceProof(order, binanceOrderId, image = null) {
+    const stage = statusFor(order).stage;
+    if (order.paymentMethod !== "BINANCE_USDT") { const e = new Error("This order is not a Binance payment."); e.status = 409; throw e; }
+    if (!["PAYMENT", "PAYMENT_FAILED"].includes(stage)) { const e = new Error("Payment is already confirmed for this order."); e.status = 409; throw e; }
+    const id = d.binance.normalizeId(binanceOrderId);
+    if (!id) { const e = new Error("Enter the Binance Order ID from Payment Details (numbers and letters, at least 8)."); e.status = 400; throw e; }
+    if (image && image.length) {
+      const jpg = image[0] === 0xff && image[1] === 0xd8, png = image.slice(0, 4).toString("hex") === "89504e47",
+        webp = image.slice(0, 4).toString() === "RIFF" && image.slice(8, 12).toString() === "WEBP";
+      if (!(jpg || png || webp)) { const e = new Error("The screenshot must be a JPG, PNG or WEBP image."); e.status = 400; throw e; }
+      if (image.length > 5 * 1024 * 1024) { const e = new Error("The screenshot must be 5 MB or smaller."); e.status = 413; throw e; }
+    } else image = null;
+    limited("proof:" + order.id, 5);
+    await d.binance.proof(order, subFor(order), id, image);
+    order.proofSubmittedAt = Date.now();
+    order.binanceOrderId = id;
+    save();
+    return statusFor(order);
+  }
+
+  // Shared by M-Pesa and Binance checkout: the same checks and service choices.
+  function prepareChoices(order, { files = [], code = "", phoneCheck = () => {} } = {}) {
     if (!d.webEnabled()) { const e = new Error("Website orders are temporarily unavailable."); e.status = 503; throw e; }
     if (d.isBotInactivePeriod()) { const e = new Error(plainText(d.inactiveText()) || "The service is currently closed."); e.status = 403; throw e; }
     if (order.stage !== "DRAFT") { const e = new Error("Payment has already been started for this order."); e.status = 409; throw e; }
@@ -280,8 +360,7 @@ function createWebOrders(d) {
     if (!Array.isArray(files) || files.length !== sub.files.length) {
       const e = new Error("Choose a service for every document."); e.status = 400; throw e;
     }
-    const phone254 = d.normalizePhoneTo254(phone);
-    if (!phone254) { const e = new Error("Invalid phone. Use 07XXXXXXXX or 01XXXXXXXX."); e.status = 400; throw e; }
+    phoneCheck();
 
     const wantsResale = files.some(f => String(f?.type || "").toUpperCase() === "RESALE");
     if (wantsResale && !d.isDiscountPublicActive()) {
@@ -319,33 +398,12 @@ function createWebOrders(d) {
       if (!file.similarityFilter) file.similarityFilter = d.effectiveSimilarityFilter(file);
       file.price = d.priceFor(kind);
     });
-
-    sub.amount = d.calculateSubmissionAmount(sub);
-    sub.currency = "KES";
-    sub.batchId = sub.batchId || d.makeBatchId(order.uid);
-    sub.paymentMethod = "MPESA";
-    sub.phone = phone254;
-    sub.stage = d.STAGES.WAIT_PHONE;
-    sub.currentFileIndex = null;
-    order.stage = "PAYMENT";
-    order.batchId = sub.batchId;
-    order.amount = sub.amount;
-    order.phone = phone254;
-    order.files = sub.files;
-    order.summary = d.formatBatchSummary(sub);
-    save();
-
-    // Each document goes to the admin chat exactly like a Telegram upload.
-    for (let i = 0; i < sub.files.length; i++) await sendFileToAdmin(order, sub, sub.files[i], i + 1);
-
-    await d.attemptStkPush(contextFor(order), sub, { mode: "initial" });
-    order.apiRef = sub.api_ref || null;
-    save();
-    return statusFor(order);
+    return sub;
   }
 
   async function resend(order, phone) {
     if (order.stage !== "PAYMENT") { const e = new Error("No payment is waiting for this order."); e.status = 409; throw e; }
+    if (order.paymentMethod === "BINANCE_USDT") { const e = new Error("This order is paid with Binance. Send your Binance Order ID instead."); e.status = 409; throw e; }
     const sub = subFor(order);
     if (statusFor(order).stage !== "PAYMENT" && statusFor(order).stage !== "PAYMENT_FAILED") return statusFor(order);
     if (phone) {
@@ -418,6 +476,10 @@ function createWebOrders(d) {
     }));
     return {
       orderId: order.id, stage, createdAt: order.createdAt, deleted: Boolean(order.deletedAt),
+      // JK_WEB_BINANCE_V1
+      paymentMethod: order.paymentMethod || "MPESA",
+      binance: order.paymentMethod === "BINANCE_USDT" && order.binance
+        ? { ...order.binance, orderIdSent: order.binanceOrderId || null } : null,
       amount: sub?.amount ?? order.amount ?? null, currency: "KES",
       summary: order.summary || null, files,
       payment: ref ? { status: ref.status || "PENDING", invoiceId: ref.invoiceId || null } : null,
@@ -660,7 +722,7 @@ function createWebOrders(d) {
     return { file: path.join(orderDir(order.id), "reports", report.stored), name: report.name };
   }
 
-  return { newOrder, authorize, addUpload, removeUpload, checkout, resend, cancel, deleteData, clientMessage, paymentProof, statusFor, reportFile,
+  return { newOrder, authorize, addUpload, removeUpload, checkout, binanceCheckout, binanceProof, resend, cancel, deleteData, clientMessage, paymentProof, statusFor, reportFile,
     readWebFile, removeWebFile, installTelegramRouting, buyHighlights, markDelivered, prune, orderById: id => store.orders[id] || null,
     orderByUid, uidForOrder: id => store.orders[String(id || "").trim()]?.uid || null };
 }
@@ -681,7 +743,7 @@ function installWebOrders(d) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Order-Token,X-File-Name");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Order-Token,X-File-Name,X-Binance-Order");
       res.setHeader("Access-Control-Max-Age", "600");
     }
     if (req.method === "OPTIONS") return res.status(204).end();
@@ -722,6 +784,17 @@ function installWebOrders(d) {
   app.post("/api/web/orders/:id/checkout", handle(async (req, res) => {
     const order = orders.authorize(req.params.id, token(req));
     res.json({ status: await orders.checkout(order, req.body || {}) });
+  }));
+  // JK_WEB_BINANCE_V1
+  app.post("/api/web/orders/:id/binance", handle(async (req, res) => {
+    enabledOr503();
+    const order = orders.authorize(req.params.id, token(req));
+    res.json({ ok: true, status: await orders.binanceCheckout(order, req.body || {}) });
+  }));
+  app.put("/api/web/orders/:id/binance-proof", d.express.raw({ type: () => true, limit: 5 * 1024 * 1024 + 1024 }), handle(async (req, res) => {
+    const order = orders.authorize(req.params.id, token(req));
+    const image = Buffer.isBuffer(req.body) && req.body.length ? req.body : null;
+    res.json({ ok: true, status: await orders.binanceProof(order, String(req.headers["x-binance-order"] || ""), image) });
   }));
   app.post("/api/web/orders/:id/resend", handle(async (req, res) => {
     const order = orders.authorize(req.params.id, token(req));

@@ -9456,6 +9456,74 @@ async function startWorldwideManualPayment(ctx, method) {
       : "If you have paid, send the M-Pesa transfer reference. Admin verifies received funds before processing.");
 }
 
+// JK_WEB_BINANCE_V1: Binance Pay (USDT) for Turnitin orders on the website —
+// the same manual payment record, alerts and admin approval as on Telegram.
+const webBinance = {
+  config: () => INTERNATIONAL_PAYMENT_ENABLED
+    ? { enabled: true, kesPerUsdt: WORLDWIDE_KES_PER_USDT, id: WORLDWIDE_BINANCE_ID, name: WORLDWIDE_BINANCE_NAME }
+    : { enabled: false },
+  available: sub => INTERNATIONAL_PAYMENT_ENABLED && isInternationalCheckOnly(sub),
+  normalizeId: value => worldwidePay.normalizeTransactionId(value),
+  async start(order, sub) {
+    const method = worldwidePay.METHOD_BINANCE;
+    const userId = order.uid;
+    const kesAmount = calculateSubmissionAmount(sub);
+    const quote = worldwidePay.quoteForMethod(method, kesAmount, worldwidePay.kesToUsdt(kesAmount, WORLDWIDE_KES_PER_USDT));
+    const apiRef = makePaymentAttemptRef(userId);
+    putPaymentRef(apiRef, {
+      userId, batchId: sub.batchId, kind: getBatchKindLabel(sub),
+      amount: quote.amount, currency: quote.currency,
+      createdAt: Date.now(), updatedAt: Date.now(), summary: formatBatchSummary(sub),
+      phone: null, name: "Website order " + order.id, username: "web_" + order.id,
+      invoiceId: null, status: "PENDING", lastState: "PENDING",
+      mode: "MANUAL", paymentMethod: method, pendingProof: null,
+      files: (sub.files || []).map(file => ({
+        file_id: file.file_id || null, file_unique_id: file.file_unique_id || null,
+        file_name: file.file_name || null,
+        file_size: Number(file.file_size || file.fileSize || 0) || null,
+        type: file.type || null, price: file.price || null,
+        recheckEligible: Boolean(file.recheckEligible),
+        similarityFilter: effectiveSimilarityFilter(file),
+        similarityOptions: effectiveSimilarityOptions(file),
+        jkSubmissionId: file.jkSubmissionId || null,
+        reportName: file.reportName || null,
+        reportInstitution: file.reportInstitution || null
+      }))
+    });
+    sub.api_ref = apiRef; sub.invoiceId = null;
+    sub.stage = STAGE_WAIT_PAYMENT; sub.paymentMethod = method;
+    sub.amount = quote.amount; sub.currency = quote.currency;
+    sub.paymentAttempts = [...(sub.paymentAttempts || []), apiRef];
+    const note = worldwidePay.noteReference(apiRef);
+    await sendAdminMessage(
+      "🌍 New international manual payment (website)\nUser ID: " + userId + "\nWebsite order: " + order.id +
+      "\nMethod: " + method + "\nExpected amount: " + formatPaymentMoney(quote.amount, quote.currency) +
+      "\nOrder reference: " + apiRef + "\nCustomer payment note: " + note +
+      "\nSTATUS: PENDING; verify received funds before confirming.",
+      { adminButtons: "replyOnly" }
+    );
+    return { apiRef, amount: quote.amount, currency: quote.currency, note, id: WORLDWIDE_BINANCE_ID, name: WORLDWIDE_BINANCE_NAME };
+  },
+  async proof(order, sub, code, image) {
+    const apiRef = sub.api_ref || order.apiRef;
+    if (apiRef) updatePaymentRef(apiRef, {
+      pendingProof: { type: image ? "worldwide-screenshot" : "worldwide-text", code, receivedAt: Date.now() }
+    });
+    await sendAdminMessage("🌍 International payment proof received (website)\nUser ID: " + order.uid +
+      "\nWebsite order: " + order.id + "\nMethod: " + worldwidePay.METHOD_BINANCE +
+      "\nExpected amount: " + formatPaymentMoney(sub.amount, sub.currency) +
+      "\nOrder reference: " + apiRef + "\nBinance Order ID: " + code +
+      "\nVerify actual received amount and beneficiary in your Binance account; NEVER approve based on screenshot alone.",
+      { adminButtons: "paymentProof" });
+    if (image) {
+      try {
+        await bot.telegram.sendPhoto(ADMIN_ID, { source: image, filename: "binance-" + order.id + ".jpg" },
+          { caption: "Binance screenshot from website order " + order.id });
+      } catch (error) { console.error("Binance screenshot to admin failed:", error.message); }
+    }
+  }
+};
+
 bot.action("WORLDWIDE_MPESA", async ctx => {
   await startWorldwideManualPayment(ctx, worldwidePay.METHOD_MPESA);
 });
@@ -14462,6 +14530,7 @@ webOrders = require("./jk-web-orders.cjs").installWebOrders({
   calculateSubmissionAmount, formatBatchSummary, makeBatchId, normalizePhoneTo254, attemptStkPush,
   buildAdminDocumentCaption, adminActionKeyboard, supportedScanUpload, sendAdminMessage,
   logMessage: adminLogCustomerMessage, // JK_ADMIN_ORDER_DESK_V1
+  binance: webBinance, // JK_WEB_BINANCE_V1
   customerAlert: notifyWebCustomer, // JK_CUSTOMER_PUSH_V1
   handleMpesaProofText, TILL_NUMBER,
   processingMaxMinutes: () => REPORT_PROCESSING_MAX_MINUTES,
