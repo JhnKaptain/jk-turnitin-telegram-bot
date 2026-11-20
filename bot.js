@@ -14394,6 +14394,8 @@ function describeDeleteResult(result) {
   return lines.join("\n") || "Nothing to delete.";
 }
 
+// JK_ADMIN_EMAIL_LOGIN_V1: email for admin password resets (SMTP, e.g. Gmail app password).
+const adminMailer = require("./jk-admin-auth.cjs").createMailer();
 adminPanel = require("./jk-admin-panel.cjs").createAdminPanel({
   DATA_DIR, MAX_BATCH_FILES, bot,
   deleteFiles: (ids, by) => deleteStoredFilesNow(ids, by),
@@ -14406,6 +14408,7 @@ adminPanel = require("./jk-admin-panel.cjs").createAdminPanel({
   finishDelivery: (userId, count) => adminFinishDelivery(userId, count),
   customerOriginal: file => adminCustomerOriginal(file),
   botChat: adminBotChat, // JK_ADMIN_BOT_CHAT_V1
+  sendEmail: adminMailer, // JK_ADMIN_EMAIL_LOGIN_V1
   adminTelegram: { on: adminTelegramOn, forced: adminTelegramForced, set: setAdminTelegram }, // JK_ADMIN_PANEL_ONLY_V1
   push: adminPush,
   shop: shopStore, // JK_ADMIN_OTHER_SERVICES_V1: website shop orders (Grammarly, Chegg...)

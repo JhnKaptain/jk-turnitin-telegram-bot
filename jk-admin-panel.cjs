@@ -82,9 +82,10 @@ function createAdminPanel(d) {
   const recentFailures = [];    // timestamps, for the global lock
   let globalLockUntil = 0;
 
-  const password = () => String(env.ADMIN_PANEL_PASSWORD || "");
+  // JK_ADMIN_EMAIL_LOGIN_V1: email + password, change and email reset.
+  const auth = d.auth || require("./jk-admin-auth.cjs").createAdminAuth({ dataDir: d.DATA_DIR, env, now, sendEmail: d.sendEmail || null });
   const totpSecret = () => String(env.ADMIN_PANEL_TOTP_SECRET || "").trim();
-  const configured = () => password().length >= 12;
+  const configured = () => auth.configured();
 
   // --- auth -------------------------------------------------------------
   function clientIp(req) {
@@ -105,13 +106,13 @@ function createAdminPanel(d) {
     return true;
   }
 
-  async function login({ ip, pass, code }) {
+  async function login({ ip, pass, code, email = "" }) {
     if (!configured()) return { ok: false, status: 404, error: "Admin panel is not configured." };
     const t = now();
     if (globalLockUntil > t) return { ok: false, status: 429, error: "Too many failed logins. Try again in 15 minutes." };
     const rec = failures.get(ip);
     if (rec && rec.until > t) return { ok: false, status: 429, error: "Too many failed logins. Try again in 15 minutes." };
-    const passOk = safeEqual(pass, password());
+    const passOk = auth.checkPassword(pass) && auth.checkEmail(email);
     const codeOk = !totpSecret() || totpValid(totpSecret(), code, t);
     if (passOk && codeOk) {
       failures.delete(ip);
@@ -132,7 +133,7 @@ function createAdminPanel(d) {
           " failed logins in the last hour. All logins locked for 15 minutes.");
       } catch {}
     }
-    return { ok: false, status: 401, error: "Wrong password or code." };
+    return { ok: false, status: 401, error: auth.emailRequired() ? "Wrong email, password or code." : "Wrong password or code." };
   }
 
   // --- data -------------------------------------------------------------
@@ -419,7 +420,8 @@ function createAdminPanel(d) {
     app.get("/admin", (req, res) => {
       secure(res);
       if (!configured()) return res.status(404).type("text/plain").send("Admin panel is not configured.");
-      res.type("html").send(html.replace("__TOTP__", totpSecret() ? "1" : "0"));
+      res.type("html").send(html.replace("__TOTP__", totpSecret() ? "1" : "0")
+        .replace("__EMAIL__", auth.emailRequired() ? "1" : "0").replace("__RESET__", auth.emailReady() ? "1" : "0"));
     });
     app.get("/admin/app.js", (req, res) => { secure(res); res.type("application/javascript").send(js); });
 
@@ -446,9 +448,63 @@ function createAdminPanel(d) {
     app.post("/admin/api/login", express.json({ limit: "4kb" }), handle(async (req, res) => {
       secure(res);
       if (req.get("X-Admin-Panel") !== "1") return res.status(403).json({ error: "Missing panel header." });
-      const r = await login({ ip: clientIp(req), pass: String(req.body?.password || ""), code: String(req.body?.code || "") });
+      const r = await login({ ip: clientIp(req), pass: String(req.body?.password || ""), code: String(req.body?.code || ""),
+        email: String(req.body?.email || "") });
       if (!r.ok) return res.status(r.status).json({ error: r.error });
       res.set("Set-Cookie", `jk_admin=${r.token}; Path=/admin; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_MS / 1000}`);
+      res.json({ ok: true });
+    }));
+    // JK_ADMIN_EMAIL_LOGIN_V1: change password (signed in), forgot + reset (email code).
+    const notifyChange = async what => {
+      const when = new Date(now()).toUTCString();
+      try { await d.sendAdmin?.("🔑 Admin panel password " + what + " (" + when + "). If this wasn't you, change ADMIN_PANEL_PASSWORD on Render now."); } catch {}
+      try {
+        if (auth.emailReady()) await d.sendEmail({ to: String(env.ADMIN_PANEL_EMAIL).trim(), subject: "JK Admin: password " + what,
+          text: "Your JK Admin panel password was " + what + " on " + when + ".\n\nIf this wasn't you, change ADMIN_PANEL_PASSWORD on Render now: that replaces any password set in the panel." });
+      } catch (error) { console.error("Admin email failed:", error.message); }
+    };
+    const totpOk = code => !totpSecret() || totpValid(totpSecret(), code, now());
+    const resetHits = new Map(); // ip -> times (forgot/reset tries)
+    const resetLimited = ip => {
+      const t = now();
+      const list = (resetHits.get(ip) || []).filter(x => t - x < 3600000);
+      list.push(t); resetHits.set(ip, list);
+      return list.length > 15;
+    };
+    app.post("/admin/api/password/change", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
+      if (!auth.checkPassword(String(req.body?.current || "")) || !totpOk(String(req.body?.code || ""))) {
+        return res.status(400).json({ error: "The current password (or authenticator code) is wrong." });
+      }
+      auth.setPassword(String(req.body?.password || ""));
+      const mine = cookieToken(req);
+      for (const token of [...sessions.keys()]) if (token !== mine) sessions.delete(token); // other devices signed out
+      await notifyChange("changed");
+      res.json({ ok: true });
+    }));
+    const openRoute = (req, res) => {
+      secure(res);
+      if (!configured()) { res.status(404).json({ error: "Admin panel is not configured." }); return false; }
+      if (req.get("X-Admin-Panel") !== "1") { res.status(403).json({ error: "Missing panel header." }); return false; }
+      if (resetLimited(clientIp(req))) { res.status(429).json({ error: "Too many tries. Wait an hour and try again." }); return false; }
+      return true;
+    };
+    app.post("/admin/api/password/forgot", express.json({ limit: "4kb" }), handle(async (req, res) => {
+      if (!openRoute(req, res)) return;
+      try {
+        await auth.requestReset(String(req.body?.email || ""));
+      } catch (error) {
+        if (error.status === 503) return res.status(503).json({ error: error.message });
+        console.error("Admin reset email failed:", error.message);
+        return res.status(502).json({ error: "The email could not be sent. Try again later, or change the password on Render." });
+      }
+      res.json({ ok: true, message: "If that is the admin email, a 6-digit code is on its way. It expires in 10 minutes." });
+    }));
+    app.post("/admin/api/password/reset", express.json({ limit: "4kb" }), handle(async (req, res) => {
+      if (!openRoute(req, res)) return;
+      if (!totpOk(String(req.body?.totp || ""))) return res.status(400).json({ error: "The authenticator code is wrong." });
+      auth.completeReset(String(req.body?.email || ""), String(req.body?.code || ""), String(req.body?.password || ""));
+      sessions.clear(); // every device signs in again
+      await notifyChange("reset with an email code");
       res.json({ ok: true });
     }));
     app.post("/admin/api/logout", guard, (req, res) => {

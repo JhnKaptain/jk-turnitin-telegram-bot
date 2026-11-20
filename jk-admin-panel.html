@@ -33,7 +33,7 @@ button:disabled{opacity:.5;cursor:default}
 a.dl{color:var(--brand);font-weight:600;text-decoration:none;font-size:13px}
 .file{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
 label{display:block;font-weight:600;margin:10px 0 4px}
-input[type=text],input[type=password],input[type=number],select,textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+input[type=text],input[type=email],input[type=password],input[type=number],select,textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
 .check{display:flex;gap:8px;align-items:center;font-weight:500;margin:8px 0}
 #login{max-width:360px;margin:12vh auto 0}
 #msg{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:10px;font-weight:600;display:none;max-width:92vw;z-index:20}
@@ -65,6 +65,9 @@ body.noscroll{overflow:hidden}
 .thread{max-height:260px;overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px;display:flex;flex-direction:column;gap:8px}
 .card.warn{border-color:var(--warn)}
 #notifCard summary{cursor:pointer}
+#pwModal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:15;display:flex;align-items:center;justify-content:center;padding:16px}
+#pwModal.hidden{display:none}
+#pwModal .panel{width:min(420px,100%);margin:0}
 #notifCats .check{margin:6px 0}
 #botFeed{display:flex;flex-direction:column;gap:10px;padding-bottom:130px}
 .bmsg{max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
@@ -92,10 +95,14 @@ body.botmode #msg{bottom:130px}
 #delBar.hidden{display:none}
 </style>
 </head>
-<body data-totp="__TOTP__">
+<body data-totp="__TOTP__" data-email="__EMAIL__" data-reset="__RESET__">
 <section id="login" class="card">
   <h2 style="margin-top:0">Admin login</h2>
   <form id="loginForm">
+    <div id="emailWrap" class="hidden">
+      <label for="em">Email</label>
+      <input id="em" type="email" autocomplete="username" inputmode="email">
+    </div>
     <label for="pw">Password</label>
     <input id="pw" type="password" autocomplete="current-password" required>
     <div id="codeWrap" class="hidden">
@@ -105,12 +112,35 @@ body.botmode #msg{bottom:130px}
     <p></p>
     <button class="btn primary" type="submit" style="width:100%">Log in</button>
     <p id="loginErr" class="bad"></p>
+    <p id="forgotWrap" class="hidden" style="text-align:center"><a href="#" id="forgotLink" class="dl">Forgot password?</a></p>
+  </form>
+  <form id="resetForm" class="hidden">
+    <p class="muted" id="resetIntro">Enter the admin email. We'll send a 6-digit code to it.</p>
+    <label for="rEmail">Email</label>
+    <input id="rEmail" type="email" autocomplete="username" inputmode="email" required>
+    <button class="btn" type="button" id="sendCode" style="width:100%;margin-top:10px">Send code</button>
+    <div id="resetStep2" class="hidden">
+      <label for="rCode">Code from the email</label>
+      <input id="rCode" type="text" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code">
+      <div id="rTotpWrap" class="hidden">
+        <label for="rTotp">Authenticator code</label>
+        <input id="rTotp" type="text" inputmode="numeric" pattern="\d{6}" maxlength="6">
+      </div>
+      <label for="rPw">New password (12+ characters)</label>
+      <input id="rPw" type="password" autocomplete="new-password">
+      <label for="rPw2">New password again</label>
+      <input id="rPw2" type="password" autocomplete="new-password">
+      <p></p>
+      <button class="btn primary" type="submit" style="width:100%">Set new password</button>
+    </div>
+    <p id="resetMsg"></p>
+    <p style="text-align:center"><a href="#" id="backToLogin" class="dl">Back to log in</a></p>
   </form>
 </section>
 
 <div id="app" class="hidden">
   <header>
-    <div class="bar"><h1>Admin Panel</h1><span id="updated" class="muted"></span><button id="logout" class="btn">Log out</button></div>
+    <div class="bar"><h1>Admin Panel</h1><span id="updated" class="muted"></span><button id="pwBtn" class="btn" title="Change password">🔑</button><button id="logout" class="btn">Log out</button></div>
     <div class="switch" role="tablist" aria-label="Section">
       <button data-section="reports" class="on">📄 Reports<span id="cntReports"></span></button>
       <button data-section="shop">🛍 Other services<span id="cntShop"></span></button>
@@ -212,6 +242,24 @@ body.botmode #msg{bottom:130px}
       </div>
     </section>
   </main>
+</div>
+<div id="pwModal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="pwTitle">
+  <form class="panel card" id="pwForm">
+    <h3 id="pwTitle" style="margin-top:0">🔑 Change password</h3>
+    <label for="cCur">Current password</label>
+    <input id="cCur" type="password" autocomplete="current-password" required>
+    <div id="cTotpWrap" class="hidden">
+      <label for="cTotp">Authenticator code</label>
+      <input id="cTotp" type="text" inputmode="numeric" pattern="\d{6}" maxlength="6">
+    </div>
+    <label for="cNew">New password (12+ characters)</label>
+    <input id="cNew" type="password" autocomplete="new-password" required>
+    <label for="cNew2">New password again</label>
+    <input id="cNew2" type="password" autocomplete="new-password" required>
+    <p class="muted">Other devices will be signed out.</p>
+    <div class="row"><button class="btn primary" type="submit">Change password</button><button class="btn" type="button" id="pwCancel">Cancel</button></div>
+    <p id="pwMsg" class="bad"></p>
+  </form>
 </div>
 <div id="drawer" class="hidden" role="dialog" aria-modal="true" aria-labelledby="dwTitle">
   <div class="panel">
