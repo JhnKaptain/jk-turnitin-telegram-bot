@@ -3215,7 +3215,10 @@ function adminAllCommandsText() {
     "/paidref <apiRef> - Confirm payment reference",
     "",
     "Files",
-    "/deletefiles <report ID> [more] - Delete stored files and reports"
+    "/deletefiles <report ID> [more] - Delete stored files and reports",
+    "",
+    "Admin panel",
+    "/admintelegram on|off - Admin messages on Telegram (off: panel only)"
   ].join("\n");
 }
 
@@ -3245,6 +3248,7 @@ async function syncAdminCommandMenu() {
     { command: "broadcast", description: "Create custom broadcast preview" },
     { command: "broadcaststats", description: "View broadcast statistics" },
     { command: "discountbroadcast", description: "Create discount broadcast preview" },
+    { command: "admintelegram", description: "Admin messages on Telegram: on / off" },
     { command: "discountmode", description: "Check discount mode" },
     { command: "mode", description: "Check bot status" },
     { command: "syncname", description: "Sync bot display name" },
@@ -6097,6 +6101,30 @@ async function sendOneTimeSavedAiCorrection() {
 
 // JK_DELETE_FILES_NOW_V1: Telegram side of the admin delete.
 const pendingFileDeletes = new Map(); // token -> { ids, at }
+
+// JK_ADMIN_PANEL_ONLY_V1: /admintelegram on|off — same switch as the panel's
+// "📱 Admin messages on Telegram". Works from Telegram and from Bot chat.
+bot.command("admintelegram", async (ctx) => {
+  if (Number(ctx.from?.id) !== Number(ADMIN_ID)) return;
+  const arg = String(ctx.message?.text || "").trim().split(/\s+/)[1]?.toLowerCase() || "";
+  const state = () => adminTelegramOn() ? "ON (Telegram and the panel)" : "OFF (panel only)";
+  if (!["on", "off"].includes(arg)) {
+    return ctx.reply("📱 Admin messages on Telegram: " + state() +
+      (adminTelegramForced() ? "\nForced on by ADMIN_TELEGRAM on Render." : "") +
+      "\n\nUse /admintelegram off to run the admin side from the panel only, or /admintelegram on to get messages here again.");
+  }
+  if (arg === "off") {
+    if (adminTelegramForced()) return ctx.reply("❌ Telegram is forced on by the ADMIN_TELEGRAM setting on Render. Remove it to turn Telegram off.");
+    if (!adminTelegramOn()) return ctx.reply("📱 Admin messages on Telegram are already OFF (panel only).");
+    // Confirm on Telegram first, then switch off.
+    await ctx.reply("📱 Admin messages on Telegram: OFF.\nFrom now on alerts, buttons, files and command replies go to the admin panel only (with phone notifications). Customers are not affected.\nSend /admintelegram on to switch back.");
+    setAdminTelegram(false);
+    return;
+  }
+  // On: switch first so this confirmation reaches Telegram.
+  setAdminTelegram(true);
+  await ctx.reply("📱 Admin messages on Telegram: ON. You'll get them here and in the panel.");
+});
 
 bot.command("deletefiles", async (ctx) => {
   if (Number(ctx.from?.id) !== Number(ADMIN_ID)) return;
