@@ -793,13 +793,61 @@
 
   $("logout").addEventListener("click", async () => { try { await api("/admin/api/logout", { method: "POST" }); } catch {} closeDrawer(); showLogin(); });
 
-  if (document.body.dataset.totp === "1") $("codeWrap").classList.remove("hidden");
+  if (document.body.dataset.totp === "1") { $("codeWrap").classList.remove("hidden"); $("rTotpWrap").classList.remove("hidden"); $("cTotpWrap").classList.remove("hidden"); }
+  // JK_ADMIN_EMAIL_LOGIN_V1
+  if (document.body.dataset.email === "1") { $("emailWrap").classList.remove("hidden"); $("em").required = true; }
+  if (document.body.dataset.reset === "1") $("forgotWrap").classList.remove("hidden");
+  const showReset = on => {
+    $("loginForm").classList.toggle("hidden", on); $("resetForm").classList.toggle("hidden", !on);
+    if (on) { $("rEmail").value = $("em").value; $("resetMsg").textContent = ""; $("resetMsg").className = ""; $("resetStep2").classList.add("hidden"); }
+  };
+  $("forgotLink").addEventListener("click", ev => { ev.preventDefault(); showReset(true); });
+  $("backToLogin").addEventListener("click", ev => { ev.preventDefault(); showReset(false); });
+  const resetSay = (text, bad) => { $("resetMsg").textContent = text; $("resetMsg").className = bad ? "bad" : "ok"; };
+  $("sendCode").addEventListener("click", async () => {
+    const email = $("rEmail").value.trim();
+    if (!email) return resetSay("Enter the admin email.", true);
+    $("sendCode").disabled = true;
+    try {
+      const r = await api("/admin/api/password/forgot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+      resetSay(r.message || "Check your email for the code.");
+      $("resetStep2").classList.remove("hidden"); $("sendCode").textContent = "Send a new code"; $("rCode").focus();
+    } catch (e) { resetSay(e.message, true); }
+    finally { setTimeout(() => { $("sendCode").disabled = false; }, 30000); }
+  });
+  $("resetForm").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    if ($("rPw").value !== $("rPw2").value) return resetSay("The two new passwords don't match.", true);
+    try {
+      await api("/admin/api/password/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        email: $("rEmail").value.trim(), code: $("rCode").value.trim(), totp: $("rTotp").value.trim(), password: $("rPw").value }) });
+      $("rPw").value = $("rPw2").value = $("rCode").value = "";
+      showReset(false);
+      $("em").value = $("rEmail").value;
+      $("loginErr").className = "ok"; $("loginErr").textContent = "Password changed. Log in with the new password.";
+    } catch (e) { resetSay(e.message, true); }
+  });
+  // Change password (signed in).
+  const pwModal = on => { $("pwModal").classList.toggle("hidden", !on); $("pwMsg").textContent = ""; if (on) $("cCur").focus(); else $("pwForm").reset(); };
+  $("pwBtn").addEventListener("click", () => pwModal(true));
+  $("pwCancel").addEventListener("click", () => pwModal(false));
+  $("pwModal").addEventListener("click", ev => { if (ev.target === $("pwModal")) pwModal(false); });
+  $("pwForm").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    if ($("cNew").value !== $("cNew2").value) { $("pwMsg").textContent = "The two new passwords don't match."; return; }
+    try {
+      await api("/admin/api/password/change", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        current: $("cCur").value, password: $("cNew").value, code: $("cTotp").value.trim() }) });
+      pwModal(false);
+      toast("Password changed. Other devices were signed out.", 6000);
+    } catch (e) { $("pwMsg").textContent = e.message; }
+  });
   $("loginForm").addEventListener("submit", async ev => {
     ev.preventDefault();
     $("loginErr").textContent = "";
     try {
       await api("/admin/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: $("pw").value, code: $("code").value }) });
+        body: JSON.stringify({ email: $("em").value.trim(), password: $("pw").value, code: $("code").value }) });
       $("pw").value = ""; $("code").value = "";
       showApp();
     } catch (e) { $("loginErr").textContent = e.message; }
