@@ -559,7 +559,7 @@ function createAdminPanel(d) {
     app.post("/admin/api/push/subscribe", guard, express.json({ limit: "8kb" }), handle(async (req, res) => {
       if (!pushReady(res)) return;
       const cats = (Array.isArray(req.body?.categories) ? req.body.categories : []).filter(c => Object.prototype.hasOwnProperty.call(CATS, c));
-      res.json({ ok: true, ...d.push.subscribe(req.body?.subscription, cats, req.body?.label) });
+      res.json({ ok: true, ...d.push.subscribe(req.body?.subscription, cats, req.body?.label, Object.keys(CATS)) });
     }));
     app.post("/admin/api/push/device", guard, express.json({ limit: "4kb" }), handle(async (req, res) => {
       if (!pushReady(res)) return;

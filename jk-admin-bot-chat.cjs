@@ -23,6 +23,7 @@ const WEB_CALLBACK_PREFIX = "web-";
 const CATEGORIES = {
   payment: { label: "💳 Payment proofs and payment problems", on: true },
   failed: { label: "❌ Checks failed after all retries", on: true },
+  freescan: { label: "🧪 Free scans finished", on: true }, // JK_FREESCAN_DONE_ALERT_V1
   message: { label: "💬 Customer messages", on: true },
   shop: { label: "🛍 Shop orders and shop messages", on: true },
   attention: { label: "⚠️ Needs attention (manual review, cancellations)", on: true },
