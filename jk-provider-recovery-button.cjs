@@ -34,13 +34,15 @@ function runChild(filename) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath,
       [path.join(__dirname, "jk-recover-reviewed-results.cjs"), "--checkpoint", filename],
-      { stdio: ["ignore", "pipe", "pipe"], shell: false });
-    let detail = "";
+      // JK_ADMIN_RELAY_V1: helpers hand recovered PDFs back; the bot sends them.
+      { stdio: ["ignore", "pipe", "pipe"], shell: false, env: { ...process.env, JK_ADMIN_RELAY: "1" } });
+    let detail = "", output = "";
     const capture = chunk => { detail = (detail + chunk.toString()).slice(-1500); };
-    child.stdout.on("data", capture); child.stderr.on("data", capture);
+    child.stdout.on("data", chunk => { output = (output + chunk.toString()).slice(-50000); capture(chunk); });
+    child.stderr.on("data", capture);
     child.once("error", reject);
     child.once("close", code => {
-      if (code === 0) return resolve();
+      if (code === 0) return resolve(require("./jk-admin-relay.cjs").parseRelayed(output));
       console.error("Saved report recovery stopped:", detail);
       reject(new Error(code === 2
         ? "Some offsets still require review. No new scan or client delivery was triggered."
@@ -61,7 +63,11 @@ function register(bot, { adminId, getJobs, run = runChild }) {
     if (!item) return answer(ctx, "Completed similarity results are missing or expired. Recovery cannot start a scan.");
     active.add(id);
     await answer(ctx, "Recovering saved reports to your admin chat.");
-    Promise.resolve().then(() => run(item.filename)).catch(async error => {
+    Promise.resolve().then(() => run(item.filename)).then(async documents => {
+      if (Array.isArray(documents) && documents.length) {
+        await require("./jk-admin-relay.cjs").sendRelayed(documents, bot.telegram, adminId);
+      }
+    }).catch(async error => {
       console.error("Recovery button failed:", error.message);
       await bot.telegram.sendMessage(adminId,
         "Recovery requires review: " + item.name + "\n" + String(error.message).slice(0, 600));
