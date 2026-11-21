@@ -74,6 +74,7 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
       feed: () => ({ seq: 2, entries: [{ id: 1, from: "bot", text: "🧾 M-Pesa message received", category: "payment", buttons: [[{ text: "✅ Confirm", data: "ADMIN_PAID_5" }]] }] }),
       sendText: async (bot, text) => { calls.push(["botText", text]); return { ok: true, finished: true }; },
       press: async (bot, id, data) => { calls.push(["botPress", id, data]); return { ok: true, toast: "Done" }; },
+      remove: o => { calls.push(["botRemove", o]); return { removed: o.all ? 9 : o.ids.length }; },
       attachment: async (id, n) => {
         if (String(id) !== "1" || String(n) !== "0") { const e = new Error("File not found."); e.status = 404; throw e; }
         return { buffer: Buffer.from("JPEGDATA"), name: "proof photo.jpg", mime: "image/jpeg" };
@@ -342,6 +343,16 @@ const { createAdminPanel, totpAt, totpValid, isPanelFileId } = require("./jk-adm
     assert.equal((await req("/admin/api/bot/settings", { method: "POST", headers: J, body: JSON.stringify({ telegram: false }) })).status, 409, "forced on by Render");
     tg.forced = false; tg.on = true;
     assert.match((await req("/admin")).headers.get("content-security-policy"), /img-src 'self' data: blob:/);
+
+    // 10h. Delete chat messages: chosen or all; nothing chosen refused.
+    let cdel = await (await req("/admin/api/users/555/thread/delete", { method: "POST", headers: J, body: JSON.stringify({ ids: [th.messages[0].id] }) })).json();
+    assert.equal(cdel.removed, 1);
+    assert.equal((await req("/admin/api/users/555/thread/delete", { method: "POST", headers: J, body: "{}" })).status, 400);
+    cdel = await (await req("/admin/api/bot/delete", { method: "POST", headers: J, body: JSON.stringify({ ids: [3, 4] }) })).json();
+    assert.equal(cdel.removed, 2);
+    assert.deepEqual(calls.at(-1), ["botRemove", { all: false, ids: [3, 4] }]);
+    assert.equal((await (await req("/admin/api/bot/delete", { method: "POST", headers: J, body: JSON.stringify({ all: true }) })).json()).removed, 9);
+    assert.equal((await req("/admin/api/bot/delete", { method: "POST", headers: { ...P, "Content-Type": "application/json" }, body: "{}" })).status, 401, "login required");
 
     // 11. Logout ends the session.
     await req("/admin/api/logout", { method: "POST", headers: S });
