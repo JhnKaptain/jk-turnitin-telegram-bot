@@ -79,6 +79,9 @@ body.noscroll{overflow:hidden}
 .bmsg .kb .row{flex-wrap:nowrap}
 .bmsg .kb .btn{flex:1;font-size:13px;min-height:34px;padding:6px 8px}
 .bmsg.deleted{opacity:.5}
+.selbar{gap:10px;margin-bottom:8px}
+.selbar input,.msgsel{width:18px;height:18px;accent-color:var(--brand)}
+.msgsel{float:right;margin:0 0 4px 8px}
 .bmsg .att{display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .bmsg img.thumb{max-width:100%;max-height:360px;border-radius:8px;border:1px solid var(--line);cursor:zoom-in;background:var(--bg);min-height:40px}
 .composer{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:8px 12px calc(8px + env(safe-area-inset-bottom));z-index:3}
@@ -181,6 +184,11 @@ body.botmode #msg{bottom:130px}
       <p class="muted" id="tgHelp" style="margin:6px 0 0"></p>
     </div>
     <div class="card row views" id="botFilters"></div>
+    <div class="card row selbar" id="botSelBar">
+      <label class="check" style="margin:0"><input type="checkbox" id="botSelAll"> <span>Select all shown</span></label>
+      <span id="botSelCount" class="muted"></span>
+      <button class="btn danger hidden" id="botDel">🗑 Delete selected</button>
+    </div>
     <div id="botFeed"></div>
     <div class="composer">
       <div class="row quick">
@@ -267,6 +275,11 @@ body.botmode #msg{bottom:130px}
   <div class="panel">
     <div class="row dwhead"><strong id="dwTitle" style="flex:1"></strong><button id="dwClose" class="btn">Close</button></div>
     <h3>Conversation</h3>
+    <div class="row selbar">
+      <label class="check" style="margin:0"><input type="checkbox" id="dwSelAll"> <span>Select all</span></label>
+      <span id="dwSelCount" class="muted"></span>
+      <button class="btn danger hidden" id="dwDel">🗑 Delete selected</button>
+    </div>
     <div id="dwThread"></div>
     <label for="dwReply">Reply</label>
     <textarea id="dwReply" rows="3" placeholder="Type your reply…"></textarea>
