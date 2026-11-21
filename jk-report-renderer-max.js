@@ -3766,7 +3766,8 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
   drawRule(page, 60);
 
   const value = Number(ai?.percent || 0);
-  const low = ai.available && value > 0 && value < 20;
+  // JK_AI_SCORE_ROUNDING_V1: "*%" only when the whole-number score is 1-19.
+  const low = ai.available && require("./jk-ai-score.cjs").isStarred(value);
 
   const headline =
     !ai.available
@@ -3829,7 +3830,7 @@ function aiOverviewPage(page, f, icons, bundle, ai, pageNo, totalPages) {
   drawRule(page, 148);
 
   if (!low && ai.available) {
-    const count = value >= 20 ? countAiPositiveSentences(bundle, ai) : 0;
+    const count = require("./jk-ai-score.cjs").aiRounded(value) >= 20 ? countAiPositiveSentences(bundle, ai) : 0;
 
     drawPngTop(page, icons.aiRobot, 36, 168, 12, 12);
     const countText =
@@ -6549,7 +6550,7 @@ async function renderAi(
     bundle,
     originalPages,
     originalFonts,
-    ai.percent >= 20 || bundle.__adminLowScoreReview === true
+    require("./jk-ai-score.cjs").aiRounded(ai.percent) >= 20 || bundle.__adminLowScoreReview === true
       ? ai.ranges
       : [],
     "AI",
