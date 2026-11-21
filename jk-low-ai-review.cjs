@@ -35,6 +35,11 @@ function validateBundle(bundle) {
 }
 
 async function sendAdmin(filename, caption, options = {}) {
+  // JK_ADMIN_RELAY_V1: started by the bot: hand the PDF back to it.
+  if (!options.telegram && require("./jk-admin-relay.cjs").relaying()) {
+    require("./jk-admin-relay.cjs").relayDocument({ file: filename, caption: caption || "" });
+    return;
+  }
   const token = options.token || process.env.BOT_TOKEN;
   const admin = options.adminId || process.env.ADMIN_ID || "6569201830";
   assert(token, "BOT_TOKEN missing. PDF is saved locally; no message sent.");

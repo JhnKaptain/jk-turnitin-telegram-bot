@@ -36,12 +36,16 @@ function resolveFile(jobs, id) {
 
 function runChild(filename) {
   return new Promise((resolve, reject) => {
+    // JK_ADMIN_RELAY_V1: the helper hands the PDF back; the bot sends it.
     const child = spawn(process.execPath, [path.join(__dirname, "jk-low-ai-review.cjs"), "--bundle", filename],
-      { stdio: ["ignore", "ignore", "pipe"], shell: false });
-    let errorText = "";
+      { stdio: ["ignore", "pipe", "pipe"], shell: false, env: { ...process.env, JK_ADMIN_RELAY: "1" } });
+    let errorText = "", output = "";
+    child.stdout.on("data", chunk => { output = (output + chunk.toString()).slice(-20000); });
     child.stderr.on("data", chunk => { errorText = (errorText + chunk.toString()).slice(-1500); });
     child.once("error", reject);
-    child.once("close", code => code === 0 ? resolve() : reject(new Error(errorText.trim() || "PDF generation failed.")));
+    child.once("close", code => code === 0
+      ? resolve(require("./jk-admin-relay.cjs").parseRelayed(output))
+      : reject(new Error(errorText.trim() || "PDF generation failed.")));
   });
 }
 
@@ -59,7 +63,11 @@ function register(bot, { adminId, getJobs, run = runChild }) {
     active.add(id);
     await answer(ctx, "Preparing AI HIGHLIGHTS for your admin chat.");
     // Run outside the callback lifetime; only the existing admin-only worker sends the PDF.
-    Promise.resolve().then(() => run(item.filename)).catch(async error => {
+    Promise.resolve().then(() => run(item.filename)).then(async documents => {
+      if (Array.isArray(documents) && documents.length) {
+        await require("./jk-admin-relay.cjs").sendRelayed(documents, bot.telegram, adminId);
+      }
+    }).catch(async error => {
       console.error("AI HIGHLIGHTS button failed:", error.message);
       await bot.telegram.sendMessage(adminId,
         "AI HIGHLIGHTS could not be prepared for " + item.name + ".\n" + String(error.message).slice(0, 600));
