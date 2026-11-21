@@ -9,8 +9,9 @@ function validateBundle(bundle) {
   assert(ai && ai.available !== false && ai.provider === "sapling", "Saved Sapling result required.");
   assert(ai.percent !== null && ai.percent !== undefined && ai.percent !== "", "Saved AI percentage missing.");
   const percent = Number(ai.percent);
-  assert(Number.isFinite(percent) && percent > 0 && percent < 20,
-    "This option is only for saved AI results above 0% and below 20%.");
+  // JK_AI_SCORE_ROUNDING_V1: only results shown as "*%" (1-19% once rounded).
+  assert(Number.isFinite(percent) && require("./jk-ai-score.cjs").isStarred(percent),
+    "This option is only for AI results shown as *% (1% to 19% once rounded).");
   const source = bundle.canonicalDocument?.text;
   assert(typeof source === "string", "Canonical source text missing.");
   assert(Array.isArray(ai.ranges) && ai.ranges.length, "No saved positive ranges to highlight. No new scan will be requested.");

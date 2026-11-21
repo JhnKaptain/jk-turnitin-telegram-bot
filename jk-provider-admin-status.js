@@ -57,14 +57,13 @@ function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
     value !== null && value !== undefined && Number.isFinite(Number(value))
       ? Math.round(Number(value)) + "%"
       : "unavailable";
-  // JK_AI_STAR_DISPLAY_V1: show the AI score as the report does. Above 0 and
-  // below 20 the report shows "*%" (and AI HIGHLIGHTS applies), so a rounded
-  // "0%" or "20%" here would mislead; the exact score is added in brackets.
+  // JK_AI_SCORE_ROUNDING_V1: as the report shows it — whole numbers only;
+  // 1-19% once rounded is "*%" (AI HIGHLIGHTS), with the number in brackets.
   const aiPercent = value => {
-    const n = Number(value);
-    if (value === null || value === undefined || !Number.isFinite(n)) return "unavailable";
-    const exact = n < 0.01 ? "below 0.01" : String(Number(n.toFixed(2)));
-    return n > 0 && n < 20 ? "*% (exact " + exact + "%)" : Math.round(n) + "%";
+    const score = require("./jk-ai-score.cjs");
+    const r = score.aiRounded(value);
+    if (r === null) return "unavailable";
+    return score.isStarred(value) ? "*% (" + r + "%)" : r + "%";
   };
 
   lines.push("Similarity: " + (job?.adminFreeScan === true && file?.adminAiOnly === true ? "not requested" : percent(file.providerSimilarityPercent)));
@@ -78,8 +77,7 @@ function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
 
   // JK_ADMIN_LOW_AI_REVIEW_V1
   const rawAi = rendered?.aiPercent ?? file.providerAiPercent;
-  const lowAi = rawAi !== null && rawAi !== undefined && rawAi !== "" &&
-    Number.isFinite(Number(rawAi)) && Number(rawAi) > 0 && Number(rawAi) < 20;
+  const lowAi = require("./jk-ai-score.cjs").isStarred(rawAi);
   const bundlePath = String(file.providerBundleFile || "");
   if (rendered?.aiAvailable && runAi !== false && lowAi &&
       bundlePath.startsWith("/") && !/[\r\n]/.test(bundlePath)) {
