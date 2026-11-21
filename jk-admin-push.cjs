@@ -12,8 +12,13 @@
 const fs = require("fs");
 
 const MAX_DEVICES = 10;
+// JK_FREESCAN_DONE_ALERT_V1: categories that existed before devices recorded
+// which ones they had seen. A category added later that is on by default is
+// on for a device that never saw it (no need to re-tick).
+const LEGACY_KNOWN = ["payment", "failed", "message", "shop", "attention", "provider", "broadcast", "orders", "retrying", "other"];
 
-function createAdminPush({ file, webpush = require("web-push"), subject = "https://jkacademictoolshub.com", log = console }) {
+function createAdminPush({ file, webpush = require("web-push"), subject = "https://jkacademictoolshub.com", log = console,
+  defaults = () => ({}) }) {
   let state = null;
   function load() {
     if (state) return state;
@@ -33,19 +38,26 @@ function createAdminPush({ file, webpush = require("web-push"), subject = "https
   }
 
   const publicKey = () => load().publicKey;
+  // The device's choices, plus categories added since that are on by default.
+  function effective(d) {
+    const known = Array.isArray(d.known) ? d.known : LEGACY_KNOWN;
+    const added = Object.entries(defaults() || {}).filter(([k, on]) => on && !known.includes(k)).map(([k]) => k);
+    return [...new Set([...(d.categories || []), ...added])];
+  }
 
   function validSubscription(sub) {
     return sub && typeof sub.endpoint === "string" && /^https:\/\//.test(sub.endpoint) && sub.endpoint.length < 1000 &&
       typeof sub.keys?.p256dh === "string" && typeof sub.keys?.auth === "string";
   }
 
-  function subscribe(subscription, categories, label) {
+  function subscribe(subscription, categories, label, known = null) {
     if (!validSubscription(subscription)) { const e = new Error("Invalid notification subscription."); e.status = 400; throw e; }
     const s = load();
     const cats = [...new Set((categories || []).map(String))].slice(0, 20);
     s.devices = s.devices.filter(d => d.subscription.endpoint !== subscription.endpoint);
     s.devices.push({ subscription: { endpoint: subscription.endpoint, keys: { p256dh: subscription.keys.p256dh, auth: subscription.keys.auth } },
-      categories: cats, label: String(label || "Device").slice(0, 80), at: Date.now() });
+      categories: cats, label: String(label || "Device").slice(0, 80), at: Date.now(),
+      known: Array.isArray(known) ? known.map(String).slice(0, 40) : LEGACY_KNOWN });
     s.devices = s.devices.slice(-MAX_DEVICES);
     persist();
     return { devices: s.devices.length };
@@ -61,12 +73,12 @@ function createAdminPush({ file, webpush = require("web-push"), subject = "https
 
   function device(endpoint) {
     const d = load().devices.find(x => x.subscription.endpoint === String(endpoint || ""));
-    return d ? { categories: d.categories, label: d.label } : null;
+    return d ? { categories: effective(d), label: d.label } : null;
   }
 
   async function send(payload, { category = null, endpoint = null } = {}) {
     const s = load();
-    const targets = s.devices.filter(d => endpoint ? d.subscription.endpoint === endpoint : d.categories.includes(category));
+    const targets = s.devices.filter(d => endpoint ? d.subscription.endpoint === endpoint : effective(d).includes(category));
     let sent = 0;
     const gone = [];
     await Promise.all(targets.map(async d => {

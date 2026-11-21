@@ -221,7 +221,7 @@
   }
 
   // --- Bot chat: everything the bot sends you, commands, buttons ------------
-  const CAT_SHORT = { payment: "💳 Payments", failed: "❌ Failed", message: "💬 Messages", shop: "🛍 Shop", attention: "⚠️ Attention",
+  const CAT_SHORT = { payment: "💳 Payments", failed: "❌ Failed", freescan: "🧪 Free scans", message: "💬 Messages", shop: "🛍 Shop", attention: "⚠️ Attention",
     provider: "🔌 Providers", broadcast: "📢 Broadcast", orders: "✅ Orders", retrying: "🔁 Retrying", other: "Other" };
   function renderBotFilters() {
     const cats = ["all", ...Object.keys(CAT_SHORT)];

@@ -396,7 +396,8 @@ const API_REPORTS_DELIVERED_MESSAGE =
 // delivered message (automatic: once per customer per 24 h; done batch: always).
 const websiteNotice = require("./jk-website-notice.cjs").createWebsiteNotice({
   file: require("path").join(String(process.env.DATA_DIR || __dirname).trim(), "website-notice.json"),
-  isWebUser: userId => require("./jk-web-orders.cjs").isWebUserId(userId)
+  // Website customers and the admin (free scans) never get it.
+  isWebUser: userId => require("./jk-web-orders.cjs").isWebUserId(userId) || String(userId) === String(ADMIN_ID)
 });
 
 const AI_UNAVAILABLE_NOTE =
@@ -590,7 +591,8 @@ const adminMessages = require("./jk-admin-messages.cjs").createMessageLog(
 // web panel (commands and buttons work from there too), and phone
 // notifications for the categories the admin picks on each device.
 const adminPush = require("./jk-admin-push.cjs").createAdminPush({
-  file: require("path").join(DATA_DIR, "admin-push.json")
+  file: require("path").join(DATA_DIR, "admin-push.json"),
+  defaults: () => Object.fromEntries(Object.entries(require("./jk-admin-bot-chat.cjs").CATEGORIES).map(([k, c]) => [k, c.on]))
 });
 // JK_ADMIN_PANEL_ONLY_V1: "Admin messages on Telegram" On/Off (panel → Bot chat).
 // Off: the bot stops messaging the admin on Telegram; everything goes to the
@@ -10253,6 +10255,27 @@ function ensureProviderRunDir(
 }
 
 // JK_CONCISE_PROVIDER_ALERTS_V1
+// JK_FREESCAN_DONE_ALERT_V1
+function freeScanDoneText(job) {
+  const score = require("./jk-ai-score.cjs");
+  const pct = v => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v))) ? null : Math.round(Number(v)) + "%";
+  const ai = v => {
+    const r = score.aiRounded(v);
+    return r === null ? null : score.isStarred(v) ? "*% (" + r + "%)" : r + "%";
+  };
+  const files = (job.files || []).map(f => {
+    const parts = [];
+    const sim = f.adminAiOnly === true ? null : pct(f.providerSimilarityPercent);
+    if (sim) parts.push("Similarity " + sim);
+    const a = ai(f.providerAiPercent);
+    if (a) parts.push("AI " + a);
+    return "• " + String(f.file_name || "Document") + (parts.length ? " — " + parts.join(" · ") : "");
+  });
+  const n = files.length;
+  return "🧪 Free scan finished" + (n === 1 ? "" : " (" + n + " files)") + "\n" + files.join("\n") +
+    "\nReports are in Bot chat and under Orders → Free scans.";
+}
+
 async function updateProviderAdminStatus(job, file, stage, rendered, remainingMs, error) {
   return require("./jk-provider-admin-status.js").updateAdminStatus({
     telegram: bot.telegram,
@@ -13535,6 +13558,14 @@ async function renderAndDeliverApiReports(
 
       job.deliveredAt =
         Date.now();
+
+      // JK_FREESCAN_DONE_ALERT_V1: a free scan finished — tell the admin
+      // (Bot chat, pop-up, phone), once per scan.
+      if (job.adminFreeScan === true && !job.freeScanDoneNotifiedAt) {
+        job.freeScanDoneNotifiedAt = Date.now();
+        try { adminBotChat.add({ from: "bot", category: "freescan", text: freeScanDoneText(job) }); }
+        catch (alertError) { console.error("Free scan alert failed:", alertError.message); }
+      }
 
       /*
         API delivery should look like manual delivery:
