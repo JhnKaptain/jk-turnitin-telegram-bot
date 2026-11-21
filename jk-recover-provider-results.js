@@ -548,7 +548,15 @@ async function main() {
   );
 
   // JK_RECOVERY_SEND_ADMIN_V1
-  if (options.sendAdmin) {
+  if (options.sendAdmin && require("./jk-admin-relay.cjs").relaying()) {
+    // JK_ADMIN_RELAY_V1: started by the bot: hand the PDFs back to it.
+    for (const filename of [result.similarityPath, result.aiPath].filter(Boolean)) {
+      assert.ok(fs.existsSync(filename), "Preview PDF missing.");
+      require("./jk-admin-relay.cjs").relayDocument({ file: filename,
+        caption: "Recovered preview for admin review. Client delivery has not been triggered." });
+    }
+    console.log("Recovered PDFs handed to the bot for the admin.");
+  } else if (options.sendAdmin) {
     const { Telegraf } = require("telegraf");
     const telegram = new Telegraf(process.env.BOT_TOKEN).telegram;
     const adminId = Number(process.env.ADMIN_ID || "6569201830");
