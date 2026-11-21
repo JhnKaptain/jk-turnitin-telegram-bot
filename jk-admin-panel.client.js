@@ -233,6 +233,7 @@
     const list = botData.entries.filter(e => botFilter === "all" || e.category === botFilter || (e.from === "you" && botFilter === "all"));
     box.innerHTML = list.length ? list.map(e => (
       '<div class="bmsg' + (e.from === "you" ? " you" : "") + (e.deleted ? " deleted" : "") + '">' +
+      '<input type="checkbox" class="msgsel" data-bid="' + esc(e.id) + '"' + (botSel.has(e.id) ? " checked" : "") + ' aria-label="Select message">' +
       (e.attachments && e.attachments.length ? '<div class="att">' + e.attachments.map((a, n) => {
         const href = "/admin/api/bot/files/" + esc(e.id) + "/" + n;
         return (a.kind === "photo" || /^image\//.test(a.mime || "")
@@ -249,7 +250,41 @@
     if (nearEnd || !box.dataset.loaded) window.scrollTo(0, document.body.scrollHeight);
     box.dataset.loaded = "1";
     loadThumbs();
+    botShown = list.map(e => e.id);
+    const all = new Set(botData.entries.map(e => e.id));
+    for (const id of [...botSel]) if (!all.has(id)) botSel.delete(id);
+    updateBotSel();
   }
+  // JK_CHAT_DELETE_V1: tick Bot chat messages to delete them (Telegram keeps its copies).
+  let botSel = new Set(), botShown = [];
+  function updateBotSel() {
+    $("botSelCount").textContent = botSel.size ? botSel.size + " selected" : "";
+    $("botDel").classList.toggle("hidden", !botSel.size);
+    $("botSelAll").checked = botShown.length > 0 && botShown.every(id => botSel.has(id));
+    $("botSelAll").indeterminate = !$("botSelAll").checked && botSel.size > 0;
+  }
+  $("botFeed").addEventListener("change", ev => {
+    const c = ev.target.closest(".msgsel"); if (!c) return;
+    const id = Number(c.dataset.bid);
+    c.checked ? botSel.add(id) : botSel.delete(id);
+    updateBotSel();
+  });
+  $("botSelAll").addEventListener("change", () => {
+    if ($("botSelAll").checked) botShown.forEach(id => botSel.add(id)); else botShown.forEach(id => botSel.delete(id));
+    document.querySelectorAll("#botFeed .msgsel").forEach(c => { c.checked = botSel.has(Number(c.dataset.bid)); });
+    updateBotSel();
+  });
+  $("botDel").addEventListener("click", async () => {
+    const ids = [...botSel];
+    if (!ids.length) return;
+    if (!confirm("Delete " + ids.length + " message(s) from Bot chat?\n\nThis can't be undone. Copies on Telegram are not affected.")) return;
+    try {
+      const r = await api("/admin/api/bot/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+      botSel = new Set();
+      toast("Deleted " + r.removed + " message(s).");
+      botData = null; await refreshBot();
+    } catch (e) { toast(e.message); }
+  });
   // Images need the panel header, so they are fetched and shown from memory.
   const thumbs = new Map();
   function loadThumbs() {
@@ -530,6 +565,7 @@
   }
   function openDrawer(uid, focusSend) {
     drawerUser = String(uid);
+    dwSel = new Set();
     $("dwTitle").textContent = customerLabel(uid);
     $("dwNotes").innerHTML = Object.entries((data && data.notes) || {}).map(([k, label]) =>
       '<button class="btn" data-note="' + esc(k) + '">' + esc(label) + '</button>').join("");
@@ -553,15 +589,50 @@
       if (uid !== drawerUser) return;
       const box = $("dwThread");
       const atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+      // JK_CHAT_DELETE_V1: tick messages to delete them.
+      const ids = new Set(t.messages.map(m => m.id));
+      for (const id of [...dwSel]) if (!ids.has(id)) dwSel.delete(id);
+      dwIds = [...ids];
       box.innerHTML = t.messages.length ? t.messages.map(m => (
         '<div class="msg ' + (m.from === "customer" ? "in" : "out") + (m.kind !== "text" ? " " + esc(m.kind) : "") + '">' +
+        '<input type="checkbox" class="msgsel" data-mid="' + esc(m.id) + '"' + (dwSel.has(m.id) ? " checked" : "") + ' aria-label="Select message">' +
         (m.kind === "file" ? "📎 " : "") + esc(m.text) +
         '<div class="meta">' + (m.from === "customer" ? "Customer" : "You") + ' · ' + esc(when(m.at)) + '</div></div>'
       )).join("") : '<p class="muted">No messages yet. Replies, notes and files you send from here or from Telegram appear here.</p>';
       if (atEnd || !box.dataset.loaded) box.scrollTop = box.scrollHeight;
       box.dataset.loaded = "1";
+      updateDwSel();
     } catch (e) { toast(e.message); }
   }
+  let dwSel = new Set(), dwIds = [];
+  function updateDwSel() {
+    $("dwSelCount").textContent = dwSel.size ? dwSel.size + " selected" : "";
+    $("dwDel").classList.toggle("hidden", !dwSel.size);
+    $("dwSelAll").checked = dwIds.length > 0 && dwIds.every(id => dwSel.has(id));
+    $("dwSelAll").indeterminate = !$("dwSelAll").checked && dwSel.size > 0;
+  }
+  $("dwThread").addEventListener("change", ev => {
+    const c = ev.target.closest(".msgsel"); if (!c) return;
+    c.checked ? dwSel.add(c.dataset.mid) : dwSel.delete(c.dataset.mid);
+    updateDwSel();
+  });
+  $("dwSelAll").addEventListener("change", () => {
+    dwSel = $("dwSelAll").checked ? new Set(dwIds) : new Set();
+    document.querySelectorAll("#dwThread .msgsel").forEach(c => { c.checked = dwSel.has(c.dataset.mid); });
+    updateDwSel();
+  });
+  $("dwDel").addEventListener("click", async () => {
+    const ids = [...dwSel];
+    if (!ids.length) return;
+    const all = ids.length === dwIds.length;
+    if (!confirm("Delete " + (all ? "the whole conversation" : ids.length + " message(s)") + " from the panel?\n\nThis can't be undone. Messages already on the customer's phone or website page stay there.")) return;
+    try {
+      const r = await api("/admin/api/users/" + drawerUser + "/thread/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(all ? { all: true } : { ids }) });
+      dwSel = new Set();
+      toast("Deleted " + r.removed + " message(s).");
+      await loadThread(); refresh();
+    } catch (e) { toast(e.message); }
+  });
 
   $("dwClose").addEventListener("click", closeDrawer);
   $("drawer").addEventListener("click", ev => { if (ev.target === $("drawer")) closeDrawer(); });

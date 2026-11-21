@@ -644,6 +644,25 @@ function createAdminPanel(d) {
       res.json({ userId: uid, messages: d.messages?.thread(uid) || [], waiting: d.messages?.waiting(uid) || null });
     }));
 
+    // JK_CHAT_DELETE_V1: delete chosen messages, or the whole conversation.
+    const deleteBody = body => {
+      const all = body?.all === true;
+      const ids = Array.isArray(body?.ids) ? body.ids.map(x => (typeof x === "number" ? x : String(x))).slice(0, 500) : [];
+      if (!all && !ids.length) { const e = new Error("Choose messages to delete."); e.status = 400; throw e; }
+      return { all, ids };
+    };
+    app.post("/admin/api/users/:uid/thread/delete", guard, express.json({ limit: "32kb" }), handle(async (req, res) => {
+      const uid = uidOf(req);
+      if (!d.messages?.remove) return res.status(501).json({ error: "Not available." });
+      const { all, ids } = deleteBody(req.body);
+      res.json({ ok: true, ...d.messages.remove(uid, { all, ids: ids.map(String) }) });
+    }));
+    app.post("/admin/api/bot/delete", guard, express.json({ limit: "32kb" }), handle(async (req, res) => {
+      if (!d.botChat?.remove) return res.status(501).json({ error: "Not available." });
+      const { all, ids } = deleteBody(req.body);
+      res.json({ ok: true, ...d.botChat.remove({ all, ids: ids.map(Number).filter(Number.isFinite) }) });
+    }));
+
     app.post("/admin/api/users/:uid/reply", guard, express.json({ limit: "16kb" }), handle(async (req, res) => {
       const uid = uidOf(req);
       const text = String(req.body?.text || "").trim().slice(0, 3500);

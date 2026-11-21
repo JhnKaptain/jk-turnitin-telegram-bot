@@ -416,7 +416,19 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
     return { seq: state.seq, entries: state.entries.slice(-150) };
   }
 
-  return { install, observe, add, sendText, press, feed, entries: () => state.entries, classify, trackIncoming, attachment, localCall };
+  // JK_CHAT_DELETE_V1: delete chosen Bot chat messages (ids) or all of them,
+  // with any files kept for them. Telegram's own copies are not touched.
+  function remove({ ids = [], all = false } = {}) {
+    const gone = state.entries.filter(e => all || ids.includes(e.id));
+    state.entries = all ? [] : state.entries.filter(e => !ids.includes(e.id));
+    for (const e of gone) for (const a of e.attachments || []) {
+      if (a.local && filesDir) { try { fs.rmSync(path.join(filesDir, path.basename(a.local)), { force: true }); } catch {} }
+    }
+    if (gone.length) save();
+    return { removed: gone.length };
+  }
+
+  return { install, observe, add, sendText, press, feed, entries: () => state.entries, classify, trackIncoming, attachment, localCall, remove };
 }
 
 module.exports = { createBotChat, classify, buttonsOf, plain, attachmentsOf, CATEGORIES, WEB_CALLBACK_PREFIX };
