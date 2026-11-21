@@ -57,12 +57,21 @@ function summary({ job, file, stage, rendered, runAi, remainingMs, error }) {
     value !== null && value !== undefined && Number.isFinite(Number(value))
       ? Math.round(Number(value)) + "%"
       : "unavailable";
+  // JK_AI_STAR_DISPLAY_V1: show the AI score as the report does. Above 0 and
+  // below 20 the report shows "*%" (and AI HIGHLIGHTS applies), so a rounded
+  // "0%" or "20%" here would mislead; the exact score is added in brackets.
+  const aiPercent = value => {
+    const n = Number(value);
+    if (value === null || value === undefined || !Number.isFinite(n)) return "unavailable";
+    const exact = n < 0.01 ? "below 0.01" : String(Number(n.toFixed(2)));
+    return n > 0 && n < 20 ? "*% (exact " + exact + "%)" : Math.round(n) + "%";
+  };
 
   lines.push("Similarity: " + (job?.adminFreeScan === true && file?.adminAiOnly === true ? "not requested" : percent(file.providerSimilarityPercent)));
   lines.push(
     "AI: " + (
       !runAi ? "not requested" :
-      rendered?.aiAvailable ? percent(rendered.aiPercent) :
+      rendered?.aiAvailable ? aiPercent(rendered.aiPercent) :
       "unavailable"
     )
   );

@@ -106,7 +106,8 @@
           (f.deleted ? '<span class="chip">Files deleted</span>' : '') +
           (f.type ? '<span class="muted">' + esc(f.type) + '</span>' : '') +
           (f.similarity != null ? '<span class="muted">Similarity ' + Math.round(f.similarity) + '%</span>' : '') +
-          (f.ai != null ? '<span class="muted">AI ' + Math.round(f.ai) + '%</span>' : '') +
+          // JK_AI_STAR_DISPLAY_V1: "*%" like the report when above 0 and below 20.
+          (f.ai != null ? '<span class="muted">AI ' + (f.ai > 0 && f.ai < 20 ? '*% (' + (f.ai < 0.01 ? 'below 0.01' : Number(Number(f.ai).toFixed(2))) + '%)' : Math.round(f.ai) + '%') + '</span>' : '') +
           (f.id ? '<span class="muted">Report ID ' + esc(f.id) + '</span>' : '') + '</div>' +
           (f.error ? '<div class="err bad">' + esc(f.error) + '</div>' : '') +
           '<div class="row" style="margin-top:6px">' +
