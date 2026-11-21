@@ -340,6 +340,12 @@
   async function botSend(text) {
     text = String(text || "").trim();
     if (!text) return;
+    // JK_BOTCHAT_BUTTONS_ACT_V1: /filebatch <id> [message] and /reply <id> open the
+    // panel's Send files / reply box for that customer.
+    const fbc = /^\/filebatch\s+(\d{3,17})(?:\s+([\s\S]+))?$/i.exec(text);
+    if (fbc) { $("botInput").value = ""; openDrawer(fbc[1], true); if (fbc[2]) $("dwCaption").value = fbc[2]; return; }
+    const rpc = /^\/reply\s+(\d{3,17})\s*$/i.exec(text);
+    if (rpc) { $("botInput").value = ""; openDrawer(rpc[1], false); return; }
     $("botSend").disabled = true;
     try {
       const r = await api("/admin/api/bot/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
@@ -710,12 +716,19 @@
     if (t.dataset.bfilter) { botFilter = t.dataset.bfilter; renderBotFilters(); if (botData) renderBot(); return; }
     if (t.dataset.cmd) { botSend(t.dataset.cmd); return; }
     if (t.dataset.bpress) {
+      // JK_BOTCHAT_BUTTONS_ACT_V1: Filebatch and Reply open the panel's own
+      // Send files / reply box for that customer (Telegram's versions wait for
+      // uploads typed in Telegram, which the panel can't do).
+      const fb = /^ADMIN_FILEBATCH_(\d+)$/.exec(t.dataset.bdata || "");
+      if (fb) return openDrawer(fb[1], true);
+      const rp = /^ADMIN_REPLY_(\d+)$/.exec(t.dataset.bdata || "");
+      if (rp) return openDrawer(rp[1], false);
       if (/send to all|delete|cancel|reject|disable|turn off/i.test(t.textContent) && !confirm("Tap “" + t.textContent + "”?")) return;
       t.disabled = true;
       try {
         const r = await api("/admin/api/bot/press", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: Number(t.dataset.bpress), data: t.dataset.bdata }) });
-        if (r.toast) toast(r.toast);
+        toast(r.toast || ("✓ " + t.textContent.trim()));
         await refreshBot();
       } catch (e) { toast(e.message); } finally { t.disabled = false; }
       return;
