@@ -395,7 +395,7 @@ function createBotChat({ file, adminId, now = () => Date.now(), onEntry = () => 
     const button = entry && entry.buttons.flat().find(b => b.data === String(data));
     if (!entry || !button) { const e = new Error("That button is no longer available."); e.status = 404; throw e; }
     const id = WEB_CALLBACK_PREFIX + crypto.randomBytes(8).toString("hex");
-    add({ from: "you", text: "Tapped “" + button.text + "”", category: "you" });
+    // JK_BOTCHAT_BUTTONS_ACT_V1: no "Tapped …" line; the result shows instead.
     const update = {
       update_id: nextUpdateId(),
       callback_query: {
